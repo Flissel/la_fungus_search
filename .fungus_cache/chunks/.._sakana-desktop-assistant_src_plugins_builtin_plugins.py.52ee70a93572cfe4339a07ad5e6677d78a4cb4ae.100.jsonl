@@ -1,0 +1,405 @@
+# file: ..\sakana-desktop-assistant\src\plugins\builtin_plugins.py | lines: 1-100 | window: 100
+import os
+import platform
+import psutil
+import asyncio
+from pathlib import Path
+from typing import Dict, Any, Optional, List
+from datetime import datetime
+import json
+import aiofiles
+
+from .plugin_manager import Plugin
+
+class FileManagerPlugin(Plugin):
+    """Plugin for file management operations"""
+    
+    def __init__(self):
+        super().__init__()
+        self.name = "FileManager"
+        self.description = "File management operations"
+        self.version = "1.0.0"
+    
+    async def initialize(self, assistant):
+        """Initialize the plugin"""
+        self.assistant = assistant
+        self.register_command("ls", self.list_files)
+        self.register_command("cat", self.read_file)
+        self.register_command("mkdir", self.make_directory)
+        self.register_command("find", self.find_files)
+    
+    async def handle_command(self, command: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Handle file management commands"""
+        
+        parts = command.strip().split()
+        if not parts:
+            return None
+        
+        cmd = parts[0].lower()
+        
+        if cmd in self.commands:
+            handler = self.commands[cmd]
+            return await handler(parts[1:] if len(parts) > 1 else [], context)
+        
+        return None
+    
+    async def list_files(self, args: List[str], context: Dict[str, Any]) -> Dict[str, Any]:
+        """List files in directory"""
+        
+        path = Path(args[0]) if args else Path.cwd()
+        
+        try:
+            if not path.exists():
+                return {
+                    'content': f"Path not found: {path}",
+                    'type': 'error'
+                }
+            
+            files = []
+            for item in path.iterdir():
+                info = {
+                    'name': item.name,
+                    'type': 'dir' if item.is_dir() else 'file',
+                    'size': item.stat().st_size if item.is_file() else 0,
+                    'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat()
+                }
+                files.append(info)
+            
+            return {
+                'content': json.dumps(files, indent=2),
+                'type': 'file_list',
+                'metadata': {'path': str(path), 'count': len(files)}
+            }
+            
+        except Exception as e:
+            return {
+                'content': f"Error listing files: {str(e)}",
+                'type': 'error'
+            }
+    
+    async def read_file(self, args: List[str], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Read file contents"""
+        
+        if not args:
+            return {
+                'content': "Usage: cat <filename>",
+                'type': 'error'
+            }
+        
+        path = Path(args[0])
+        
+        try:
+            async with aiofiles.open(path, 'r') as f:
+                content = await f.read()
+            
+            return {
+                'content': content,
+                'type': 'file_content',
+                'metadata': {'path': str(path), 'size': len(content)}
+            }
+            
+        except Exception as e:
+
+# file: ..\sakana-desktop-assistant\src\plugins\builtin_plugins.py | lines: 101-200 | window: 100
+            return {
+                'content': f"Error reading file: {str(e)}",
+                'type': 'error'
+            }
+    
+    async def make_directory(self, args: List[str], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Create directory"""
+        
+        if not args:
+            return {
+                'content': "Usage: mkdir <directory>",
+                'type': 'error'
+            }
+        
+        path = Path(args[0])
+        
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            return {
+                'content': f"Directory created: {path}",
+                'type': 'success'
+            }
+        except Exception as e:
+            return {
+                'content': f"Error creating directory: {str(e)}",
+                'type': 'error'
+            }
+    
+    async def find_files(self, args: List[str], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Find files matching pattern"""
+        
+        if not args:
+            return {
+                'content': "Usage: find <pattern>",
+                'type': 'error'
+            }
+        
+        pattern = args[0]
+        search_dir = Path(args[1]) if len(args) > 1 else Path.cwd()
+        
+        try:
+            matches = list(search_dir.rglob(pattern))
+            
+            return {
+                'content': '\n'.join(str(m) for m in matches[:100]),  # Limit results
+                'type': 'file_list',
+                'metadata': {'pattern': pattern, 'matches': len(matches)}
+            }
+            
+        except Exception as e:
+            return {
+                'content': f"Error finding files: {str(e)}",
+                'type': 'error'
+            }
+
+class WebSearchPlugin(Plugin):
+    """Plugin for web search operations"""
+    
+    def __init__(self):
+        super().__init__()
+        self.name = "WebSearch"
+        self.description = "Web search functionality"
+        self.version = "1.0.0"
+    
+    async def initialize(self, assistant):
+        """Initialize the plugin"""
+        self.assistant = assistant
+        self.register_command("search", self.web_search)
+        self.register_command("google", self.google_search)
+    
+    async def handle_command(self, command: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Handle web search commands"""
+        
+        parts = command.strip().split(maxsplit=1)
+        if not parts:
+            return None
+        
+        cmd = parts[0].lower()
+        
+        if cmd in self.commands:
+            query = parts[1] if len(parts) > 1 else ""
+            handler = self.commands[cmd]
+            return await handler(query, context)
+        
+        return None
+    
+    async def web_search(self, query: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Perform web search"""
+        
+        if not query:
+            return {
+                'content': "Usage: search <query>",
+                'type': 'error'
+            }
+        
+        # In a real implementation, this would use a search API
+        return {
+            'content': f"Searching for: {query}\n\n[Search results would appear here]",
+            'type': 'search_results',
+            'metadata': {'query': query}
+
+# file: ..\sakana-desktop-assistant\src\plugins\builtin_plugins.py | lines: 201-300 | window: 100
+        }
+    
+    async def google_search(self, query: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Google search shortcut"""
+        return await self.web_search(query, context)
+
+class TaskManagerPlugin(Plugin):
+    """Plugin for task management"""
+    
+    def __init__(self):
+        super().__init__()
+        self.name = "TaskManager"
+        self.description = "Task and todo management"
+        self.version = "1.0.0"
+        self.tasks = []
+    
+    async def initialize(self, assistant):
+        """Initialize the plugin"""
+        self.assistant = assistant
+        self.register_command("todo", self.manage_todos)
+        self.register_command("task", self.manage_tasks)
+    
+    async def handle_command(self, command: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Handle task management commands"""
+        
+        parts = command.strip().split()
+        if not parts:
+            return None
+        
+        cmd = parts[0].lower()
+        
+        if cmd in self.commands:
+            handler = self.commands[cmd]
+            return await handler(parts[1:], context)
+        
+        return None
+    
+    async def manage_todos(self, args: List[str], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Manage todo items"""
+        
+        if not args:
+            # List todos
+            if not self.tasks:
+                return {
+                    'content': "No tasks found",
+                    'type': 'info'
+                }
+            
+            task_list = []
+            for i, task in enumerate(self.tasks):
+                status = "✓" if task['completed'] else "○"
+                task_list.append(f"{i+1}. {status} {task['description']}")
+            
+            return {
+                'content': '\n'.join(task_list),
+                'type': 'task_list'
+            }
+        
+        action = args[0].lower()
+        
+        if action == "add":
+            description = ' '.join(args[1:])
+            task = {
+                'description': description,
+                'completed': False,
+                'created': datetime.now().isoformat()
+            }
+            self.tasks.append(task)
+            
+            return {
+                'content': f"Task added: {description}",
+                'type': 'success'
+            }
+        
+        elif action == "complete" and len(args) > 1:
+            try:
+                task_num = int(args[1]) - 1
+                if 0 <= task_num < len(self.tasks):
+                    self.tasks[task_num]['completed'] = True
+                    return {
+                        'content': f"Task completed: {self.tasks[task_num]['description']}",
+                        'type': 'success'
+                    }
+            except ValueError:
+                pass
+        
+        return {
+            'content': "Usage: todo [add <description>|complete <number>]",
+            'type': 'info'
+        }
+    
+    async def manage_tasks(self, args: List[str], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Alias for todo management"""
+        return await self.manage_todos(args, context)
+
+class SystemInfoPlugin(Plugin):
+    """Plugin for system information"""
+    
+    def __init__(self):
+        super().__init__()
+
+# file: ..\sakana-desktop-assistant\src\plugins\builtin_plugins.py | lines: 301-398 | window: 100
+        self.name = "SystemInfo"
+        self.description = "System information and monitoring"
+        self.version = "1.0.0"
+    
+    async def initialize(self, assistant):
+        """Initialize the plugin"""
+        self.assistant = assistant
+        self.register_command("sysinfo", self.system_info)
+        self.register_command("cpu", self.cpu_info)
+        self.register_command("memory", self.memory_info)
+        self.register_command("disk", self.disk_info)
+    
+    async def handle_command(self, command: str, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Handle system info commands"""
+        
+        parts = command.strip().split()
+        if not parts:
+            return None
+        
+        cmd = parts[0].lower()
+        
+        if cmd in self.commands:
+            handler = self.commands[cmd]
+            return await handler(context)
+        
+        return None
+    
+    async def system_info(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Get system information"""
+        
+        info = {
+            'platform': platform.system(),
+            'platform_release': platform.release(),
+            'platform_version': platform.version(),
+            'architecture': platform.machine(),
+            'processor': platform.processor(),
+            'cpu_count': psutil.cpu_count(),
+            'memory_total': psutil.virtual_memory().total,
+            'memory_available': psutil.virtual_memory().available,
+            'disk_usage': psutil.disk_usage('/').percent
+        }
+        
+        return {
+            'content': json.dumps(info, indent=2),
+            'type': 'system_info',
+            'metadata': info
+        }
+    
+    async def cpu_info(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Get CPU information"""
+        
+        info = {
+            'cpu_percent': psutil.cpu_percent(interval=1),
+            'cpu_count': psutil.cpu_count(),
+            'cpu_count_logical': psutil.cpu_count(logical=True),
+            'cpu_freq': psutil.cpu_freq()._asdict() if psutil.cpu_freq() else None
+        }
+        
+        return {
+            'content': f"CPU Usage: {info['cpu_percent']}%\nCores: {info['cpu_count']} physical, {info['cpu_count_logical']} logical",
+            'type': 'cpu_info',
+            'metadata': info
+        }
+    
+    async def memory_info(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Get memory information"""
+        
+        mem = psutil.virtual_memory()
+        info = {
+            'total': mem.total,
+            'available': mem.available,
+            'percent': mem.percent,
+            'used': mem.used,
+            'free': mem.free
+        }
+        
+        return {
+            'content': f"Memory: {mem.percent}% used\nTotal: {mem.total / 1024**3:.1f} GB\nAvailable: {mem.available / 1024**3:.1f} GB",
+            'type': 'memory_info',
+            'metadata': info
+        }
+    
+    async def disk_info(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Get disk information"""
+        
+        disk = psutil.disk_usage('/')
+        info = {
+            'total': disk.total,
+            'used': disk.used,
+            'free': disk.free,
+            'percent': disk.percent
+        }
+        
+        return {
+            'content': f"Disk: {disk.percent}% used\nTotal: {disk.total / 1024**3:.1f} GB\nFree: {disk.free / 1024**3:.1f} GB",
+            'type': 'disk_info',
+            'metadata': info
+        }

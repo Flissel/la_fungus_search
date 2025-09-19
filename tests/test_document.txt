@@ -1,0 +1,6 @@
+Dieses Dokument dient als Test für die MCMP-RAG Suche.
+Es enthält Informationen über Python, Machine Learning und Cloud.
+Python ist eine Programmiersprache für vielseitige Anwendungen.
+Machine Learning nutzt Algorithmen, um aus Daten zu lernen.
+Cloud Computing bietet skalierbare IT-Ressourcen über das Internet.
+

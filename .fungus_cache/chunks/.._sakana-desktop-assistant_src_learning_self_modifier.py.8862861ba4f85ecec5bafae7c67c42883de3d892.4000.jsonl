@@ -1,0 +1,376 @@
+# file: ..\sakana-desktop-assistant\src\learning\self_modifier.py | lines: 1-375 | window: 4000
+import ast
+import asyncio
+import inspect
+import json
+from typing import Dict, Any, List, Optional, Callable
+from pathlib import Path
+import tempfile
+import subprocess
+import logging
+import hashlib
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+class SelfModifier:
+    """Self-modification system inspired by Darwin Gödel Machine"""
+    
+    def __init__(self, sandbox_enabled: bool = True, modifications_dir: Optional[Path] = None):
+        self.sandbox_enabled = sandbox_enabled
+        self.modifications_dir = modifications_dir or Path.home() / ".sakana_mods"
+        self.modifications_dir.mkdir(exist_ok=True)
+        
+        self.modification_history: List[Dict[str, Any]] = []
+        self.current_version = "1.0.0"
+        self.performance_metrics: Dict[str, float] = {}
+    
+    async def propose_modification(
+        self,
+        target_function: Callable,
+        improvement_prompt: str,
+        llm_interface: Any
+    ) -> Dict[str, Any]:
+        """Propose a modification to improve a function"""
+        
+        # Get current function code
+        source_code = inspect.getsource(target_function)
+        function_name = target_function.__name__
+        
+        # Create improvement prompt
+        prompt = f"""
+You are a self-improving AI system. Analyze and improve this function:
+
+```python
+{source_code}
+```
+
+Improvement goal: {improvement_prompt}
+
+Provide an improved version that:
+1. Maintains the same interface (parameters and return type)
+2. Improves performance, reliability, or capability
+3. Includes error handling
+4. Is well-structured and efficient
+
+Return ONLY the improved function code, no explanations.
+"""
+        
+        # Generate improved code
+        improved_code = await llm_interface.generate(prompt)
+        
+        # Clean up the response
+        improved_code = self._extract_code(improved_code)
+        
+        # Validate the improved code
+        validation_result = self._validate_code(improved_code, function_name)
+        
+        if not validation_result['valid']:
+            logger.error(f"Invalid modification proposed: {validation_result['error']}")
+            return {
+                'success': False,
+                'error': validation_result['error'],
+                'original': source_code,
+                'proposed': improved_code
+            }
+        
+        # Create modification record
+        modification = {
+            'id': hashlib.md5(improved_code.encode()).hexdigest()[:8],
+            'timestamp': datetime.now().isoformat(),
+            'function_name': function_name,
+            'original_code': source_code,
+            'improved_code': improved_code,
+            'improvement_goal': improvement_prompt,
+            'validation': validation_result,
+            'applied': False
+        }
+        
+        return modification
+    
+    async def test_modification(
+        self,
+        modification: Dict[str, Any],
+        test_cases: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Test a proposed modification in a sandbox"""
+        
+        if not self.sandbox_enabled:
+            logger.warning("Sandbox disabled - skipping isolated testing")
+            return {'success': True, 'results': []}
+        
+        # Create temporary files for testing
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            
+            # Write original function
+            original_file = tmpdir_path / "original.py"
+            with open(original_file, 'w') as f:
+                f.write(modification['original_code'])
+            
+            # Write improved function
+            improved_file = tmpdir_path / "improved.py"
+            with open(improved_file, 'w') as f:
+                f.write(modification['improved_code'])
+            
+            # Write test script
+            test_script = self._create_test_script(
+                modification['function_name'],
+                test_cases
+            )
+            test_file = tmpdir_path / "test_modification.py"
+            with open(test_file, 'w') as f:
+                f.write(test_script)
+            
+            # Run tests in sandbox
+            results = {}
+            
+            for version in ['original', 'improved']:
+                try:
+                    # Run tests using subprocess for isolation
+                    cmd = [
+                        'python', str(test_file), version,
+                        str(original_file if version == 'original' else improved_file)
+                    ]
+                    
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        cwd=str(tmpdir_path)
+                    )
+                    
+                    results[version] = {
+                        'success': result.returncode == 0,
+                        'output': result.stdout,
+                        'error': result.stderr
+                    }
+                except subprocess.TimeoutExpired:
+                    results[version] = {
+                        'success': False,
+                        'error': 'Test timeout'
+                    }
+                except Exception as e:
+                    results[version] = {
+                        'success': False,
+                        'error': str(e)
+                    }
+            
+            # Compare results
+            comparison = self._compare_results(results, test_cases)
+            
+            return {
+                'success': comparison['improved_better'],
+                'results': results,
+                'comparison': comparison
+            }
+    
+    def apply_modification(self, modification: Dict[str, Any]) -> bool:
+        """Apply a tested and approved modification"""
+        
+        try:
+            # Save modification to history
+            modification['applied'] = True
+            modification['applied_timestamp'] = datetime.now().isoformat()
+            self.modification_history.append(modification)
+            
+            # Save to disk
+            mod_file = self.modifications_dir / f"mod_{modification['id']}.json"
+            with open(mod_file, 'w') as f:
+                json.dump(modification, f, indent=2)
+            
+            # Update version
+            self._increment_version()
+            
+            logger.info(f"Applied modification {modification['id']} successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to apply modification: {e}")
+            return False
+    
+    def rollback_modification(self, modification_id: str) -> bool:
+        """Rollback a previously applied modification"""
+        
+        # Find modification in history
+        mod = None
+        for m in self.modification_history:
+            if m['id'] == modification_id:
+                mod = m
+                break
+        
+        if not mod:
+            logger.error(f"Modification {modification_id} not found")
+            return False
+        
+        try:
+            # Mark as rolled back
+            mod['rolled_back'] = True
+            mod['rollback_timestamp'] = datetime.now().isoformat()
+            
+            # Save updated history
+            mod_file = self.modifications_dir / f"mod_{modification_id}.json"
+            with open(mod_file, 'w') as f:
+                json.dump(mod, f, indent=2)
+            
+            logger.info(f"Rolled back modification {modification_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to rollback modification: {e}")
+            return False
+    
+    def _extract_code(self, response: str) -> str:
+        """Extract code from LLM response"""
+        # Look for code blocks
+        if "```python" in response:
+            start = response.find("```python") + 9
+            end = response.find("```", start)
+            return response[start:end].strip()
+        elif "```" in response:
+            start = response.find("```") + 3
+            end = response.find("```", start)
+            return response[start:end].strip()
+        else:
+            return response.strip()
+    
+    def _validate_code(self, code: str, expected_function: str) -> Dict[str, Any]:
+        """Validate that code is syntactically correct and contains expected function"""
+        try:
+            # Parse the code
+            tree = ast.parse(code)
+            
+            # Check for expected function
+            function_found = False
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == expected_function:
+                    function_found = True
+                    break
+            
+            if not function_found:
+                return {
+                    'valid': False,
+                    'error': f"Function {expected_function} not found in code"
+                }
+            
+            # Try to compile
+            compile(code, '<string>', 'exec')
+            
+            return {
+                'valid': True,
+                'ast_valid': True,
+                'compilable': True
+            }
+            
+        except SyntaxError as e:
+            return {
+                'valid': False,
+                'error': f"Syntax error: {e}"
+            }
+        except Exception as e:
+            return {
+                'valid': False,
+                'error': f"Validation error: {e}"
+            }
+    
+    def _create_test_script(self, function_name: str, test_cases: List[Dict[str, Any]]) -> str:
+        """Create a test script for comparing function versions"""
+        
+        script = f"""
+import sys
+import json
+import importlib.util
+
+def load_function(filepath, function_name):
+    spec = importlib.util.spec_from_file_location("module", filepath)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return getattr(module, function_name)
+
+def run_tests(function, test_cases):
+    results = []
+    for i, test in enumerate(test_cases):
+        try:
+            inputs = test.get('inputs', {{}})
+            expected = test.get('expected', None)
+            
+            if isinstance(inputs, dict):
+                result = function(**inputs)
+            elif isinstance(inputs, list):
+                result = function(*inputs)
+            else:
+                result = function(inputs)
+            
+            results.append({{
+                'test_id': i,
+                'success': True,
+                'result': result,
+                'expected': expected,
+                'matches': result == expected if expected is not None else True
+            }})
+        except Exception as e:
+            results.append({{
+                'test_id': i,
+                'success': False,
+                'error': str(e)
+            }})
+    
+    return results
+
+if __name__ == "__main__":
+    version = sys.argv[1]
+    filepath = sys.argv[2]
+    
+    test_cases = {json.dumps(test_cases)}
+    
+    function = load_function(filepath, "{function_name}")
+    results = run_tests(function, test_cases)
+    
+    print(json.dumps(results))
+"""
+        return script
+    
+    def _compare_results(self, results: Dict[str, Any], test_cases: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Compare test results between original and improved versions"""
+        
+        comparison = {
+            'improved_better': False,
+            'original_passed': 0,
+            'improved_passed': 0,
+            'performance_gain': 0.0
+        }
+        
+        try:
+            if results['original']['success']:
+                original_results = json.loads(results['original']['output'])
+                comparison['original_passed'] = sum(1 for r in original_results if r['success'])
+            
+            if results['improved']['success']:
+                improved_results = json.loads(results['improved']['output'])
+                comparison['improved_passed'] = sum(1 for r in improved_results if r['success'])
+            
+            # Improved is better if it passes more tests
+            comparison['improved_better'] = (
+                comparison['improved_passed'] >= comparison['original_passed']
+                and results['improved']['success']
+            )
+            
+        except Exception as e:
+            logger.error(f"Error comparing results: {e}")
+        
+        return comparison
+    
+    def _increment_version(self):
+        """Increment the version number"""
+        parts = self.current_version.split('.')
+        parts[-1] = str(int(parts[-1]) + 1)
+        self.current_version = '.'.join(parts)
+    
+    def get_modification_history(self) -> List[Dict[str, Any]]:
+        """Get the history of all modifications"""
+        return self.modification_history
+    
+    def get_performance_metrics(self) -> Dict[str, float]:
+        """Get current performance metrics"""
+        return self.performance_metrics

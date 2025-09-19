@@ -1,0 +1,102 @@
+# file: ..\sakana-desktop-assistant\src\delegation\delegation_entry.py | lines: 1-101 | window: 4000
+import asyncio
+import importlib.util
+from typing import List, Dict, Any
+
+from ..core.config import Config
+from ..core.assistant import SakanaAssistant
+
+
+async def _ensure_assistant() -> SakanaAssistant:
+    cfg = Config()
+    assistant = SakanaAssistant(cfg)
+    await assistant.initialize()
+    return assistant
+
+
+def _autogen_available() -> bool:
+    return importlib.util.find_spec("autogen_core") is not None
+
+
+async def run_delegation(goal: str) -> Dict[str, Any]:
+    """Entry point to execute a multi-step plan towards the goal.
+
+    Strategy:
+    - If AutoGen is installed, scaffold a minimal runtime that delegates back
+      to plugin commands for side-effects.
+    - Otherwise, use the assistant.plan_and_execute() heuristic planner to
+      map the goal into plugin command steps.
+    """
+    assistant = await _ensure_assistant()
+
+    # Fallback planner (always available)
+    if not _autogen_available():
+        plan = await assistant.plan_and_execute(goal)
+        # plan_and_execute returns a dict with a 'transcript' list; extract it for callers expecting steps
+        return {
+            "engine": "builtin_planner",
+            "goal": goal,
+            "transcript": plan.get("transcript", []),
+        }
+
+    # Optional AutoGen scaffold: import lazily to avoid hard dependency
+    from autogen_core import SingleThreadRuntime, TypeSubscription
+    from autogen_ext.agents import AssistantAgent
+
+    runtime = SingleThreadRuntime()
+
+    class PluginCallerAgent(AssistantAgent):
+        async def on_message(self, message, ctx: Any):
+            # For simplicity, delegate to our assistant's planner for now.
+            # This provides a working end-to-end flow while keeping the
+            # surface area small. Future iterations can parse tool calls
+            # from message.content to call specific plugins directly.
+            plan = await assistant.plan_and_execute(message.content)
+            # Report number of executed steps from plan transcript for accurate feedback
+            await self.send_message("user", f"Executed plan with {len(plan.get('transcript', []))} steps.")
+            return
+
+    # Register a single agent that can call plugins; expand to team later
+    tool_agent = PluginCallerAgent("tool-agent", runtime=runtime)
+
+    runtime.add_subscription(
+        TypeSubscription(topic_type="message", agent=tool_agent)
+    )
+
+    async with runtime:
+        session = await runtime.create_session()
+        await runtime.send_message(session, "user", goal)
+        await runtime.wait_all_tasks_done()
+
+    # For now, we also return the builtin planner transcript for visibility
+    plan = await assistant.plan_and_execute(goal)
+    return {
+        "engine": "autogen_scaffold",
+        "goal": goal,
+        "transcript": plan.get("transcript", []),
+    }
+
+
+async def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Delegation entrypoint")
+    parser.add_argument("goal", type=str, help="Natural language goal to achieve")
+    args = parser.parse_args()
+
+    result = await run_delegation(args.goal)
+    # Print a concise summary
+    print(f"Engine: {result['engine']}")
+    print(f"Goal: {result['goal']}")
+    steps = result.get("transcript", [])
+    print(f"Steps executed: {len(steps)}")
+    for i, step in enumerate(steps, 1):
+        cmd = step.get("command")
+        args = step.get("args")
+        status = step.get("status")
+        message = step.get("message", "")
+        print(f"  {i}. {cmd} {args} -> {status}: {message}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

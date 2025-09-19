@@ -1,0 +1,20 @@
+Machine Learning ist ein Teilbereich der künstlichen Intelligenz.
+Deep Learning nutzt neuronale Netze mit vielen Schichten.
+Python ist eine beliebte Programmiersprache für Data Science.
+Natural Language Processing ermöglicht Computern, menschliche Sprache zu verstehen.
+Computer Vision beschäftigt sich mit der automatischen Analyse von Bildern.
+Reinforcement Learning ist ein Lernverfahren, bei dem ein Agent durch Belohnungen lernt.
+TensorFlow ist ein populäres Framework für Machine Learning von Google.
+PyTorch ist ein weiteres beliebtes Deep Learning Framework von Meta.
+Pandas ist eine Python-Bibliothek für Datenanalyse und -manipulation.
+NumPy bietet effiziente mathematische Operationen für Python.
+Scikit-learn ist eine Machine Learning Bibliothek für Python.
+Jupyter Notebooks sind interaktive Entwicklungsumgebungen für Data Science.
+Git ist ein Versionskontrollsystem für Software-Entwicklung.
+Docker ermöglicht die Containerisierung von Anwendungen.
+Kubernetes orchestriert Container in produktiven Umgebungen.
+REST APIs ermöglichen die Kommunikation zwischen verschiedenen Systemen.
+SQL ist eine Sprache für die Arbeit mit relationalen Datenbanken.
+NoSQL Datenbanken wie MongoDB sind für unstrukturierte Daten optimiert.
+Cloud Computing bietet skalierbare IT-Ressourcen über das Internet.
+DevOps kombiniert Entwicklung und IT-Betrieb für schnellere Deployments.

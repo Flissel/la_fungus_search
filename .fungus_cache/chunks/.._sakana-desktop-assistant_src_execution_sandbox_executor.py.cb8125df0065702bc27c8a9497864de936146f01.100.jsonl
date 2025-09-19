@@ -1,0 +1,377 @@
+# file: ..\sakana-desktop-assistant\src\execution\sandbox_executor.py | lines: 1-100 | window: 100
+import asyncio
+import tempfile
+import subprocess
+import os
+import sys
+from pathlib import Path
+from typing import Dict, Any, Optional, List
+import json
+import logging
+from datetime import datetime
+import shutil
+
+logger = logging.getLogger(__name__)
+
+class SandboxExecutor:
+    """Execute code in a sandboxed environment"""
+    
+    def __init__(self, max_execution_time: int = 30, use_docker: bool = False):
+        self.max_execution_time = max_execution_time
+        self.use_docker = use_docker
+        self.execution_history = []
+        self.sandbox_dir = Path.home() / ".sakana_sandbox"
+        self.sandbox_dir.mkdir(exist_ok=True)
+    
+    async def initialize(self):
+        """Initialize the sandbox environment"""
+        
+        if self.use_docker:
+            # Check if Docker is available
+            try:
+                result = subprocess.run(['docker', '--version'], capture_output=True)
+                if result.returncode != 0:
+                    logger.warning("Docker not available, falling back to subprocess isolation")
+                    self.use_docker = False
+            except FileNotFoundError:
+                logger.warning("Docker not installed, using subprocess isolation")
+                self.use_docker = False
+        
+        # Create sandbox directories
+        (self.sandbox_dir / "scripts").mkdir(exist_ok=True)
+        (self.sandbox_dir / "outputs").mkdir(exist_ok=True)
+        (self.sandbox_dir / "environments").mkdir(exist_ok=True)
+        
+        logger.info(f"Sandbox initialized. Using Docker: {self.use_docker}")
+    
+    async def execute(
+        self,
+        code: str,
+        language: str = "python",
+        environment: Optional[Dict[str, str]] = None,
+        files: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """Execute code in sandbox"""
+        
+        execution_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        
+        try:
+            if self.use_docker:
+                result = await self._execute_docker(code, language, environment, files, execution_id)
+            else:
+                result = await self._execute_subprocess(code, language, environment, files, execution_id)
+            
+            # Log execution
+            self.execution_history.append({
+                'id': execution_id,
+                'timestamp': datetime.now().isoformat(),
+                'language': language,
+                'success': result['success'],
+                'execution_time': result.get('execution_time', 0)
+            })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Execution failed: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'output': '',
+                'execution_id': execution_id
+            }
+    
+    async def _execute_subprocess(
+        self,
+        code: str,
+        language: str,
+        environment: Optional[Dict[str, str]],
+        files: Optional[Dict[str, str]],
+        execution_id: str
+    ) -> Dict[str, Any]:
+        """Execute code using subprocess with isolation"""
+        
+        # Create temporary directory for this execution
+        with tempfile.TemporaryDirectory(dir=self.sandbox_dir / "scripts") as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            
+            # Write additional files if provided
+            if files:
+                for filename, content in files.items():
+                    file_path = tmpdir_path / filename
+
+# file: ..\sakana-desktop-assistant\src\execution\sandbox_executor.py | lines: 101-200 | window: 100
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(file_path, 'w') as f:
+                        f.write(content)
+            
+            # Determine script file and command
+            if language == "python":
+                script_file = tmpdir_path / "script.py"
+                cmd = [sys.executable, str(script_file)]
+            elif language == "javascript":
+                script_file = tmpdir_path / "script.js"
+                cmd = ["node", str(script_file)]
+            elif language == "bash":
+                script_file = tmpdir_path / "script.sh"
+                cmd = ["bash", str(script_file)]
+            else:
+                return {
+                    'success': False,
+                    'error': f"Unsupported language: {language}",
+                    'output': ''
+                }
+            
+            # Write the script
+            with open(script_file, 'w') as f:
+                f.write(code)
+            
+            # Make bash scripts executable
+            if language == "bash":
+                os.chmod(script_file, 0o755)
+            
+            # Prepare environment
+            env = os.environ.copy()
+            if environment:
+                env.update(environment)
+            
+            # Restrict environment for security
+            env['HOME'] = str(tmpdir_path)
+            env['TMPDIR'] = str(tmpdir_path)
+            env['PATH'] = '/usr/local/bin:/usr/bin:/bin'
+            
+            # Execute with timeout
+            start_time = datetime.now()
+            
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(tmpdir_path),
+                    env=env
+                )
+                
+                # Wait with timeout
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=self.max_execution_time
+                )
+                
+                execution_time = (datetime.now() - start_time).total_seconds()
+                
+                # Save output
+                output_file = self.sandbox_dir / "outputs" / f"{execution_id}.json"
+                output_data = {
+                    'stdout': stdout.decode('utf-8', errors='replace'),
+                    'stderr': stderr.decode('utf-8', errors='replace'),
+                    'return_code': process.returncode,
+                    'execution_time': execution_time
+                }
+                
+                with open(output_file, 'w') as f:
+                    json.dump(output_data, f)
+                
+                return {
+                    'success': process.returncode == 0,
+                    'output': output_data['stdout'],
+                    'error': output_data['stderr'],
+                    'return_code': process.returncode,
+                    'execution_time': execution_time,
+                    'execution_id': execution_id
+                }
+                
+            except asyncio.TimeoutError:
+                # Kill the process
+                try:
+                    process.kill()
+                    await process.wait()
+                except:
+                    pass
+                
+                return {
+                    'success': False,
+                    'error': f"Execution timeout ({self.max_execution_time}s)",
+                    'output': '',
+                    'execution_time': self.max_execution_time
+                }
+    
+    async def _execute_docker(
+        self,
+        code: str,
+        language: str,
+        environment: Optional[Dict[str, str]],
+
+# file: ..\sakana-desktop-assistant\src\execution\sandbox_executor.py | lines: 201-300 | window: 100
+        files: Optional[Dict[str, str]],
+        execution_id: str
+    ) -> Dict[str, Any]:
+        """Execute code in Docker container"""
+        
+        # Docker images for different languages
+        images = {
+            'python': 'python:3.11-slim',
+            'javascript': 'node:18-slim',
+            'bash': 'alpine:latest'
+        }
+        
+        if language not in images:
+            return await self._execute_subprocess(code, language, environment, files, execution_id)
+        
+        with tempfile.TemporaryDirectory(dir=self.sandbox_dir / "scripts") as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            
+            # Write script
+            script_name = {
+                'python': 'script.py',
+                'javascript': 'script.js',
+                'bash': 'script.sh'
+            }[language]
+            
+            script_file = tmpdir_path / script_name
+            with open(script_file, 'w') as f:
+                f.write(code)
+            
+            # Write additional files
+            if files:
+                for filename, content in files.items():
+                    file_path = tmpdir_path / filename
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(file_path, 'w') as f:
+                        f.write(content)
+            
+            # Docker command
+            docker_cmd = [
+                'docker', 'run',
+                '--rm',  # Remove container after execution
+                '--network', 'none',  # No network access
+                '--memory', '512m',  # Memory limit
+                '--cpus', '0.5',  # CPU limit
+                '-v', f'{tmpdir_path}:/workspace:ro',  # Mount as read-only
+                '-w', '/workspace'
+            ]
+            
+            # Add environment variables
+            if environment:
+                for key, value in environment.items():
+                    docker_cmd.extend(['-e', f'{key}={value}'])
+            
+            # Add image and command
+            docker_cmd.append(images[language])
+            
+            if language == 'python':
+                docker_cmd.extend(['python', f'/workspace/{script_name}'])
+            elif language == 'javascript':
+                docker_cmd.extend(['node', f'/workspace/{script_name}'])
+            elif language == 'bash':
+                docker_cmd.extend(['sh', f'/workspace/{script_name}'])
+            
+            # Execute
+            start_time = datetime.now()
+            
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *docker_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=self.max_execution_time + 5  # Extra time for Docker overhead
+                )
+                
+                execution_time = (datetime.now() - start_time).total_seconds()
+                
+                return {
+                    'success': process.returncode == 0,
+                    'output': stdout.decode('utf-8', errors='replace'),
+                    'error': stderr.decode('utf-8', errors='replace'),
+                    'return_code': process.returncode,
+                    'execution_time': execution_time,
+                    'execution_id': execution_id
+                }
+                
+            except asyncio.TimeoutError:
+                # Kill the Docker container
+                try:
+                    kill_cmd = ['docker', 'kill', execution_id]
+                    await asyncio.create_subprocess_exec(*kill_cmd)
+                except:
+                    pass
+                
+                return {
+                    'success': False,
+                    'error': f"Docker execution timeout ({self.max_execution_time}s)",
+
+# file: ..\sakana-desktop-assistant\src\execution\sandbox_executor.py | lines: 301-370 | window: 100
+                    'output': '',
+                    'execution_time': self.max_execution_time
+                }
+    
+    async def execute_safe_function(
+        self,
+        function_code: str,
+        function_name: str,
+        args: List[Any] = None,
+        kwargs: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Execute a function with arguments in sandbox"""
+        
+        args = args or []
+        kwargs = kwargs or {}
+        
+        # Create execution code
+        execution_code = f"""
+import json
+import sys
+
+# Function definition
+{function_code}
+
+# Execute function
+try:
+    args = {json.dumps(args)}
+    kwargs = {json.dumps(kwargs)}
+    result = {function_name}(*args, **kwargs)
+    
+    # Output result as JSON
+    print(json.dumps({{'success': True, 'result': result}}))
+except Exception as e:
+    print(json.dumps({{'success': False, 'error': str(e)}}))
+"""
+        
+        # Execute in sandbox
+        result = await self.execute(execution_code, 'python')
+        
+        if result['success'] and result['output']:
+            try:
+                output_data = json.loads(result['output'].strip())
+                return output_data
+            except json.JSONDecodeError:
+                return {
+                    'success': False,
+                    'error': 'Failed to parse function output',
+                    'raw_output': result['output']
+                }
+        else:
+            return result
+    
+    def get_execution_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent execution history"""
+        return self.execution_history[-limit:]
+    
+    async def cleanup(self):
+        """Clean up sandbox resources"""
+        
+        # Clean old execution outputs
+        outputs_dir = self.sandbox_dir / "outputs"
+        if outputs_dir.exists():
+            for file in outputs_dir.iterdir():
+                if file.is_file():
+                    # Delete files older than 24 hours
+                    age = datetime.now().timestamp() - file.stat().st_mtime
+                    if age > 86400:  # 24 hours
+                        file.unlink()
+        
+        logger.info("Sandbox cleanup completed")

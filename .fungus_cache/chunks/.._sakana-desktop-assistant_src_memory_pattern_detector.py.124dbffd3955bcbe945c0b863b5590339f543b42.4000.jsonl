@@ -1,0 +1,319 @@
+# file: ..\sakana-desktop-assistant\src\memory\pattern_detector.py | lines: 1-318 | window: 4000
+import asyncio
+from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
+import numpy as np
+from sklearn.cluster import DBSCAN
+from collections import defaultdict
+import logging
+
+logger = logging.getLogger(__name__)
+
+class PatternDetector:
+    """Detects patterns in user behavior and system performance"""
+    
+    def __init__(self, memory_manager):
+        self.memory_manager = memory_manager
+        self.pattern_cache = defaultdict(list)
+        self.detection_thresholds = {
+            'time_pattern': 0.7,
+            'sequence_pattern': 0.8,
+            'frequency_pattern': 0.6
+        }
+    
+    async def detect_time_patterns(self, time_window: timedelta = timedelta(days=7)) -> List[Dict[str, Any]]:
+        """Detect time-based usage patterns"""
+        
+        # Get memories from time window
+        memories = await self.memory_manager.retrieve_memories(limit=1000)
+        
+        # Group by hour of day
+        hourly_activities = defaultdict(list)
+        for memory in memories:
+            if memory.timestamp > datetime.now() - time_window:
+                hour = memory.timestamp.hour
+                hourly_activities[hour].append(memory)
+        
+        # Find peak usage hours
+        patterns = []
+        for hour, activities in hourly_activities.items():
+            if len(activities) > 5:  # Minimum threshold
+                pattern = {
+                    'type': 'time_pattern',
+                    'hour': hour,
+                    'frequency': len(activities),
+                    'common_actions': self._extract_common_actions(activities),
+                    'confidence': min(1.0, len(activities) / 10)
+                }
+                patterns.append(pattern)
+                
+                # Store in memory
+                await self.memory_manager.detect_pattern('time_pattern', pattern)
+        
+        return patterns
+    
+    async def detect_sequence_patterns(self, min_support: int = 3) -> List[Dict[str, Any]]:
+        """Detect sequential patterns in user actions"""
+        
+        memories = await self.memory_manager.retrieve_memories(limit=500)
+        
+        # Extract action sequences
+        sequences = []
+        current_sequence = []
+        last_timestamp = None
+        
+        for memory in sorted(memories, key=lambda m: m.timestamp):
+            if last_timestamp and (memory.timestamp - last_timestamp).seconds > 300:  # 5 min gap
+                if len(current_sequence) > 1:
+                    sequences.append(current_sequence)
+                current_sequence = []
+            
+            current_sequence.append(memory.content)
+            last_timestamp = memory.timestamp
+        
+        if current_sequence:
+            sequences.append(current_sequence)
+        
+        # Find frequent subsequences
+        patterns = self._find_frequent_sequences(sequences, min_support)
+        
+        # Store patterns
+        for pattern in patterns:
+            await self.memory_manager.detect_pattern('sequence_pattern', pattern)
+        
+        return patterns
+    
+    async def detect_error_patterns(self) -> List[Dict[str, Any]]:
+        """Detect patterns in errors and failures"""
+        
+        # Get error memories
+        error_memories = []
+        memories = await self.memory_manager.retrieve_memories(limit=200)
+        
+        for memory in memories:
+            if memory.metadata.get('type') == 'error':
+                error_memories.append(memory)
+        
+        # Cluster similar errors
+        if len(error_memories) > 5:
+            error_features = self._extract_error_features(error_memories)
+            clusters = self._cluster_errors(error_features)
+            
+            patterns = []
+            for cluster_id, indices in clusters.items():
+                cluster_errors = [error_memories[i] for i in indices]
+                pattern = {
+                    'type': 'error_pattern',
+                    'error_type': self._classify_error_type(cluster_errors),
+                    'frequency': len(cluster_errors),
+                    'common_context': self._extract_common_context(cluster_errors),
+                    'suggested_fix': self._suggest_fix(cluster_errors)
+                }
+                patterns.append(pattern)
+                
+                await self.memory_manager.detect_pattern('error_pattern', pattern)
+            
+            return patterns
+        
+        return []
+    
+    async def detect_preference_patterns(self) -> List[Dict[str, Any]]:
+        """Detect user preference patterns"""
+        
+        memories = await self.memory_manager.retrieve_memories(limit=300)
+        
+        preferences = {
+            'response_style': defaultdict(int),
+            'topics': defaultdict(int),
+            'tools': defaultdict(int),
+            'formats': defaultdict(int)
+        }
+        
+        for memory in memories:
+            # Analyze response preferences
+            if 'response_type' in memory.metadata:
+                preferences['response_style'][memory.metadata['response_type']] += 1
+            
+            # Extract topics
+            topics = memory.metadata.get('topics', [])
+            for topic in topics:
+                preferences['topics'][topic] += 1
+            
+            # Track tool usage
+            if 'tool_used' in memory.metadata:
+                preferences['tools'][memory.metadata['tool_used']] += 1
+        
+        # Convert to patterns
+        patterns = []
+        for category, items in preferences.items():
+            if items:
+                top_items = sorted(items.items(), key=lambda x: x[1], reverse=True)[:5]
+                pattern = {
+                    'type': 'preference_pattern',
+                    'category': category,
+                    'preferences': dict(top_items),
+                    'total_observations': sum(items.values())
+                }
+                patterns.append(pattern)
+                
+                await self.memory_manager.detect_pattern('preference_pattern', pattern)
+        
+        return patterns
+    
+    def _extract_common_actions(self, activities: List[Any]) -> List[str]:
+        """Extract common actions from activities"""
+        
+        action_counts = defaultdict(int)
+        for activity in activities:
+            if hasattr(activity, 'context') and 'action' in activity.context:
+                action_counts[activity.context['action']] += 1
+        
+        # Return top 3 actions
+        sorted_actions = sorted(action_counts.items(), key=lambda x: x[1], reverse=True)
+        return [action for action, _ in sorted_actions[:3]]
+    
+    def _find_frequent_sequences(self, sequences: List[List[str]], min_support: int) -> List[Dict[str, Any]]:
+        """Find frequent subsequences using a simple algorithm"""
+        
+        subsequence_counts = defaultdict(int)
+        
+        # Generate subsequences of length 2-4
+        for sequence in sequences:
+            for length in range(2, min(5, len(sequence) + 1)):
+                for i in range(len(sequence) - length + 1):
+                    subseq = tuple(sequence[i:i+length])
+                    subsequence_counts[subseq] += 1
+        
+        # Filter by support
+        patterns = []
+        for subseq, count in subsequence_counts.items():
+            if count >= min_support:
+                patterns.append({
+                    'sequence': list(subseq),
+                    'support': count,
+                    'confidence': count / len(sequences)
+                })
+        
+        return sorted(patterns, key=lambda x: x['support'], reverse=True)[:10]
+    
+    def _extract_error_features(self, error_memories: List[Any]) -> np.ndarray:
+        """Extract features from error memories for clustering"""
+        
+        features = []
+        for memory in error_memories:
+            feature = [
+                hash(memory.content) % 1000,  # Content hash
+                memory.timestamp.hour,  # Hour of occurrence
+                len(memory.content),  # Error message length
+                memory.metadata.get('error_code', 0)  # Error code if available
+            ]
+            features.append(feature)
+        
+        return np.array(features)
+    
+    def _cluster_errors(self, features: np.ndarray) -> Dict[int, List[int]]:
+        """Cluster errors using DBSCAN"""
+        
+        clustering = DBSCAN(eps=100, min_samples=2).fit(features)
+        
+        clusters = defaultdict(list)
+        for idx, label in enumerate(clustering.labels_):
+            if label != -1:  # Ignore noise
+                clusters[label].append(idx)
+        
+        return clusters
+    
+    def _classify_error_type(self, errors: List[Any]) -> str:
+        """Classify the type of errors in a cluster"""
+        
+        # Simple classification based on content
+        error_contents = [e.content.lower() for e in errors]
+        
+        if any('timeout' in content for content in error_contents):
+            return 'timeout_error'
+        elif any('permission' in content for content in error_contents):
+            return 'permission_error'
+        elif any('not found' in content for content in error_contents):
+            return 'not_found_error'
+        elif any('syntax' in content for content in error_contents):
+            return 'syntax_error'
+        else:
+            return 'general_error'
+    
+    def _extract_common_context(self, memories: List[Any]) -> Dict[str, Any]:
+        """Extract common context from memories"""
+        
+        common_context = {}
+        
+        # Find common keys in context
+        if memories:
+            all_keys = set()
+            for memory in memories:
+                if memory.context:
+                    all_keys.update(memory.context.keys())
+            
+            for key in all_keys:
+                values = [m.context.get(key) for m in memories if m.context and key in m.context]
+                if values:
+                    # Find most common value
+                    value_counts = defaultdict(int)
+                    for v in values:
+                        value_counts[str(v)] += 1
+                    
+                    most_common = max(value_counts.items(), key=lambda x: x[1])
+                    if most_common[1] > len(memories) / 2:  # More than 50% have this value
+                        common_context[key] = most_common[0]
+        
+        return common_context
+    
+    def _suggest_fix(self, errors: List[Any]) -> str:
+        """Suggest a fix for common errors"""
+        
+        error_type = self._classify_error_type(errors)
+        
+        suggestions = {
+            'timeout_error': "Consider increasing timeout limits or optimizing the operation",
+            'permission_error': "Check file permissions and user access rights",
+            'not_found_error': "Verify file paths and resource availability",
+            'syntax_error': "Review code syntax and formatting",
+            'general_error': "Check logs for more detailed error information"
+        }
+        
+        return suggestions.get(error_type, "Investigate error context and patterns")
+    
+    async def analyze_performance_patterns(self) -> Dict[str, Any]:
+        """Analyze performance patterns over time"""
+        
+        memories = await self.memory_manager.retrieve_memories(limit=500)
+        
+        # Extract performance metrics
+        response_times = []
+        success_rates = defaultdict(list)
+        
+        for memory in memories:
+            if 'response_time' in memory.metadata:
+                response_times.append(memory.metadata['response_time'])
+            
+            if 'success' in memory.metadata:
+                hour = memory.timestamp.hour
+                success_rates[hour].append(memory.metadata['success'])
+        
+        # Calculate statistics
+        analysis = {
+            'average_response_time': np.mean(response_times) if response_times else 0,
+            'response_time_std': np.std(response_times) if response_times else 0,
+            'hourly_success_rates': {}
+        }
+        
+        for hour, successes in success_rates.items():
+            success_rate = sum(1 for s in successes if s) / len(successes)
+            analysis['hourly_success_rates'][hour] = success_rate
+        
+        # Identify performance issues
+        if analysis['average_response_time'] > 5.0:
+            await self.memory_manager.detect_pattern(
+                'performance_issue',
+                {'type': 'slow_response', 'avg_time': analysis['average_response_time']}
+            )
+        
+        return analysis

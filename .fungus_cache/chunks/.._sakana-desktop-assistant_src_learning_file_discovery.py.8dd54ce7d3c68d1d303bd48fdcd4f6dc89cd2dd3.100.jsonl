@@ -1,0 +1,762 @@
+# file: ..\sakana-desktop-assistant\src\learning\file_discovery.py | lines: 1-100 | window: 100
+"""
+File discovery through evolutionary self-learning
+"""
+
+import os
+import random
+import asyncio
+import subprocess
+from typing import Dict, Any, List, Optional, Tuple
+from dataclasses import dataclass
+import logging
+import json
+from datetime import datetime
+import shutil  # Cross-platform command discovery (shutil.which)
+
+from .knowledge_accumulator import KnowledgeAccumulator
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class FileCommand:
+    """Represents a discovered file operation command"""
+    command: str
+    success_rate: float = 0.0
+    attempts: int = 0
+    discovered_at: str = datetime.now().isoformat()
+    parameters: List[str] = None
+    
+    def __post_init__(self):
+        if self.parameters is None:
+            self.parameters = []
+
+class FileDiscoveryLearner:
+    """Learns to find files through exploration and evolution"""
+    
+    def __init__(self, cache_dir: str = None):
+        # Start with NO knowledge - will discover everything
+        self.discovered_commands = {}
+        self.successful_patterns = []
+        self.failed_attempts = []
+        self.exploration_history = []
+        
+        # Cache directory for persistence
+        self.cache_dir = cache_dir or os.path.expanduser("~/.sakana/cache")
+        os.makedirs(self.cache_dir, exist_ok=True)
+        self.cache_file = os.path.join(self.cache_dir, "discovered_commands.json")
+        
+        # Knowledge accumulator for permanent learning
+        self.knowledge = KnowledgeAccumulator()
+        
+        # Genetic material for evolving search strategies
+        self.search_genome = {
+            'command_pool': [],  # Will be discovered
+            'path_strategies': [],  # Will be discovered
+            'pattern_matchers': [],  # Will be discovered
+            'exploration_depth': 1,
+            'mutation_rate': 0.3
+        }
+        
+        # Load cached discoveries
+        self._load_cache()
+        
+        # Discovery session tracking
+        self.session_start = datetime.now()
+        self.new_discoveries = []
+        self.rediscoveries = []
+        
+    async def discover_file_commands(self) -> List[str]:
+        """Discover available commands through exploration"""
+        
+        # Check if we have recent cached discoveries
+        if self._has_valid_cache():
+            logger.info("Using cached command discoveries")
+            return self.search_genome['command_pool']
+        
+        logger.info("Starting command discovery through exploration...")
+        
+        # Get already known commands to skip
+        already_known = self.knowledge.get_already_known_commands()
+        logger.info(f"Already know {len(already_known)} commands from previous sessions")
+        
+        # Try random command-like strings
+        potential_commands = self._generate_command_candidates()
+        
+        # Filter out already known commands for efficiency
+        commands_to_test = [cmd for cmd in potential_commands if cmd not in already_known]
+        logger.info(f"Testing {len(commands_to_test)} new candidates (skipping {len(potential_commands) - len(commands_to_test)} known)")
+        
+        discovered = []
+        commands_tested = 0
+        
+        for cmd in commands_to_test:
+            commands_tested += 1
+            try:
+                # Cross-platform check: use shutil.which to test if command exists in PATH
+                if shutil.which(cmd):
+                    logger.info(f"NEW DISCOVERY: {cmd}")
+                    discovered.append(cmd)
+                    self.discovered_commands[cmd] = FileCommand(command=cmd)
+                    self.knowledge.add_discovered_command(cmd)
+
+# file: ..\sakana-desktop-assistant\src\learning\file_discovery.py | lines: 101-200 | window: 100
+                    self.new_discoveries.append(cmd)
+            except Exception:
+                # Command doesn't exist or error
+                pass
+        
+        # Also include previously known commands in our working set
+        for known_cmd in already_known:
+            if known_cmd not in self.discovered_commands:
+                self.discovered_commands[known_cmd] = FileCommand(command=known_cmd)
+                discovered.append(known_cmd)
+                self.rediscoveries.append(known_cmd)
+        
+        # Update genome with discoveries
+        self.search_genome['command_pool'] = discovered
+        
+        # Record discovery session
+        session_duration = (datetime.now() - self.session_start).total_seconds()
+        self.knowledge.record_discovery_session({
+            'duration': session_duration,
+            'commands_tested': commands_tested,
+            'new_discoveries': self.new_discoveries,
+            'rediscoveries': self.rediscoveries
+        })
+        
+        # Log knowledge stats
+        stats = self.knowledge.get_discovery_stats()
+        logger.info(f"Knowledge stats: {stats['total_permanent_commands']} total commands, "
+                   f"trend: {stats['knowledge_growth_trend']}")
+        
+        # Save to cache
+        self._save_cache()
+        
+        return discovered
+    
+    def _generate_command_candidates(self) -> List[str]:
+        """Generate potential command names to test"""
+        
+        # Start with common patterns
+        prefixes = ['', 'f', 'g', 'a', 'w', 'e', 'n']
+        roots = ['find', 'search', 'locate', 'look', 'seek', 'scan', 'grep', 'ls', 'where', 'which']
+        suffixes = ['', 'f', 'r', 'd', '.exe', '2', '3']
+        
+        candidates = []
+        
+        # Generate combinations
+        for prefix in prefixes:
+            for root in roots:
+                for suffix in suffixes:
+                    candidates.append(prefix + root + suffix)
+        
+        # Get suggestions for unexplored areas
+        suggestions = self.knowledge.suggest_unexplored_areas()
+        if suggestions:
+            logger.info(f"Knowledge suggests exploring: {suggestions[0]}")
+        
+        # Add platform-specific commands
+        platform_commands = [
+            'type', 'more', 'less', 'head', 'tail', 'cat',
+            'wslpath', 'cygpath', 'realpath', 'readlink',
+            'where.exe', 'dir', 'Get-Content', 'gc',
+            'fd', 'rg', 'ag', 'ack'  # Modern alternatives
+        ]
+        candidates.extend(platform_commands)
+        
+        # Add some completely random attempts
+        for _ in range(10):
+            random_cmd = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz', k=random.randint(2, 6)))
+            candidates.append(random_cmd)
+        
+        return list(set(candidates))  # Remove duplicates
+    
+    async def evolve_search_strategy(self, target_file: str, verification_required: bool = False) -> Optional[Dict[str, Any]]:
+        """Evolve a strategy to find a specific file"""
+        
+        logger.info(f"Evolving strategy to find: {target_file} (verification={verification_required})")
+        
+        # Fast-path: if the provided path is absolute and exists, skip evolution and return immediately
+        # This avoids unnecessary generations when the user gives a concrete file path.
+        try:
+            if os.path.isabs(target_file) and os.path.exists(target_file):
+                result = {
+                    'found': True,
+                    'path': target_file,
+                }
+                if verification_required:
+                    try:
+                        with open(target_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            first_line = f.readline().strip()
+                        result['verified'] = True
+                        result['first_line'] = first_line
+                    except Exception as e:
+                        logger.warning(f"Verification read failed for {target_file}: {e}")
+                        result['verified'] = False
+                return result
+        except Exception as e:
+            logger.debug(f"Absolute path check failed for {target_file}: {e}")
+        
+        # Detect if it's a Windows path
+        is_windows_path = any(pattern in target_file for pattern in ['C:\\', 'D:\\', 'C:/', 'D:/'])
+        
+
+# file: ..\sakana-desktop-assistant\src\learning\file_discovery.py | lines: 201-300 | window: 100
+        # Initialize population of search strategies
+        population = self._create_initial_population(is_windows_path=is_windows_path)
+        
+        best_result = None
+        generation = 0
+        max_generations = 50 if verification_required else 10
+        
+        while generation < max_generations and best_result is None:
+            # Test strategies with bounded concurrency for faster throughput
+            results = []
+            # Cap concurrency to avoid overwhelming the system (especially on Windows)
+            max_concurrency = min(8, max(2, (os.cpu_count() or 4)))
+            sem = asyncio.Semaphore(max_concurrency)
+
+            async def run_strategy(strategy):
+                """Run a single strategy under semaphore control."""
+                # Acquire semaphore to bound concurrent subprocesses
+                async with sem:
+                    res = await self._test_search_strategy(strategy, target_file, verification_required)
+                    return strategy, res
+
+            tasks = [asyncio.create_task(run_strategy(strategy)) for strategy in population]
+
+            # Gather all results to avoid leaking tasks/subprocesses on Windows
+            gathered = await asyncio.gather(*tasks, return_exceptions=False)
+            results.extend(gathered)
+            
+            # Early success check after batch finishes
+            for strategy, result in results:
+                if result['found'] and (not verification_required or result.get('verified')):
+                    best_result = result
+                    self._record_success(strategy, result)
+                    break
+            
+            if best_result:
+                break
+            
+            # Evolve population with higher mutation in crisis
+            crisis_mode = verification_required
+            population = self._evolve_population(results, crisis_mode=crisis_mode)
+            generation += 1
+            
+            if generation % 10 == 0:
+                logger.info(f"Generation {generation}: Still evolving... Best fitness so far: {self._calculate_best_fitness(results)}")
+        
+        return best_result
+    
+    def _create_initial_population(self, is_windows_path: bool = False) -> List[Dict[str, Any]]:
+        """Create initial population of search strategies"""
+        
+        population = []
+        
+        # If we have discovered commands, use them
+        if self.search_genome['command_pool']:
+            for cmd in self.search_genome['command_pool']:
+                # Create variations
+                strategies = [
+                    {
+                        'command': cmd,
+                        'args': ['-name', '{filename}'],
+                        'paths': ['.']
+                    },
+                    {
+                        'command': cmd,
+                        'args': ['{filename}'],
+                        'paths': ['/', '/home', '/mnt']
+                    },
+                    {
+                        'command': cmd,
+                        'args': ['-type', 'f', '-name', '{filename}'],
+                        'paths': ['~']
+                    }
+                ]
+                population.extend(strategies)
+        
+        # Add Windows-specific strategies if needed
+        if is_windows_path:
+            windows_strategies = [
+                {
+                    'command': 'find',
+                    'args': ['-name', '{filename}'],
+                    'paths': ['/mnt/c', '/mnt/d'],
+                    'path_translation': 'wsl'
+                },
+                {
+                    'command': 'cat',
+                    'args': ['{filepath}'],
+                    'paths': [''],
+                    'path_translation': 'direct_wsl'
+                },
+                {
+                    'command': 'wslpath',
+                    'args': ['-u', '{filepath}'],
+                    'paths': [''],
+                    'path_translation': 'convert_first'
+                }
+            ]
+            population.extend(windows_strategies)
+        
+        # Add random exploration strategies
+
+# file: ..\sakana-desktop-assistant\src\learning\file_discovery.py | lines: 301-400 | window: 100
+        for _ in range(10):
+            population.append(self._generate_random_strategy(is_windows_path))
+        
+        return population[:30]  # Increased size for crisis mode
+    
+    def _generate_random_strategy(self, is_windows_path: bool = False) -> Dict[str, Any]:
+        """Generate a random search strategy"""
+        
+        # Try to discover new patterns
+        possible_args = [
+            ['-name', '{filename}'],
+            ['-iname', '{filename}'],
+            ['--name', '{filename}'],
+            ['{filename}'],
+            ['{filepath}'],  # For direct file access
+            ['-f', '{filename}'],
+            ['/', '-name', '{filename}'],
+            ['.', '-name', '{filename}'],
+            ['-path', '*{filename}*'],
+            ['2>/dev/null'],  # Suppress errors
+        ]
+        
+        possible_paths = [
+            ['.'], ['/'], ['~'], 
+            ['/home'], ['/mnt'], ['/usr'],
+            ['C:\\'], ['D:\\'], ['/mnt/c'], ['/mnt/d'],
+            ['/cygdrive/c'], ['//wsl$/Ubuntu'],
+            [''] # Empty path for direct file access
+        ]
+        
+        # Add Windows-specific mutations
+        if is_windows_path:
+            possible_paths.extend([
+                ['/mnt/c/Users'], ['/mnt/c/Users/nicol'],
+                ['/mnt/c/Users/nicol/OneDrive'],
+                ['/mnt/c/Users/nicol/Desktop'],
+                ['/mnt/c/Users/nicol/OneDrive/Desktop']
+            ])
+        
+        # Fallback to defaults if no discovered commands yet
+        command_pool = self.search_genome.get('command_pool') or ['find', 'cat', 'ls', 'type']
+        
+        strategy = {
+            'command': random.choice(command_pool),
+            'args': random.choice(possible_args),
+            'paths': random.choice(possible_paths)
+        }
+        
+        # Randomly add path translation strategy
+        if is_windows_path and random.random() < 0.5:
+            strategy['path_translation'] = random.choice(['wsl', 'direct_wsl', 'convert_first', 'cygwin'])
+        
+        return strategy
+    
+    async def _test_search_strategy(self, strategy: Dict[str, Any], target_file: str, verification_required: bool = False) -> Dict[str, Any]:
+        """Test a search strategy"""
+        
+        result = {
+            'found': False,
+            'path': None,
+            'strategy': strategy,
+            'error': None,
+            'verified': False
+        }
+        
+        try:
+            # Handle path translation for Windows paths
+            working_path = target_file
+            if strategy.get('path_translation') == 'wsl' and 'C:\\' in target_file:
+                # Convert C:\Users\... to /mnt/c/Users/...
+                working_path = target_file.replace('C:\\', '/mnt/c/').replace('\\', '/')
+            elif strategy.get('path_translation') == 'convert_first':
+                # Use wslpath to convert
+                proc = await asyncio.create_subprocess_exec(
+                    'wslpath', '-u', target_file,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await proc.communicate()
+                if proc.returncode == 0:
+                    working_path = stdout.decode().strip()
+            
+            # Build command
+            cmd_parts = [strategy['command']]
+            
+            # Handle different command types
+            if strategy['command'] in ['cat', 'type', 'more', 'head', 'tail']:
+                # Direct file reading commands
+                cmd_parts.append(working_path)
+            else:
+                # Search commands
+                cmd_parts.extend(strategy.get('paths', []))
+                # Replace placeholders
+                filename = os.path.basename(working_path)
+                args = []
+                for arg in strategy.get('args', []):
+                    args.append(arg.replace('{filename}', filename).replace('{filepath}', working_path))
+                cmd_parts.extend(args)
+            
+            # Execute
+
+# file: ..\sakana-desktop-assistant\src\learning\file_discovery.py | lines: 401-500 | window: 100
+            logger.debug(f"Testing command: {' '.join(cmd_parts)}")
+            
+            proc = await asyncio.create_subprocess_exec(
+                *cmd_parts,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+            
+            if proc.returncode == 0 and stdout:
+                output = stdout.decode()
+                
+                # Check if it's a file read or a search
+                if strategy['command'] in ['cat', 'type', 'more', 'head', 'tail']:
+                    # We successfully read the file
+                    result['found'] = True
+                    result['path'] = working_path
+                    result['content'] = output[:500]  # First 500 chars for verification
+                    result['verified'] = True
+                    logger.info(f"Success! Read file at: {working_path}")
+                else:
+                    # Search result
+                    paths = output.strip().split('\n')
+                    if paths and paths[0]:
+                        result['found'] = True
+                        result['path'] = paths[0]
+                        
+                        # If verification required, try to read the file
+                        if verification_required:
+                            verify_proc = await asyncio.create_subprocess_exec(
+                                'head', '-n', '1', paths[0],
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE
+                            )
+                            verify_out, _ = await verify_proc.communicate()
+                            if verify_proc.returncode == 0:
+                                result['verified'] = True
+                                result['first_line'] = verify_out.decode().strip()
+                        
+                        logger.info(f"Success! Found file at: {paths[0]}")
+            
+        except asyncio.TimeoutError:
+            result['error'] = 'timeout'
+        except Exception as e:
+            result['error'] = str(e)
+        
+        return result
+    
+    def _evolve_population(self, results: List[Tuple[Dict, Dict]], crisis_mode: bool = False) -> List[Dict[str, Any]]:
+        """Evolve population based on results"""
+        
+        # Enhanced fitness function for crisis mode
+        def fitness(result):
+            score = 0
+            if result[1]['found']:
+                score = 100
+                if result[1].get('verified'):
+                    score += 50  # Bonus for verification
+            elif result[1]['error'] is None:
+                score = 10
+            elif result[1]['error'] == 'timeout':
+                score = 5
+            else:
+                score = 0
+            
+            # In crisis mode, heavily penalize repeated failures
+            if crisis_mode and result[1]['error']:
+                score -= 20
+            
+            return score
+        
+        results.sort(key=fitness, reverse=True)
+        
+        # Keep best strategies
+        new_population = []
+        elite_count = min(5 if not crisis_mode else 3, len(results) // 2)
+        
+        for i in range(elite_count):
+            new_population.append(results[i][0])
+        
+        # In crisis mode, increase diversity
+        population_size = 30 if crisis_mode else 20
+        mutation_boost = 3 if crisis_mode else 1
+        
+        # Mutate and crossover
+        while len(new_population) < population_size:
+            if new_population and random.random() < 0.7:  # 70% mutation, 30% random
+                parent_idx = random.randint(0, min(elite_count, len(new_population)-1))
+                parent = new_population[parent_idx] if new_population else results[0][0]
+                
+                # Multiple mutations in crisis mode
+                child = parent.copy()
+                for _ in range(mutation_boost):
+                    child = self._mutate_strategy(child, aggressive=crisis_mode)
+                new_population.append(child)
+            else:
+                # Generate completely new strategy
+                is_windows = any('C:\\' in str(r[0]) or '/mnt/c' in str(r[0]) for r in results)
+                new_population.append(self._generate_random_strategy(is_windows))
+
+# file: ..\sakana-desktop-assistant\src\learning\file_discovery.py | lines: 501-600 | window: 100
+        
+        return new_population
+    
+    def _mutate_strategy(self, strategy: Dict[str, Any], aggressive: bool = False) -> Dict[str, Any]:
+        """Mutate a search strategy"""
+        
+        mutated = strategy.copy()
+        mutation_rate = self.search_genome['mutation_rate'] * (3 if aggressive else 1)
+        
+        # Mutate command
+        if random.random() < (0.3 if aggressive else 0.1) and self.search_genome['command_pool']:
+            mutated['command'] = random.choice(self.search_genome['command_pool'] + ['cat', 'type', 'head', 'tail'])
+        
+        # Mutate arguments
+        if random.random() < mutation_rate:
+            arg_mutations = [
+                ['-name', '{filename}'],
+                ['-iname', '{filename}'],
+                ['2>/dev/null', '-name', '{filename}'],
+                ['-type', 'f', '-name', '{filename}'],
+                ['-maxdepth', '5', '-name', '{filename}'],
+                ['{filepath}'],  # Direct file path
+                ['-path', '*{filename}*'],
+                ['*{filename}*'],
+                ['-print'],
+                []
+            ]
+            mutated['args'] = random.choice(arg_mutations)
+        
+        # Mutate paths
+        if random.random() < mutation_rate:
+            path_mutations = [
+                ['.'],
+                ['..'],
+                ['/'],
+                ['~'],
+                [os.path.expanduser('~')],
+                ['/home'],
+                [f'/home/{os.environ.get("USER", "user")}'],
+                ['/mnt/c/Users'],
+                ['/mnt/c/Users/nicol'],
+                ['/mnt/c/Users/nicol/OneDrive'],
+                ['/mnt/c/Users/nicol/OneDrive/Desktop'],
+                ['/mnt/c/Users/nicol/Desktop'],
+                [os.getcwd()],
+                ['']  # No path for direct access
+            ]
+            mutated['paths'] = random.choice(path_mutations)
+        
+        # Mutate path translation strategy
+        if random.random() < mutation_rate / 2:
+            mutated['path_translation'] = random.choice(['wsl', 'direct_wsl', 'convert_first', 'cygwin', None])
+        
+        return mutated
+    
+    def _record_success(self, strategy: Dict[str, Any], result: Dict[str, Any]):
+        """Record successful strategy for future use"""
+        
+        success_record = {
+            'strategy': strategy,
+            'result': result,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        self.successful_patterns.append(success_record)
+        
+        # Update command success rate
+        cmd = strategy['command']
+        if cmd in self.discovered_commands:
+            cmd_obj = self.discovered_commands[cmd]
+            cmd_obj.attempts += 1
+            cmd_obj.success_rate = (cmd_obj.success_rate * (cmd_obj.attempts - 1) + 1) / cmd_obj.attempts
+        
+        logger.info(f"Recorded successful pattern: {strategy}")
+        
+        # Add to permanent knowledge
+        self.knowledge.add_successful_pattern(success_record)
+        
+        # Save updated success data to cache
+        self._save_cache()
+    
+    async def learn_from_environment(self):
+        """Explore the environment to learn about file structure"""
+        
+        logger.info("Exploring environment to learn file structure...")
+        
+        # Try to discover directory listing commands
+        list_candidates = ['ls', 'dir', 'list', 'show']
+        
+        for cmd in list_candidates:
+            try:
+                result = subprocess.run([cmd], capture_output=True, text=True, timeout=2)
+                if result.returncode == 0:
+                    logger.info(f"Discovered listing command: {cmd}")
+                    self.discovered_commands[f'{cmd}_list'] = FileCommand(command=cmd)
+            except:
+                pass
+        
+        # Learn about path structures
+        self._discover_path_patterns()
+
+# file: ..\sakana-desktop-assistant\src\learning\file_discovery.py | lines: 601-700 | window: 100
+    
+    def _discover_path_patterns(self):
+        """Discover common path patterns in the system"""
+        
+        # Try to understand path separators
+        separators = ['/', '\\']
+        
+        # Test which paths exist
+        test_paths = [
+            '/', '/home', '/usr', '/etc',
+            'C:\\', 'D:\\', 'C:\\Users',
+            '~', '.', '..'
+        ]
+        
+        discovered_paths = []
+        
+        for path in test_paths:
+            if os.path.exists(os.path.expanduser(path)):
+                discovered_paths.append(path)
+                logger.info(f"Discovered valid path: {path}")
+        
+        self.search_genome['path_strategies'] = discovered_paths
+    
+    def get_learned_summary(self) -> Dict[str, Any]:
+        """Get summary of what has been learned"""
+        
+        return {
+            'discovered_commands': list(self.discovered_commands.keys()),
+            'successful_patterns': len(self.successful_patterns),
+            'known_paths': self.search_genome.get('path_strategies', []),
+            'total_explorations': len(self.exploration_history),
+            'best_commands': [
+                {'command': cmd, 'success_rate': obj.success_rate}
+                for cmd, obj in self.discovered_commands.items()
+                if obj.success_rate > 0
+            ],
+            'knowledge_stats': self.knowledge.get_discovery_stats()
+        }
+    
+    def generate_knowledge_report(self) -> str:
+        """Generate a report of accumulated knowledge"""
+        return self.knowledge.export_knowledge_report()
+    
+    def _calculate_best_fitness(self, results: List[Tuple[Dict, Dict]]) -> float:
+        """Calculate the best fitness from results"""
+        if not results:
+            return 0.0
+        
+        best_fitness = 0.0
+        for _, result in results:
+            fitness = 0.0
+            if result['found']:
+                fitness = 100.0
+                if result.get('verified'):
+                    fitness += 50.0
+            elif result['error'] is None:
+                fitness = 10.0
+            elif result['error'] == 'timeout':
+                fitness = 5.0
+            
+            best_fitness = max(best_fitness, fitness)
+        
+        return best_fitness
+    
+    def _load_cache(self):
+        """Load cached discoveries from disk"""
+        
+        if os.path.exists(self.cache_file):
+            try:
+                with open(self.cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                
+                # Restore discovered commands
+                for cmd_data in cache_data.get('discovered_commands', []):
+                    cmd = FileCommand(
+                        command=cmd_data['command'],
+                        success_rate=cmd_data.get('success_rate', 0.0),
+                        attempts=cmd_data.get('attempts', 0),
+                        discovered_at=cmd_data.get('discovered_at')
+                    )
+                    self.discovered_commands[cmd.command] = cmd
+                
+                # Restore genome
+                self.search_genome.update(cache_data.get('search_genome', {}))
+                
+                # Restore successful patterns
+                self.successful_patterns = cache_data.get('successful_patterns', [])
+                
+                logger.info(f"Loaded {len(self.discovered_commands)} cached commands")
+                
+            except Exception as e:
+                logger.warning(f"Failed to load cache: {e}")
+    
+    def _save_cache(self):
+        """Save discoveries to cache"""
+        
+        try:
+            cache_data = {
+                'timestamp': datetime.now().isoformat(),
+                'discovered_commands': [
+
+# file: ..\sakana-desktop-assistant\src\learning\file_discovery.py | lines: 701-747 | window: 100
+                    {
+                        'command': cmd.command,
+                        'success_rate': cmd.success_rate,
+                        'attempts': cmd.attempts,
+                        'discovered_at': cmd.discovered_at
+                    }
+                    for cmd in self.discovered_commands.values()
+                ],
+                'search_genome': self.search_genome,
+                'successful_patterns': self.successful_patterns[-20:]  # Keep last 20 patterns
+            }
+            
+            with open(self.cache_file, 'w') as f:
+                json.dump(cache_data, f, indent=2)
+                
+            logger.info(f"Saved {len(self.discovered_commands)} commands to cache")
+            
+        except Exception as e:
+            logger.error(f"Failed to save cache: {e}")
+    
+    def _has_valid_cache(self) -> bool:
+        """Check if cache is recent and valid"""
+        
+        if not os.path.exists(self.cache_file):
+            return False
+        
+        try:
+            # Check cache age
+            cache_age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(self.cache_file))
+            
+            # Cache is valid for 7 days
+            if cache_age.days > 7:
+                logger.info("Cache is older than 7 days, will rediscover")
+                return False
+            
+            # Check if we have any commands
+            return len(self.search_genome.get('command_pool', [])) > 0
+            
+        except Exception:
+            return False
+    
+    def invalidate_cache(self):
+        """Force rediscovery on next run"""
+        
+        if os.path.exists(self.cache_file):
+            os.remove(self.cache_file)
+            logger.info("Cache invalidated, will rediscover on next run")

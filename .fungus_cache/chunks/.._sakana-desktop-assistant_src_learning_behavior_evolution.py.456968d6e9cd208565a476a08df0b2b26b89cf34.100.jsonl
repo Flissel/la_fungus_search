@@ -1,0 +1,226 @@
+# file: ..\sakana-desktop-assistant\src\learning\behavior_evolution.py | lines: 1-100 | window: 100
+"""
+Behavior evolution system for discovering new capabilities
+"""
+
+import random
+import json
+from typing import Dict, Any, List, Optional, Callable
+from dataclasses import dataclass
+import logging
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class BehaviorGene:
+    """Represents an evolvable behavior"""
+    name: str
+    code: str
+    fitness: float = 0.0
+    successful_uses: int = 0
+    failed_uses: int = 0
+    
+    def mutate(self) -> 'BehaviorGene':
+        """Create a mutated version of this behavior"""
+        mutations = [
+            self._mutate_add_line,
+            self._mutate_modify_line,
+            self._mutate_reorder,
+            self._mutate_combine
+        ]
+        
+        mutation_func = random.choice(mutations)
+        return mutation_func()
+    
+    def _mutate_add_line(self) -> 'BehaviorGene':
+        """Add a new line of behavior"""
+        new_lines = [
+            "# Try alternative approach",
+            "if 'error' in result: result = self._retry_with_variation()",
+            "paths_to_try = self._generate_path_variations(original_path)",
+            "self._learn_from_attempt(attempt_data)",
+            "discovered_commands = self._explore_available_commands()"
+        ]
+        
+        lines = self.code.split('\n')
+        insert_pos = random.randint(0, len(lines))
+        lines.insert(insert_pos, random.choice(new_lines))
+        
+        return BehaviorGene(
+            name=f"{self.name}_mutated",
+            code='\n'.join(lines)
+        )
+    
+    def _mutate_modify_line(self) -> 'BehaviorGene':
+        """Modify an existing line"""
+        lines = self.code.split('\n')
+        if not lines:
+            return self
+        
+        # Simple modifications
+        modifications = {
+            "'cat'": "random.choice(['cat', 'type', 'read'])",
+            "'/mnt/c/'": "self._detect_path_prefix()",
+            "'absolute'": "random.choice(['absolute', 'relative', 'smart'])",
+            "True": "random.choice([True, False])"
+        }
+        
+        line_idx = random.randint(0, len(lines) - 1)
+        for old, new in modifications.items():
+            if old in lines[line_idx]:
+                lines[line_idx] = lines[line_idx].replace(old, new)
+                break
+        
+        return BehaviorGene(
+            name=f"{self.name}_modified",
+            code='\n'.join(lines)
+        )
+    
+    def _mutate_reorder(self) -> 'BehaviorGene':
+        """Reorder lines of behavior"""
+        lines = self.code.split('\n')
+        if len(lines) > 2:
+            i, j = random.sample(range(len(lines)), 2)
+            lines[i], lines[j] = lines[j], lines[i]
+        
+        return BehaviorGene(
+            name=f"{self.name}_reordered",
+            code='\n'.join(lines)
+        )
+    
+    def _mutate_combine(self) -> 'BehaviorGene':
+        """Combine with exploration behavior"""
+        exploration_code = """
+# Explore new approaches
+for attempt in range(3):
+    try:
+        result = self._try_novel_approach(attempt)
+        if result: break
+    except: continue
+"""
+        return BehaviorGene(
+
+# file: ..\sakana-desktop-assistant\src\learning\behavior_evolution.py | lines: 101-200 | window: 100
+            name=f"{self.name}_exploratory",
+            code=self.code + '\n' + exploration_code
+        )
+
+class BehaviorEvolver:
+    """Evolves behaviors for specific tasks"""
+    
+    def __init__(self):
+        self.behavior_pool: Dict[str, List[BehaviorGene]] = {}
+        self.discovered_capabilities = set()
+        
+    def initialize_behaviors(self, task_type: str):
+        """Initialize behavior pool for a task type"""
+        
+        if task_type == "document_summarization":
+            self.behavior_pool[task_type] = [
+                BehaviorGene(
+                    name="direct_cat",
+                    code="""
+# Direct approach using cat
+result = self.plugin_manager.handle_command(f'cat {file_path}', context)
+if result: return self._summarize_content(result['content'])
+"""
+                ),
+                BehaviorGene(
+                    name="exploratory_reader",
+                    code="""
+# Try multiple reading approaches
+commands = ['cat', 'type', 'read', 'get-content']
+for cmd in commands:
+    try:
+        result = self._try_command(f'{cmd} {file_path}')
+        if result: return self._summarize_content(result)
+    except: continue
+"""
+                ),
+                BehaviorGene(
+                    name="path_transformer",
+                    code="""
+# Transform paths between Windows and WSL
+if file_path.startswith('C:\\\\'):
+    wsl_path = '/mnt/c/' + file_path[3:].replace('\\\\', '/')
+    return self._read_file(wsl_path)
+"""
+                ),
+                BehaviorGene(
+                    name="learning_reader",
+                    code="""
+# Learn from previous attempts
+past_attempts = self._get_past_attempts('file_reading')
+successful_patterns = self._extract_successful_patterns(past_attempts)
+return self._apply_learned_patterns(file_path, successful_patterns)
+"""
+                )
+            ]
+    
+    async def evolve_behavior(self, task_type: str, fitness_func: Callable) -> BehaviorGene:
+        """Evolve behaviors for a task using genetic algorithm"""
+        
+        if task_type not in self.behavior_pool:
+            self.initialize_behaviors(task_type)
+        
+        population = self.behavior_pool[task_type]
+        
+        # Evaluate current population
+        for behavior in population:
+            behavior.fitness = await fitness_func(behavior)
+        
+        # Sort by fitness
+        population.sort(key=lambda b: b.fitness, reverse=True)
+        
+        # Generate new behaviors through mutation and crossover
+        new_behaviors = []
+        
+        # Keep best behaviors
+        elite_count = max(2, len(population) // 4)
+        new_behaviors.extend(population[:elite_count])
+        
+        # Generate mutations
+        while len(new_behaviors) < len(population) * 2:
+            parent = random.choice(population[:len(population)//2])  # Select from better half
+            mutant = parent.mutate()
+            new_behaviors.append(mutant)
+        
+        # Update population
+        self.behavior_pool[task_type] = new_behaviors[:20]  # Keep population size manageable
+        
+        # Return best behavior
+        return population[0]
+    
+    def discover_capability(self, capability: str, implementation: str):
+        """Record a newly discovered capability"""
+        
+        if capability not in self.discovered_capabilities:
+            logger.info(f"Discovered new capability: {capability}")
+            self.discovered_capabilities.add(capability)
+            
+            # Create behavior gene for this capability
+            new_behavior = BehaviorGene(
+                name=f"discovered_{capability}",
+
+# file: ..\sakana-desktop-assistant\src\learning\behavior_evolution.py | lines: 201-221 | window: 100
+                code=implementation
+            )
+            
+            # Add to all relevant task types
+            for task_type in self.behavior_pool:
+                self.behavior_pool[task_type].append(new_behavior)
+    
+    def get_behavior_code(self, behavior: BehaviorGene, context: Dict[str, Any]) -> str:
+        """Generate executable code from behavior gene"""
+        
+        # Wrap behavior code in a function
+        func_code = f"""
+async def evolved_behavior(self, file_path=None, context=None):
+    '''Evolved behavior: {behavior.name}'''
+    import random
+    
+{behavior.code}
+    
+    return None  # Fallback
+"""
+        return func_code
