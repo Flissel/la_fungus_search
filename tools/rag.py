@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
 Einfache RAG (Retrieval Augmented Generation) Pipeline mit EmbeddingGemma
+
+LEGACY NOTICE:
+- This SimpleRAG module is a minimal FAISS-based example.
+- For production and large repos, prefer `embeddinggemma.enterprise_rag.EnterpriseCodeRAG`
+  which provides Qdrant + LlamaIndex indexing, AST-based chunking, hybrid retrieval, and
+  optional generation via HF or Ollama. The primary UI is `streamlit_fungus.py` with a
+  dedicated "Rag" section for Enterprise RAG.
 """
 
 import os

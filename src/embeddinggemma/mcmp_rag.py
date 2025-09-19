@@ -92,7 +92,7 @@ class MCPMRetriever:
         self._doc_emb_torch = None  # type: ignore
         self._doc_emb_torch_norm = None  # type: ignore
         # Logging cadence
-        self.log_every: int = 20
+        self.log_every: int = 1
         # FAISS index for coarse retrieval
         self._faiss_index = None
         self._faiss_gpu_res = None
@@ -1064,62 +1064,6 @@ class MCPMRetriever:
         else:
             plt.show()
 
-def demo_mcpm():
-    """Demo der MCPM-RAG Funktionalität"""
-    print("🧠 MCPM-RAG Demo gestartet...")
-    
-    # MCPM System initialisieren
-    mcmp = MCPMRetriever(num_agents=200, max_iterations=50)
-    
-    # Beispiel-Dokumente
-    documents = [
-        "Python ist eine Programmiersprache für vielseitige Anwendungen",
-        "Machine Learning nutzt Algorithmen um aus Daten zu lernen",
-        "Künstliche Intelligenz revolutioniert viele Industriezweige", 
-        "Deep Learning ist ein Teilbereich des Machine Learning",
-        "Natural Language Processing ermöglicht Sprachverständnis",
-        "Computer Vision analysiert und interpretiert Bilder",
-        "Reinforcement Learning lernt durch Belohnung und Bestrafung",
-        "Data Science kombiniert Statistik und Programmierung",
-        "Neural Networks imitieren die Struktur des Gehirns",
-        "Big Data erfordert spezielle Analyse-Werkzeuge"
-    ]
-    
-    # Dokumente hinzufügen
-    if not mcmp.add_documents(documents):
-        print("❌ Demo abgebrochen - EmbeddingGemma nicht verfügbar")
-        return
-    
-    # Beispiel-Suchen
-    queries = [
-        "Wie funktioniert Machine Learning?",
-        "Was ist der Unterschied zwischen AI und ML?",
-        "Python Programming beste Praktiken"
-    ]
-    
-    for query in queries:
-        print(f"\n🔍 Query: '{query}'")
-        print("-" * 50)
-        
-        results = mcmp.search(query, top_k=5, verbose=False)
-        
-        if "error" in results:
-            print(f"❌ Fehler: {results['error']}")
-            continue
-        
-        print(f"📊 Gefunden: {len(results['results'])} Dokumente")
-        print(f"🕸️  Netzwerk-Pfade: {results['pheromone_trails']}")
-        
-        for i, result in enumerate(results['results'][:3], 1):
-            print(f"  {i}. [{result['relevance_score']:.3f}] {result['content'][:60]}...")
-    
-    # Visualisierung
-    try:
-        mcmp.visualize_search_process("mcmp_demo_results.png")
-    except Exception as e:
-        print(f"⚠️  Visualisierung nicht möglich: {e}")
-    
-    print("\n✅ MCPM-RAG Demo abgeschlossen!")
 
-if __name__ == "__main__":
-    demo_mcmp()
+
+

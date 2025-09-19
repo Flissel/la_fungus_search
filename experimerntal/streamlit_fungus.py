@@ -8,6 +8,12 @@ import streamlit as st
 import time
 from datetime import datetime
 import io
+
+# Ensure 'src' is on sys.path so `embeddinggemma.*` imports work when running from repo root
+_SRC_PATH = os.path.abspath(os.path.join(os.getcwd(), "src"))
+if _SRC_PATH not in sys.path:
+    sys.path.insert(0, _SRC_PATH)
+
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
@@ -24,10 +30,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Ensure project root on path to import MCPMRetriever
 sys.path.append(os.path.abspath("."))
 try:
-    from mcmp_rag import MCPMRetriever  # type: ignore
-except Exception as e:
-    MCPMRetriever = None  # type: ignore
-    st.error(f"MCPMRetriever Import failed: {e}")
+    from embeddinggemma.mcmp_rag import MCPMRetriever  # type: ignore
+except Exception:
+    try:
+        from mcmp_rag import MCPMRetriever  # type: ignore
+    except Exception as e:
+        MCPMRetriever = None  # type: ignore
+        st.error(f"MCPMRetriever Import failed: {e}")
 
 
 CACHE_DIR = os.path.join(".fungus_cache", "chunks")
@@ -36,8 +45,6 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # Report artifacts (background runs)
 REPORTS_DIR = os.path.join(".fungus_cache", "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
-GIF_DIR = os.path.join(".fungus_cache", "gifs")
-os.makedirs(GIF_DIR, exist_ok=True)
 
 # Lightweight background executor for long-running report jobs
 BG_EXECUTOR = ThreadPoolExecutor(max_workers=2)
@@ -63,11 +70,41 @@ except Exception:
 
 # Optional Enterprise RAG (persistent store) for the Rag section
 try:
-    from embeddinggemma.enterprise_rag import EnterpriseCodeRAG  # type: ignore
+    from embeddinggemma.rag_v1 import RagV1  # type: ignore
     HAS_ENTERPRISE_RAG = True
 except Exception:
-    HAS_ENTERPRISE_RAG = False
+    try:
+        from embeddinggemma.enterprise_rag import EnterpriseCodeRAG as RagV1  # type: ignore
+        HAS_ENTERPRISE_RAG = True
+    except Exception:
+        HAS_ENTERPRISE_RAG = False
 
+# Import refactored helpers
+from embeddinggemma.ui.state import Settings, init_session  # type: ignore
+from embeddinggemma.ui.corpus import collect_codebase_chunks, list_code_files, chunk_python_file  # type: ignore
+from embeddinggemma.ui.queries import generate_multi_queries_from_llm, dedup_multi_queries  # type: ignore
+from embeddinggemma.ui.mcmp_runner import select_diverse_results, quick_search_with_mcmp  # type: ignore
+from embeddinggemma.ui.agent import build_langchain_agent_if_available  # type: ignore
+
+
+def _make_snippet(item: Dict[str, Any], q: str, radius: int = 5) -> Dict[str, Any]:
+    text = item.get('content') or ''
+    lines = text.splitlines()
+    try:
+        pattern = re.compile(re.escape(q), re.IGNORECASE)
+    except Exception:
+        pattern = None
+    idx = None
+    if pattern:
+        for i, ln in enumerate(lines):
+            if pattern.search(ln):
+                idx = i
+                break
+    if idx is None:
+        return {**item, 'snippet': '\n'.join(lines[:min(10, len(lines))])}
+    s = max(0, idx - radius)
+    e = min(len(lines), idx + radius + 1)
+    return {**item, 'snippet': '\n'.join(lines[s:e])}
 
 def _file_sha1(path: str) -> str:
     try:
@@ -112,126 +149,6 @@ def _save_cached_chunks(path: str, windows: List[int], chunks: List[str], ui: bo
             st.write(f"[cache] save {os.path.relpath(path)} -> {len(chunks)} chunks")
     except Exception:
         pass
-
-
-def chunk_python_file(path: str, windows: List[int]) -> List[str]:
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-    except Exception:
-        return []
-    chunks: List[str] = []
-    total = len(lines)
-    rel = os.path.relpath(path)
-    for w in windows:
-        for i in range(0, total, w):
-            start = i + 1
-            end = min(i + w, total)
-            body = ''.join(lines[i:end])
-            if body.strip():
-                header = f"# file: {rel} | lines: {start}-{end} | window: {w}\n"
-                chunks.append(header + body)
-    return chunks
-
-
-def collect_codebase_chunks(root_dir: str, windows: List[int], max_files: int, exclude_dirs: List[str] = None, ui: bool = True) -> List[str]:
-    files_to_process: List[str] = []
-    count = 0
-    for root, dirs, files in os.walk(root_dir):
-        # Apply folder exclusions in-place so os.walk prunes
-        if exclude_dirs:
-            dirs[:] = [d for d in dirs if not any(ex in os.path.join(root, d) for ex in exclude_dirs)]
-        for fn in files:
-            if fn.endswith('.py'):
-                files_to_process.append(os.path.join(root, fn))
-                count += 1
-                if max_files and count >= max_files:
-                    break
-        if max_files and count >= max_files:
-            break
-    if ui:
-        st.write(f"[chunks] discovered {len(files_to_process)} files under {root_dir}")
-    # Parallel, cache-aware chunking
-    docs: List[str] = []
-    max_workers = int(st.session_state.get('chunk_workers_override', 0)) or max(4, min(32, (os.cpu_count() or 8) * 2))
-    if ui:
-        st.write(f"[chunks] using {max_workers} workers; windows={windows}")
-        # Animated progress elements
-        files_total = len(files_to_process) or 1
-        files_done = 0
-        chunks_total = 0
-        bar_files = st.progress(0, text=f"0/{files_total} files")
-        bar_chunks = st.progress(0, text="0 chunks")
-        status_box = st.empty()
-    else:
-        files_total = len(files_to_process) or 1
-        files_done = 0
-        chunks_total = 0
-        status_box = None
-    statuses: Dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = {}
-        for p in files_to_process:
-            cached = _load_cached_chunks(p, windows, ui=ui)
-            if cached:
-                docs.extend(cached)
-                chunks_total += len(cached)
-                files_done += 1
-                statuses[os.path.relpath(p)] = f"⚡ cache hit → {len(cached)} chunks"
-                if ui:
-                    bar_files.progress(min(files_done / files_total, 1.0), text=f"{files_done}/{files_total} files")
-                    bar_chunks.progress(1.0 if chunks_total == 0 else min(1.0, 0.0), text=f"{chunks_total} chunks")
-            else:
-                if ui:
-                    st.write(f"[chunks] submit {os.path.relpath(p)}")
-                futures[ex.submit(chunk_python_file, p, windows)] = p
-                statuses[os.path.relpath(p)] = "⏳ chunking…"
-            # render statuses (cap to 200 lines)
-            if ui and statuses:
-                lines = [f"{k}: {v}" for k, v in list(statuses.items())[-200:]]
-                status_box.write("\n".join(lines))
-        processed = 0
-        for fut in as_completed(futures):
-            p = futures[fut]
-            try:
-                chunks = fut.result()
-            except Exception:
-                chunks = []
-            if chunks:
-                docs.extend(chunks)
-                # save to cache for next runs
-                _save_cached_chunks(p, windows, chunks, ui=ui)
-                statuses[os.path.relpath(p)] = f"✅ done → {len(chunks)} chunks"
-                chunks_total += len(chunks)
-            else:
-                statuses[os.path.relpath(p)] = "⚠️ failed or empty"
-            processed += 1
-            files_done += 1
-            if ui:
-                bar_files.progress(min(files_done / files_total, 1.0), text=f"{files_done}/{files_total} files")
-                bar_chunks.progress(0.0 if chunks_total == 0 else min(1.0, chunks_total / max(1, chunks_total)), text=f"{chunks_total} chunks")
-                if processed % 10 == 0:
-                    st.write(f"[chunks] processed {processed}/{len(futures)} async files; total chunks={len(docs)}")
-            # refresh status list
-            if ui:
-                lines = [f"{k}: {v}" for k, v in list(statuses.items())[-200:]]
-                status_box.write("\n".join(lines))
-    return docs
-
-
-def list_code_files(root_dir: str, max_files: int, exclude_dirs: List[str] = None) -> List[str]:
-    files_found: List[str] = []
-    count = 0
-    for root, dirs, files in os.walk(root_dir):
-        if exclude_dirs:
-            dirs[:] = [d for d in dirs if not any(ex in os.path.join(root, d) for ex in exclude_dirs)]
-        for fn in files:
-            if fn.endswith('.py'):
-                files_found.append(os.path.join(root, fn))
-                count += 1
-                if max_files and count >= max_files:
-                    return files_found
-    return files_found
 
 
 def identifiers_from_text(text: str) -> List[str]:
@@ -324,33 +241,6 @@ def _normalize_query_text(text: str) -> str:
 def _token_set(text: str) -> set:
     return set(_normalize_query_text(text).split())
 
-
-def dedup_multi_queries(queries: List[str], similarity_threshold: float = 0.8) -> List[str]:
-    """Remove near-duplicate queries by token Jaccard similarity to already kept items."""
-    if not queries:
-        return []
-    kept: List[str] = []
-    kept_sets: List[set] = []
-    thr = max(0.0, min(float(similarity_threshold), 1.0))
-    for q in queries:
-        ts = _token_set(q)
-        if not ts:
-            continue
-        duplicate = False
-        for ks in kept_sets:
-            inter = len(ts & ks)
-            union = len(ts | ks) or 1
-            jacc = inter / union
-            if jacc >= thr:
-                duplicate = True
-                break
-        if not duplicate:
-            kept.append(q)
-            kept_sets.append(ts)
-    # Ensure at least one query remains
-    if not kept and queries:
-        kept = [queries[0]]
-    return kept
 
 def _extract_source(meta: Dict[str, Any], content: str) -> str:
     src = (meta or {}).get('file_path') if isinstance(meta, dict) else None
@@ -834,22 +724,26 @@ with st.sidebar:
     st.markdown("### Diversity & Breadth")
     div_alpha = st.slider("MMR alpha (relevance vs. diversity)", min_value=0.0, max_value=1.0, value=0.7, step=0.05)
     dedup_tau = st.slider("Dedup cosine threshold", min_value=0.80, max_value=0.99, value=0.92, step=0.01)
-    per_folder_cap = st.number_input("Per-folder cap", min_value=0, max_value=10, value=2, step=1, help="0 = no cap")
-    pure_topk = st.checkbox("Pure Top-K (disable diversity)", value=False, help="If enabled, results are sorted strictly by relevance_score and truncated to Top K.")
+    cols_div = st.columns([1, 1])
+    with cols_div[0]:
+        per_folder_cap = st.number_input("Per-folder cap", min_value=0, max_value=10, value=2, step=1, help="0 = no cap")
+    with cols_div[1]:
+        pure_topk = st.checkbox("Pure Top-K (disable diversity)", value=False, help="If enabled, results are sorted strictly by relevance_score and truncated to Top K.")
     # Logging & params
     st.markdown("### Simulation & Logging")
-    log_every = st.number_input("Log every N iterations", min_value=1, max_value=100, value=10, step=1)
-    exploration_bonus = st.slider("Exploration bonus", min_value=0.01, max_value=0.5, value=0.1, step=0.01)
-    pheromone_decay = st.slider("Pheromone decay", min_value=0.80, max_value=0.999, value=0.95, step=0.001)
-    embed_bs = st.number_input("Embedding batch size", min_value=16, max_value=1024, value=64, step=16, help="Batch size for GPU embedding encode()")
+    cols_sim = st.columns([1, 1, 1, 1])
+    with cols_sim[0]:
+        log_every = st.number_input("Log every N iterations", min_value=1, max_value=100, value=10, step=1)
+    with cols_sim[1]:
+        exploration_bonus = st.slider("Exploration bonus", min_value=0.01, max_value=0.5, value=0.1, step=0.01)
+    with cols_sim[2]:
+        pheromone_decay = st.slider("Pheromone decay", min_value=0.80, max_value=0.999, value=0.95, step=0.001)
+    with cols_sim[3]:
+        embed_bs = st.number_input("Embedding batch size", min_value=16, max_value=1024, value=64, step=16, help="Batch size for GPU embedding encode()")
     mcp_debug = st.checkbox("MCPM debug logs (stdout)", value=False, help="Print detailed MCPM debug logs to the Streamlit server console.")
     st.markdown("### Keyword Boost (optional)")
     kw_lambda = st.slider("Keyword boost λ", min_value=0.0, max_value=1.0, value=0.0, step=0.05)
     kw_terms_str = st.text_input("Query keywords (comma‑separated)", value="")
-    st.markdown("### Snapshot GIF")
-    record_gif = st.checkbox("Record snapshots to animated GIF", value=False)
-    gif_every = st.number_input("Snapshot every N iterations", min_value=1, max_value=50, value=5, step=1)
-    gif_fps = st.number_input("GIF FPS", min_value=1, max_value=24, value=6, step=1)
     # Sharding
     st.markdown("### Sharding")
     max_chunks_per_shard = st.number_input("Max chunks per shard (0 = no sharding)", min_value=0, max_value=20000, value=2000, step=100)
@@ -941,7 +835,6 @@ with st.sidebar:
         height=120,
         help="Provide multiple queries, one per line. Leave empty to auto-generate when enabled."
     )
-    # Show last generated list for transparency
     if auto_multi and not multi_queries_text.strip() and st.session_state.get('generated_multi_queries'):
         st.caption("Last generated multi-queries:")
         try:
@@ -949,13 +842,16 @@ with st.sidebar:
         except Exception:
             pass
 
-query = st.text_input(
-    "Query",
-    value=(
-        "Explain how Enterprise RAG and Fungus MCPM are implemented here, and how to run them."
-    )
-)
-run = st.button("Run")
+    cols_q = st.columns([4, 1])
+    with cols_q[0]:
+        query = st.text_input(
+            "Query",
+            value=(
+                "Explain how Enterprise RAG and Fungus MCPM are implemented here, and how to run them."
+            )
+        )
+    with cols_q[1]:
+        run = st.button("Run")
 
 # Consolidated settings object used by agent and background jobs
 settings_obj: Dict[str, Any] = {
@@ -1015,10 +911,10 @@ if run:
                 # Enterprise RAG over persistent store (Qdrant + LlamaIndex)
                 st.subheader("Rag (Enterprise store)")
                 if not HAS_ENTERPRISE_RAG:
-                    st.error("Enterprise RAG not available. Ensure `embeddinggemma.enterprise_rag` imports and dependencies are installed (Qdrant, LlamaIndex).")
+                    st.error("Enterprise RAG (rag_v1) not available. Ensure `embeddinggemma.rag_v1` (or `embeddinggemma.enterprise_rag`) imports and dependencies are installed (Qdrant, LlamaIndex).")
                     st.stop()
                 if 'enterprise_rag' not in st.session_state:
-                    st.session_state.enterprise_rag = EnterpriseCodeRAG(use_ollama=True, ollama_model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'))
+                    st.session_state.enterprise_rag = RagV1(use_ollama=True, ollama_model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'))
                 er = st.session_state.enterprise_rag
                 persist_dir = st.text_input("Index directory", value="./enterprise_index")
                 cols_r = st.columns([1,1,2])
@@ -1165,6 +1061,8 @@ if run:
                             import requests
                             host = os.environ.get('OLLAMA_HOST','http://127.0.0.1:11434').rstrip('/')
                             model = os.environ.get('OLLAMA_MODEL','qwen2.5-coder:7b')
+                            #TODO: Track prompt to debug
+                            _log(f"Prompt:Summary {prompt}")
                             r = requests.post(
                                 f"{host}/api/generate",
                                 json={
@@ -1187,7 +1085,8 @@ if run:
                             dot = Digraph(comment="Summary Tree")
                             dot.node("Q", f"Query: {query[:50]}…")
                             for s in summaries:
-                                label = f"iter {s['iter']}\n{(s['summary'] or '')[:80]}…"
+                                preview = (s.get('summary') or '')[:80]
+                                label = f"iter {s['iter']}\n{preview}…"
                                 node_id = f"iter{s['iter']}"
                                 dot.node(node_id, label)
                                 dot.edge("Q", node_id)
@@ -1199,36 +1098,6 @@ if run:
                     dbg_state.info(f"[mode={mode}] running search…")
                     # If multi-queries provided, run multi-query path; else single-query
                     if mq_list or (auto_multi and (not mq_list) and query.strip()):
-                        gif_snaps: List[Dict[str, Any]] = []
-                        if (not mq_list) and auto_multi and query.strip():
-                            try:
-                                # Prefer grounded context: detected files represented in embeddings
-                                grounding_files = loaded_files if 'loaded_files' in locals() else []
-                                # Also incorporate user-provided file hints if present
-                                user_hints = [
-                                    "src/embeddinggemma/rag.py",
-                                    "src/embeddinggemma/cli.py",
-                                    "src/embeddinggemma/app.py",
-                                    "src/embeddinggemma/enterprise_rag.py",
-                                    "src/embeddinggemma/agent_fungus_rag.py",
-                                    "src/embeddinggemma/fungus_api.py",
-                                    "src/embeddinggemma/codespace_analyzer.py",
-                                ]
-                                context_list = list({*grounding_files, *user_hints})
-                                kw_hints = [t.strip() for t in (kw_terms_str or "").split(',') if t.strip()]
-                                mq_list = generate_multi_queries_from_llm(query.strip(), int(auto_multi_n), context_list, kw_hints)
-                                st.info(f"Generated {len(mq_list)} multi-queries from base Query")
-                                _log(f"Auto-generated multi-queries: {len(mq_list)}")
-                                for i, ql in enumerate(mq_list[:5], 1):
-                                    _log(f"  {i}. {ql}")
-                                st.session_state['generated_multi_queries'] = list(mq_list)
-                                # Also display the full generated list immediately for clarity
-                                with st.expander("Generated Multi-Queries", expanded=True):
-                                    st.code("\n".join(mq_list))
-                            except Exception as _e:
-                                st.warning(f"Failed to auto-generate queries: {_e}")
-                                _log(f"Auto-generate failed: {_e}")
-                                mq_list = []
                         # Deduplicate if requested (either user-provided or generated list)
                         before = len(mq_list)
                         if dedup_enable and mq_list:
@@ -1282,9 +1151,22 @@ if run:
                                         _log(f"[multi] {qline} step {step_i}/{int(max_iterations)} avg_rel={float(stats.get('avg_relevance',0.0)):.3f}")
                                         # advance prev snapshot
                                         prev_trails = dict(retr.pheromone_trails)
-                                    if record_gif and (step_i % int(gif_every) == 0 or step_i == int(max_iterations) - 1):
-                                        snap = retr.get_visualization_snapshot()
-                                        gif_snaps.append(snap)
+                                    if (step_i % int(log_every) == 0 or step_i == int(max_iterations) - 1):
+                                        # Compute trail diffs vs previous snapshot and order by (start,end)
+                                        try:
+                                            diffs = diff_trails(prev_trails, retr.pheromone_trails)
+                                            diffs_sorted = sorted(diffs, key=lambda d: (d.get('edge',(0,0))[0], d.get('edge',(0,0))[1]))
+                                        except Exception:
+                                            diffs_sorted = []
+                                        events_accum.append({
+                                            "mode": "single",
+                                            "step": step_i,
+                                            "avg_relevance": float(stats.get('avg_relevance', 0.0)),
+                                            "trail_deltas": diffs_sorted[:50],
+                                        })
+                                        dbg_state.info(f"[shard {s_start}-{s_end}] step {step_i}/{int(max_iterations)} avg_rel={stats.get('avg_relevance',0):.3f}")
+                                        _log(f"[single] step {step_i}/{int(max_iterations)} avg_rel={float(stats.get('avg_relevance',0.0)):.3f}")
+                                        prev_trails = dict(retr.pheromone_trails)
                                 res_shard = retr.search(qline, top_k=int(top_k))
                                 per_query_results[qline].extend(res_shard.get('results', []))
                             _log(f"Shard {s_start}-{s_end}: accumulated results updated")
@@ -1335,7 +1217,6 @@ if run:
                     else:
                         # Single-query sharded search
                         aggregated_items: List[Dict[str, Any]] = []
-                        gif_snaps: List[Dict[str, Any]] = []
                         total_chunks = len(docs)
                         shard_size = int(max_chunks_per_shard)
                         if shard_size <= 0 or shard_size >= total_chunks:
@@ -1371,9 +1252,21 @@ if run:
                                     dbg_state.info(f"[shard {s_start}-{s_end}] step {step_i}/{int(max_iterations)} avg_rel={stats.get('avg_relevance',0):.3f}")
                                     _log(f"[single] step {step_i}/{int(max_iterations)} avg_rel={float(stats.get('avg_relevance',0.0)):.3f}")
                                     prev_trails = dict(retr.pheromone_trails)
-                                if record_gif and (step_i % int(gif_every) == 0 or step_i == int(max_iterations) - 1):
-                                    snap = retr.get_visualization_snapshot()
-                                    gif_snaps.append(snap)
+                                if (step_i % int(log_every) == 0 or step_i == int(max_iterations) - 1):
+                                    try:
+                                        diffs = diff_trails(prev_trails, retr.pheromone_trails)
+                                        diffs_sorted = sorted(diffs, key=lambda d: (d.get('edge',(0,0))[0], d.get('edge',(0,0))[1]))
+                                    except Exception:
+                                        diffs_sorted = []
+                                    events_accum.append({
+                                        "mode": "single",
+                                        "step": step_i,
+                                        "avg_relevance": float(stats.get('avg_relevance', 0.0)),
+                                        "trail_deltas": diffs_sorted[:50],
+                                    })
+                                    dbg_state.info(f"[shard {s_start}-{s_end}] step {step_i}/{int(max_iterations)} avg_rel={stats.get('avg_relevance',0):.3f}")
+                                    _log(f"[single] step {step_i}/{int(max_iterations)} avg_rel={float(stats.get('avg_relevance',0.0)):.3f}")
+                                    prev_trails = dict(retr.pheromone_trails)
                             res_shard = retr.search(query, top_k=int(top_k))
                             aggregated_items.extend(res_shard.get('results', []))
                             _log(f"Shard {s_start}-{s_end}: results+={len(res_shard.get('results', []))}")
@@ -1408,46 +1301,7 @@ if run:
                         except Exception as _se:
                             st.info(f"Summary unavailable: {_se}")
                     # After any path, if we recorded snapshots, build and display GIF
-                    if record_gif and 'gif_snaps' in locals() and gif_snaps:
-                        try:
-                            out_gif = os.path.join(GIF_DIR, f"trace_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.gif")
-                            built = _build_gif_from_snapshots(gif_snaps, out_gif, fps=int(gif_fps))
-                            if built:
-                                st.subheader("Simulation GIF")
-                                st.image(built)
-                                with open(built, 'rb') as f:
-                                    st.download_button("Download GIF", f.read(), file_name=os.path.basename(built), mime="image/gif")
-                                _log(f"GIF saved: {built}")
-                            else:
-                                st.info("GIF could not be built (missing imageio or no frames)")
-                        except Exception as _ge:
-                            st.warning(f"GIF build failed: {_ge}")
-                    if show_tree:
-                        items = results.get('results', [])
-                        if HAS_GRAPHVIZ:
-                            dot = Digraph(comment="Results Tree")
-                            dot.node("Q", f"Query: {query[:50]}…")
-                            for idx, it in enumerate(items):
-                                score = it.get('relevance_score', 0.0)
-                                src = (it.get('metadata', {}) or {}).get('file_path', 'chunk')
-                                label = f"#{idx+1} {score:.3f}\n{src}"
-                                nid = f"n{idx+1}"
-                                dot.node(nid, label)
-                                dot.edge("Q", nid)
-                            st.graphviz_chart(dot)
-                        else:
-                            labels = []
-                            for idx, it in enumerate(items):
-                                score = it.get('relevance_score', 0.0)
-                                src = (it.get('metadata', {}) or {}).get('file_path', 'chunk')
-                                labels.append(f"#{idx+1} {score:.3f} {src}")
-                            dot_src = make_dot_tree(f"Query: {query[:50]}…", labels)
-                            st.code(dot_src, language="dot")
-                    # Show recent trail change events for explainability
-                    if events_accum:
-                        st.subheader("Recent trail change events")
-                        st.json(events_accum[:50])
-
+                    # (Removed GIF functionality by request)
             if show_network:
                 # Debounce visual updates and send only deltas vs. previous snapshot
                 if 'last_snapshot' not in st.session_state:
@@ -1490,6 +1344,7 @@ if run:
 # ---------------- Agent Chat & Background Report ----------------
 
 if enable_agent_chat:
+
     st.divider()
     st.subheader("💬 Agent Chat (search via tools)")
 

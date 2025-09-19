@@ -63,18 +63,25 @@ if str(ROOT) not in sys.path:
 # Local imports
 try:
     # MCPM retriever
-    from mcmp_rag import MCPMRetriever
-except Exception as e:
-    print(f"[ERROR] Cannot import MCPMRetriever: {e}")
-    MCPMRetriever = None  # type: ignore
+    from embeddinggemma.mcmp_rag import MCPMRetriever  # type: ignore
+except Exception:
+    try:
+        from mcmp_rag import MCPMRetriever  # type: ignore
+    except Exception as e:
+        print(f"[ERROR] Cannot import MCPMRetriever: {e}")
+        MCPMRetriever = None  # type: ignore
 
 # Enterprise RAG (optional)
 ENTERPRISE_OK = False
 try:
-    from embeddinggemma.enterprise_rag import EnterpriseCodeRAG  # type: ignore
+    from embeddinggemma.rag_v1 import RagV1  # type: ignore
     ENTERPRISE_OK = True
 except Exception:
-    ENTERPRISE_OK = False
+    try:
+        from embeddinggemma.enterprise_rag import EnterpriseCodeRAG as RagV1  # type: ignore
+        ENTERPRISE_OK = True
+    except Exception:
+        ENTERPRISE_OK = False
 
 
 # ----------------------------
@@ -286,7 +293,7 @@ class EnterpriseTool:
     def __init__(self):
         if not ENTERPRISE_OK:
             raise ImportError("Enterprise RAG dependencies not installed")
-        self.rag = EnterpriseCodeRAG()
+        self.rag = RagV1()
 
     # Placeholder: user should build or load index separately
     def status(self) -> str:

@@ -9,3 +9,6 @@ wheels/
 # Virtual environments
 .venv
 .venv312
+.fungus_cache
+.kilocode
+.vsc

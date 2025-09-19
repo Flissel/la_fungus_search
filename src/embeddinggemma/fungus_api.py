@@ -31,10 +31,13 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 try:
-    from mcmp_rag import MCPMRetriever  # type: ignore
+    from embeddinggemma.mcmp_rag import MCPMRetriever  # type: ignore
 except Exception as e:
-    MCPMRetriever = None  # type: ignore
-    print(f"⚠️ MCPMRetriever Import fehlgeschlagen: {e}")
+    try:
+        from mcmp_rag import MCPMRetriever  # type: ignore
+    except Exception:
+        MCPMRetriever = None  # type: ignore
+        print(f"⚠️ MCPMRetriever Import fehlgeschlagen: {e}")
 
 
 OLLAMA_HOST_DEFAULT = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip('/')
