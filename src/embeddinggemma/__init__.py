@@ -4,4 +4,10 @@ try:
 except Exception:
     pass
 
+# Expose agents namespace
+try:
+    from . import agents  # noqa: F401
+except Exception:
+    pass
+
 __all__ = [name for name in globals().keys() if not name.startswith("_")]

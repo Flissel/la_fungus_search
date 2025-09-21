@@ -1,13 +1,13 @@
 # EmbeddingGemma Desktop Setup 🔍
 
-Ein vollständiges Desktop-Interface für Google's EmbeddingGemma-300M Modell mit GUI, MCMP-RAG, Enterprise-RAG und Agent-Chat.
+Ein vollständiges Desktop-Interface für Google's EmbeddingGemma-300M Modell mit GUI, MCMP-RAG, RagV1 und Agent-Chat.
 
 ## Abstract
 
 EmbeddingGemma kombiniert lokale Embeddings mit einem Physarum-inspirierten Multi‑Agenten‑Retriever (MCMP) und optionaler Enterprise‑RAG‑Suche:
-- **Embeddings + UI**: Klassische semantische Suche und MCMP‑RAG Oberfläche (`streamlit_fungus.py`).
+- **Embeddings + UI**: Klassische semantische Suche und MCMP‑RAG Oberfläche (`streamlit_fungus_backup.py`).
 - **MCMP‑RAG**: Viele Agenten bewegen sich im Embedding‑Raum, hinterlassen Pheromonspuren, dämpfen Trails und aktualisieren fortlaufend Dokument‑Relevanzen; am Ende werden Top‑K Chunks mit optionaler Diversität zurückgegeben.
-- **Code‑Space Frontend**: `streamlit_fungus.py` durchsucht Python‑Repos über mehrstufige Chunks (Header: `# file: … | lines: a-b | window: w`), unterstützt Multi‑Query (LLM‑generiert, grounded) und **Dedup**.
+- **Code‑Space Frontend**: `streamlit_fungus_backup.py` durchsucht Python‑Repos über mehrstufige Chunks (Header: `# file: … | lines: a-b | window: w`), unterstützt Multi‑Query (LLM‑generiert, grounded) und **Dedup**.
 - **Agent‑Chat & Tools**: Chat‑Agent mit Tool‑Calls (z. B. Code‑Suche, Root‑Dir setzen), Hintergrund‑Reports mit Live‑Progress und optionaler Snapshot‑GIF‑Aufzeichnung.
 - **Enterprise‑RAG**: Qdrant + LlamaIndex für persistente Indizes (Rag‑Modus im Fungus‑UI), Hybrid‑Scoring und Antwort‑Generierung.
 - **API & Coding Events**: `src/embeddinggemma/fungus_api.py` inkl. Endpoint zum Bauen von Code‑Edit‑Events aus Chunk‑Headern.
@@ -34,7 +34,7 @@ setup.bat
 
 #### 🌐 Web-Interface (Empfohlen)
 ```bash
-streamlit run streamlit_fungus.py
+streamlit run streamlit_fungus_backup.py
 ```
 Dann Browser öffnen: http://localhost:8501
 
@@ -56,7 +56,7 @@ python src/embeddinggemma/rag_v1.py stats
 
 ## 🔧 Features
 
-### Web-Interface (streamlit_fungus.py)
+### Web-Interface (streamlit_fungus_backup.py)
 - Text/Code Suche über mehrstufige Chunks
 - Multi-Query (LLM generiert, grounded auf eingebetteten Dateien)
 - Dedup der Queries (Jaccard)
@@ -72,10 +72,9 @@ python src/embeddinggemma/rag_v1.py stats
 ## 📁 Struktur
 ```
 EmbeddingGemma/
-├── streamlit_fungus.py                # Primary Frontend (MCMP + Rag + Agent)
+├── streamlit_fungus_backup.py         # Primary Frontend (MCMP + Rag + Agent)
 ├── src/embeddinggemma/rag_v1.py
-├── src/embeddinggemma/fungus_api.py
-├── src/embeddinggemma/agent_fungus_rag.py
+├── src/embeddinggemma/agents/agent_fungus_rag.py
 ├── docs/ARCHITECTURE.md
 ├── docs/SCRIPTS.md
 ├── docs/DEMO.md

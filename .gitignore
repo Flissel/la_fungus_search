@@ -12,3 +12,10 @@ wheels/
 .fungus_cache
 .kilocode
 .vsc
+.fungus_cache
+.kilocode
+.pytest_cache
+enterprise_index
+embedding_cache
+external
+models

@@ -3,20 +3,18 @@
 #### C4: System Context (Level 1)
 ```mermaid
 graph LR
-  user[User] --> UI[Streamlit Frontend<br/>streamlit_fungus.py]
+  user[User] --> UI[Streamlit Frontend<br/>streamlit_fungus_backup.py]
   UI -->|MCMP search| MCMP[MCPMRetriever<br/>mcmp_rag.py]
   UI -->|Rag| RAG[RagV1<br/>src/embeddinggemma/rag_v1.py]
   RAG --> Qdrant[Qdrant]
   RAG --> HF[HF Embeddings]
   UI -->|Agent chat| LLM[LLM via Ollama or HF]
   UI -->|Background report| Cache[.fungus_cache]
-  UI -->|optional API| API[FastAPI<br/>src/embeddinggemma/fungus_api.py]
-  API --> MCMP
-  API --> LLM
+  %% FastAPI API removed
 ```
 
 Key points:
-- Streamlit UI is primary; includes Rag (RagV1 / Enterprise RAG).
+- Streamlit UI is primary; includes Rag (RagV1).
 - MCMP runs in-process; background reports use a thread pool.
 - RagV1 persists vectors to Qdrant; embeddings via EmbeddingGemma.
 - LLMs via Ollama by default; HF LLM fallback where needed.
@@ -36,9 +34,7 @@ graph TB
     RAG[RagV1<br/>AST chunking, hybrid retrieval]
   end
 
-  subgraph Services
-    API[FastAPI fungus_api<br/>optional]
-  end
+  %% Services section removed (API deleted)
 
   subgraph DataStores
     Q[Qdrant]
@@ -55,8 +51,7 @@ graph TB
   AG --> OLL
   RAG --> HFL
   UI --> BG --> C
-  API --> MCMP
-  UI --> API
+  %% API links removed
 ```
 
 #### C4: Component (Level 3) – Frontend internals
@@ -81,7 +76,7 @@ CPU/GPU:
 Model upgrades:
 - UI: set OLLAMA_MODEL; to use external providers, replace the local generator helper with your SDK.
 - Agent chat: swap the LC chat model for one with tool-calls support.
-- Enterprise RAG: set use_ollama=true or change llm_model/llm_device.
+- RagV1: set use_ollama=true or change llm_model/llm_device.
 
 MCMP vs RAG:
 - MCMP explores with agents and pheromone trails to reveal multi-hop traces (dependencies across files) that static nearest-neighbor search misses.

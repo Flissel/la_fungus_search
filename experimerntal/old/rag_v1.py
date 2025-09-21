@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-RAG v1 für Code-Analyse mit LlamaIndex, Qdrant und EmbeddingGemma
+RAG v1 für Code-Analyse mit LlamaIndex, Qdrant und EmbeddingGemma (Deprecated facade)
 Skalierbare Lösung für große Codebasen mit AST-basiertem Chunking
 """
 
 import os
+import warnings
 import ast
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -60,6 +61,12 @@ class RagV1:
         """
         Initialisiert die RAG v1 mit Qdrant und LlamaIndex
         """
+        warnings.warn(
+            "RagV1 is deprecated as a facade. Internals are now under embeddinggemma.rag.*;"
+            " this class will remain as a stable API wrapper.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.qdrant_url = qdrant_url
         self.collection_name = collection_name
         self.embedding_model = embedding_model
@@ -78,17 +85,17 @@ class RagV1:
         self._d = _d  # store logger
         
         # Qdrant Client initialisieren
-        self.qdrant_client = QdrantClient(
-            url=qdrant_url,
-            api_key=qdrant_api_key,
-            timeout=60,
-            prefer_grpc=True
-        )
+        self.qdrant_client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=60, prefer_grpc=True)
         
         # Embedding Modell (EmbeddingGemma)
+        try:
+            from embeddinggemma.rag.embeddings import resolve_device as _resolve_device  # type: ignore
+            device = _resolve_device("auto")
+        except Exception:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.embed_model = HuggingFaceEmbedding(
             model_name=embedding_model,
-            device="cuda" if torch.cuda.is_available() else "cpu"
+            device=device
         )
         
         # LLM für Generierung
@@ -251,56 +258,39 @@ class RagV1:
         return chunks
 
     def create_collection(self):
-        """Erstellt Qdrant Collection falls nicht vorhanden"""
+        """Erstellt Qdrant Collection falls nicht vorhanden (delegated)."""
         try:
-            self._d("create_collection: fetching collections")
-            # Collection Info abrufen
-            collections = self.qdrant_client.get_collections()
-            collection_names = [c.name for c in collections.collections]
-            
-            # Ziel-Vektorgröße ermitteln
             desired_vec_size = self._get_embedding_dim()
-
-            if self.collection_name not in collection_names:
-                # Collection erstellen
-                self._d(f"creating collection {self.collection_name} size={desired_vec_size}")
-                from qdrant_client.http.models import HnswConfigDiff, OptimizersConfigDiff, ScalarQuantizationConfig
-                self.qdrant_client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=VectorParams(
-                        size=desired_vec_size,
-                        distance=Distance.COSINE
-                    ),
-                    hnsw_config=HnswConfigDiff(m=32, ef_construct=128),
-                    optimizers_config=OptimizersConfigDiff(indexing_threshold=20000, memmap_threshold=200000),
-                    quantization_config=ScalarQuantizationConfig(scalar=ScalarQuantizationConfig.Scalar(bits=8), always_ram=False)
-                )
-                print(f"✅ Qdrant Collection '{self.collection_name}' erstellt")
-            else:
-                # Prüfe bestehende Vektorgröße und gleiche ggf. an
-                self._d(f"collection {self.collection_name} exists; checking dimensions")
-                info = self.qdrant_client.get_collection(collection_name=self.collection_name)
-                current_size = getattr(getattr(getattr(info, 'config', None), 'params', None), 'vectors', None)
-                current_size = getattr(current_size, 'size', None)
-                if isinstance(current_size, int) and current_size != desired_vec_size:
-                    print(f"⚠️ Qdrant Collection '{self.collection_name}' hat Dimension {current_size}, erwartet {desired_vec_size}. Erstelle neu…")
-                    self._d("deleting & recreating collection due to dim mismatch")
-                    self.qdrant_client.delete_collection(self.collection_name)
+            try:
+                from embeddinggemma.rag.vectorstore import ensure_collection as _ensure_collection  # type: ignore
+                _ensure_collection(self.qdrant_client, self.collection_name, desired_vec_size)
+            except Exception:
+                # Fallback to legacy inline logic if import fails
+                collections = self.qdrant_client.get_collections()
+                names = [c.name for c in collections.collections]
+                if self.collection_name not in names:
                     from qdrant_client.http.models import HnswConfigDiff, OptimizersConfigDiff, ScalarQuantizationConfig
                     self.qdrant_client.create_collection(
                         collection_name=self.collection_name,
-                        vectors_config=VectorParams(
-                            size=desired_vec_size,
-                            distance=Distance.COSINE
-                        ),
+                        vectors_config=VectorParams(size=desired_vec_size, distance=Distance.COSINE),
                         hnsw_config=HnswConfigDiff(m=32, ef_construct=128),
                         optimizers_config=OptimizersConfigDiff(indexing_threshold=20000, memmap_threshold=200000),
-                        quantization_config=ScalarQuantizationConfig(scalar=ScalarQuantizationConfig.Scalar(bits=8), always_ram=False)
+                        quantization_config=ScalarQuantizationConfig(scalar=ScalarQuantizationConfig.Scalar(bits=8), always_ram=False),
                     )
-                    print(f"✅ Qdrant Collection '{self.collection_name}' neu erstellt mit Dimension {desired_vec_size}")
                 else:
-                    print(f"ℹ️ Qdrant Collection '{self.collection_name}' existiert bereits")
-                
+                    info = self.qdrant_client.get_collection(collection_name=self.collection_name)
+                    current_size = getattr(getattr(getattr(info, 'config', None), 'params', None), 'vectors', None)
+                    current_size = getattr(current_size, 'size', None)
+                    if isinstance(current_size, int) and current_size != desired_vec_size:
+                        self.qdrant_client.delete_collection(self.collection_name)
+                        from qdrant_client.http.models import HnswConfigDiff, OptimizersConfigDiff, ScalarQuantizationConfig
+                        self.qdrant_client.create_collection(
+                            collection_name=self.collection_name,
+                            vectors_config=VectorParams(size=desired_vec_size, distance=Distance.COSINE),
+                            hnsw_config=HnswConfigDiff(m=32, ef_construct=128),
+                            optimizers_config=OptimizersConfigDiff(indexing_threshold=20000, memmap_threshold=200000),
+                            quantization_config=ScalarQuantizationConfig(scalar=ScalarQuantizationConfig.Scalar(bits=8), always_ram=False),
+                        )
         except Exception as e:
             print(f"❌ Fehler beim Erstellen der Collection: {e}")
     
@@ -435,8 +425,12 @@ class RagV1:
                     print(f"📄 Verarbeite: {relative_path}")
                     self._d(f"AST parse start: {relative_path}")
                     
-                    # AST-basierte Chunking
-                    chunks = self.parse_code_with_ast(file_path)
+                    # AST-basierte Chunking (delegated to rag.chunking)
+                    try:
+                        from embeddinggemma.rag.chunking import parse_code_with_ast as _parse_ast  # type: ignore
+                        chunks = _parse_ast(file_path)
+                    except Exception:
+                        chunks = self.parse_code_with_ast(file_path)
                     self._d(f"AST parse done: chunks={len(chunks)}")
                     
                     for chunk in chunks:
@@ -472,13 +466,22 @@ class RagV1:
             return self._get_embedding_dim()
 
         try:
-            self.index = VectorStoreIndex.from_documents(
-                documents,
-                storage_context=storage_context,
-                embed_model=self.embed_model,
-                transformations=[self.ast_parser],
-                show_progress=True
-            )
+            try:
+                from embeddinggemma.rag.indexer import build_index as _build_index  # type: ignore
+                self.index = _build_index(
+                    documents,
+                    self.vector_store,
+                    self.embed_model,
+                    transformations=[self.ast_parser],
+                )
+            except Exception:
+                self.index = VectorStoreIndex.from_documents(
+                    documents,
+                    storage_context=storage_context,
+                    embed_model=self.embed_model,
+                    transformations=[self.ast_parser],
+                    show_progress=True
+                )
         except Exception as e:
             msg = str(e)
             if "Vector dimension error" in msg or "expected dim" in msg:
@@ -506,19 +509,25 @@ class RagV1:
                     embed_model=self.embed_model
                 )
                 storage_context_retry = StorageContext.from_defaults(vector_store=self.vector_store)
-                self.index = VectorStoreIndex.from_documents(
-                    documents,
-                    storage_context=storage_context_retry,
-                    embed_model=self.embed_model,
-                    transformations=[self.ast_parser],
-                    show_progress=True
-                )
+                try:
+                    from embeddinggemma.rag.indexer import build_index as _build_index  # type: ignore
+                    self.index = _build_index(
+                        documents,
+                        self.vector_store,
+                        self.embed_model,
+                        transformations=[self.ast_parser],
+                    )
+                except Exception:
+                    self.index = VectorStoreIndex.from_documents(
+                        documents,
+                        storage_context=storage_context_retry,
+                        embed_model=self.embed_model,
+                        transformations=[self.ast_parser],
+                        show_progress=True
+                    )
             else:
                 raise
 
-        # Index persistent machen
-        self.index.storage_context.persist(persist_dir="./enterprise_index")
-        
         # Index persistent machen
         self.index.storage_context.persist(persist_dir="./enterprise_index")
         
@@ -764,7 +773,11 @@ Antwort:
         self._d("query pipeline start")
         
         # Hybrid-Suche
-        results = self.hybrid_search(query, top_k, alpha)
+        try:
+            from embeddinggemma.rag.search import hybrid_search as _hybrid_search  # type: ignore
+            results = _hybrid_search(self.index, query, top_k, alpha)
+        except Exception:
+            results = self.hybrid_search(query, top_k, alpha)
         self._d(f"retrieval done: {len(results)} results")
         # Optional: Methodenliste aus Query-Datei extrahieren
         methods: Optional[List[str]] = None
@@ -785,7 +798,24 @@ Antwort:
         
         if generate_response:
             # LLM-Generierung
-            answer = self.generate_response(query, results, methods=methods)
+            try:
+                from embeddinggemma.rag.generation import generate_with_ollama as _gen_ollama  # type: ignore
+                # Build context prompt similarly to generate_response
+                if not results:
+                    answer = "Keine relevanten Informationen gefunden."
+                else:
+                    context = ""
+                    citations = []
+                    for i, result in enumerate(results[:3]):
+                        context += f"\n\nSnippet {i+1} (Score: {result['hybrid_score']:.3f}):\n"
+                        context += f"Datei: {result['metadata'].get('file_path', 'Unbekannt')}\n"
+                        context += f"{result['content'][:500]}..."
+                        citations.append((i+1, result['metadata'].get('file_path', 'Unbekannt'), result['hybrid_score']))
+                    prompt = f"Frage: {query}\n\nKontext:{context}\n\nAntwort:".strip()
+                    text = _gen_ollama(prompt, model=self.ollama_model, host=self.ollama_host)
+                    answer = str(text) + "\n\n📚 Quellen:\n" + "\n".join([f"- Snippet {s} ({f}, Score: {sc:.3f})" for s, f, sc in citations])
+            except Exception:
+                answer = self.generate_response(query, results, methods=methods)
             self._d("generation done")
         else:
             # Nur Ergebnisse

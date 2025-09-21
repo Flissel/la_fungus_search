@@ -28,7 +28,8 @@ def select_diverse_results(results_items: List[Dict[str, Any]],
                            top_k: int,
                            alpha: float,
                            dedup_tau: float,
-                           per_folder_cap: int) -> List[Dict[str, Any]]:
+                           per_folder_cap: int,
+                           return_all_scored: bool = False) -> List[Dict[str, Any]]:
     if not results_items:
         return []
     texts = [(it.get('content') or '')[:2048] for it in results_items]
@@ -60,7 +61,18 @@ def select_diverse_results(results_items: List[Dict[str, Any]],
         _ = float(alpha * base_scores[idx] - (1.0 - alpha) * diversity_penalty)  # advisory
         selected.append(int(idx))
         folder_counts[folder] = folder_counts.get(folder, 0) + 1
-    return [results_items[i] for i in selected]
+    scored = [results_items[i] for i in selected]
+    if return_all_scored:
+        # Attach score and selection flag to every item for inspection
+        out = []
+        selected_set = set(selected)
+        for i, it in enumerate(results_items):
+            it2 = dict(it)
+            it2['__selected__'] = (i in selected_set)
+            it2['__score__'] = float(base_scores[i])
+            out.append(it2)
+        return out
+    return scored
 
 
 def quick_search_with_mcmp(settings: Dict[str, Any], query_text: str, top_k: int) -> Dict[str, Any]:

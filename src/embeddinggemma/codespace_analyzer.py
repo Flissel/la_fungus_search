@@ -1,6 +1,11 @@
 """
 CodeSpace Analyzer Tool
-Ermöglicht die Analyse von Dateien in einem festen Ordner und Query-basierte Suche nach Code-Snippets.
+
+English summary
+----------------
+Lightweight utility to scan a fixed root folder (default: ``src``), list
+Python files, and search for code snippets by plain substring or a regex
+pattern. Provides a small CLI for ad‑hoc analysis.
 """
 
 import os
@@ -9,26 +14,22 @@ import re
 from typing import List, Dict, Tuple
 
 class CodeSpaceAnalyzer:
-    """
-    Hauptklasse für das CodeSpace-Analyse-Tool.
-    """
+    """Main entry class for the CodeSpace analyzer tool."""
     
     def __init__(self, target_folder: str = "src"):
-        """
-        Initialisiert den Analyzer mit dem festen Ordner.
-        
+        """Initialize the analyzer with a fixed folder.
+
         Args:
-            target_folder (str): Der zu analysierende Ordner (default: 'src').
+            target_folder: Folder to analyze (default: ``src``).
         """
         self.target_folder = target_folder
         self.files_info: List[Dict[str, any]] = []
     
     def scan_folder(self) -> List[str]:
-        """
-        Scannt den festen Ordner und listet alle Python-Dateien auf.
-        
+        """Scan the target folder and list Python files.
+
         Returns:
-            List[str]: Liste der Dateipfade.
+            List[str]: Relative file paths below ``target_folder``.
         """
         python_files = []
         for root, dirs, files in os.walk(self.target_folder):
@@ -45,33 +46,24 @@ class CodeSpaceAnalyzer:
         return python_files
     
     def read_file_content(self, file_path: str) -> str:
-        """
-        Liest den Inhalt einer Datei.
-        
-        Args:
-            file_path (str): Pfad zur Datei.
-            
-        Returns:
-            str: Datei-Inhalt als String.
-        """
+        """Read and return the file content as a string."""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read()
         except Exception as e:
-            print(f"Fehler beim Lesen der Datei {file_path}: {e}")
+            print(f"Error reading file {file_path}: {e}")
             return ""
     
     def search_snippets(self, file_path: str, query: str, num_lines: int = 5) -> List[Tuple[int, str]]:
-        """
-        Sucht nach Code-Snippets in einer Datei basierend auf einer Query.
-        
+        """Search a file for a query and return context snippets.
+
         Args:
-            file_path (str): Pfad zur Datei.
-            query (str): Suchbegriff oder Regex-Pattern.
-            num_lines (int): Anzahl der Kontext-Zeilen um das Match.
-            
+            file_path: Path to the file.
+            query: Substring to search or a regex pattern delimited as ``/.../``.
+            num_lines: Number of context lines surrounding each match.
+
         Returns:
-            List[Tuple[int, str]]: Liste von (Zeilennummer, Snippet)-Tuples.
+            List of tuples ``(line_number, snippet_text)``.
         """
         content = self.read_file_content(file_path)
         if not content:
@@ -101,55 +93,44 @@ class CodeSpaceAnalyzer:
         return snippets
     
     def analyze_script(self, script_name: str, query: str) -> Dict[str, List[Tuple[int, str]]]:
-        """
-        Analysiert ein spezifisches Script mit einer Query.
-        
-        Args:
-            script_name (str): Name des Scripts (relativ zum target_folder).
-            query (str): Suchbegriff.
-            
-        Returns:
-            Dict[str, List[Tuple[int, str]]]: Ergebnisse der Suche.
-        """
+        """Analyze a single script by name relative to ``target_folder``."""
         results = {}
-        # Suche rekursiv für den Dateinamen
+        # Search recursively for the filename
         for root, dirs, files in os.walk(self.target_folder):
             if script_name in files:
                 file_path = os.path.join(root, script_name)
                 relative_path = os.path.relpath(file_path, self.target_folder)
                 snippets = self.search_snippets(file_path, query)
                 results[relative_path] = snippets
-                break  # Erste Übereinstimmung
+                break  # first match
         
         if not results:
-            print(f"Datei '{script_name}' nicht in {self.target_folder} gefunden.")
+            print(f"File '{script_name}' not found in {self.target_folder}.")
         
         return results
 
 def main():
-    """
-    CLI-Einstiegspunkt.
-    """
+    """CLI entry point."""
     parser = argparse.ArgumentParser(description="CodeSpace Analyzer Tool")
-    parser.add_argument("script", help="Name des Scripts (z.B. app.py)")
-    parser.add_argument("query", help="Suchbegriff oder Query")
-    parser.add_argument("--folder", default="src", help="Zielordner (default: src)")
+    parser.add_argument("script", help="Script name (e.g., app.py)")
+    parser.add_argument("query", help="Search term or regex (/.../)")
+    parser.add_argument("--folder", default="src", help="Target folder (default: src)")
     args = parser.parse_args()
     
     analyzer = CodeSpaceAnalyzer(args.folder)
     results = analyzer.analyze_script(args.script, args.query)
     
-    # Ausgabe der Ergebnisse
+    # Print results
     if results is None or not results:
-        print("Keine Ergebnisse gefunden.")
+        print("No results found.")
     else:
         for file_path, snippets in results.items():
-            print(f"\nDatei: {file_path}")
+            print(f"\nFile: {file_path}")
             if snippets:
                 for line_num, snippet in snippets:
-                    print(f"Zeile {line_num}:\n{snippet}\n")
+                    print(f"Line {line_num}:\n{snippet}\n")
             else:
-                print("Keine passenden Snippets gefunden.")
+                print("No matching snippets.")
 
 if __name__ == "__main__":
     main()

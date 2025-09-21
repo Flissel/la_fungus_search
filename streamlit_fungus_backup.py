@@ -25,6 +25,10 @@ try:
     from embeddinggemma.ui.mcmp_runner import select_diverse_results, quick_search_with_mcmp  # type: ignore
     from embeddinggemma.ui.agent import build_langchain_agent_if_available  # type: ignore
     from embeddinggemma.ui.components import sidebar, live_log, render_results_tree, snippet_for  # type: ignore
+    try:
+        from embeddinggemma.rag.generation import generate_with_ollama  # type: ignore
+    except Exception:
+        generate_with_ollama = None  # type: ignore
 except Exception as e:
     st.error(f"Failed to import refactored UI modules: {e}")
 
@@ -37,6 +41,12 @@ except Exception:
     except Exception as e:
         MCPMRetriever = None  # type: ignore
         st.error(f"MCPMRetriever Import failed: {e}")
+
+# Optional simulation telemetry helper
+try:
+    from embeddinggemma.mcmp.simulation import log_simulation_step as _sim_log  # type: ignore
+except Exception:
+    _sim_log = None  # type: ignore
 
 st.set_page_config(page_title="Fungus Backup", layout="wide")
 st.title("Fungus (MCMP) Backup Frontend")
@@ -125,6 +135,22 @@ if run:
         shard_ranges = [(i, min(i + shard_size, total_chunks)) for i in range(0, total_chunks, shard_size)]
         _log(f"Sharding: {len(shard_ranges)} shards of size≈{shard_size}")
 
+    def _sim_metrics(_retr) -> Dict[str, Any]:
+        try:
+            docs = getattr(_retr, 'documents', [])
+            agents = getattr(_retr, 'agents', [])
+            avg_rel = float(sum(getattr(d, 'relevance_score', 0.0) for d in docs) / max(1, len(docs))) if docs else 0.0
+            max_rel = float(max((getattr(d, 'relevance_score', 0.0) for d in docs), default=0.0)) if docs else 0.0
+            trails = len(getattr(_retr, 'pheromone_trails', {}))
+            avg_speed = 0.0
+            if agents:
+                import numpy as _np
+                avg_speed = float(_np.mean([float(_np.linalg.norm(getattr(a, 'velocity', 0.0))) for a in agents]))
+            return {"avg_rel": avg_rel, "max_rel": max_rel, "trails": trails, "avg_speed": avg_speed,
+                    "docs": len(docs), "agents": len(agents)}
+        except Exception:
+            return {"avg_rel": 0.0, "max_rel": 0.0, "trails": 0, "avg_speed": 0.0, "docs": 0, "agents": 0}
+
     for s_start, s_end in shard_ranges:
         shard = docs[s_start:s_end]
         try:
@@ -134,8 +160,19 @@ if run:
         retr.add_documents(shard)
         _log(f"Shard {s_start}-{s_end}: docs={len(shard)} | init simulation")
         retr.initialize_simulation(query)
-        for _ in range(int(ui_settings['max_iterations'])):
+        for _i in range(int(ui_settings['max_iterations'])):
             retr.step(1)
+            if _i % max(1, int(ui_settings.get('log_every', 1))) == 0:
+                try:
+                    if _sim_log is not None:
+                        _sim_log(retr, _i)
+                except Exception:
+                    pass
+                m = _sim_metrics(retr)
+                _log(f"step={_i} avg_rel={m['avg_rel']:.4f} max_rel={m['max_rel']:.4f} trails={m['trails']} avg_speed={m['avg_speed']:.4f}")
+        # Final metrics for shard
+        m_final = _sim_metrics(retr)
+        _log(f"final shard metrics: docs={m_final['docs']} agents={m_final['agents']} avg_rel={m_final['avg_rel']:.4f} max_rel={m_final['max_rel']:.4f} trails={m_final['trails']}")
         res_shard = retr.search(query, top_k=int(ui_settings['top_k']))
         aggregated_items.extend(res_shard.get('results', []))
         _log(f"Shard {s_start}-{s_end}: results+={len(res_shard.get('results', []))}")
@@ -144,7 +181,14 @@ if run:
     if ui_settings['pure_topk']:
         items = sorted(aggregated_items, key=lambda it: float(it.get('relevance_score', 0.0)), reverse=True)[:int(ui_settings['top_k'])]
     else:
-        items = select_diverse_results(aggregated_items, retr, int(ui_settings['top_k']), float(ui_settings['div_alpha']), float(ui_settings['dedup_tau']), int(ui_settings['per_folder_cap']))
+        items = select_diverse_results(
+            aggregated_items,
+            retr,
+            int(ui_settings['top_k']),
+            float(ui_settings['div_alpha']),
+            float(ui_settings['dedup_tau']),
+            int(ui_settings['per_folder_cap'])
+        )
 
     # Render
     st.subheader("Raw Results")
@@ -154,6 +198,37 @@ if run:
         sn = snippet_for(it, query)
         view.append({'file': src, 'score': it.get('relevance_score', 0.0), 'snippet': sn})
     st.json({'results': view})
+
+    # Optional answer generation using mode prompt
+    if ui_settings.get('gen_answer', False):
+        def _task_for_mode(mode: str, q: str) -> str:
+            m = (mode or '').lower()
+            if m == 'deep':
+                return f"Führe eine tiefe Analyse durch und beantworte präzise: {q}\\nNenne Belege aus den Snippets."
+            if m == 'structure':
+                return f"Analysiere Funktionen/Klassen, extrahiere relevante Definitionen und beantworte: {q}"
+            if m == 'exploratory':
+                return f"Beantworte explorativ: {q}. Stelle ggf. Anschlussfragen."
+            if m == 'summary':
+                return f"Fasse die wichtigsten Informationen zu '{q}' zusammen und liste Quellen."
+            if m == 'repair':
+                return f"Schlage konkrete Verbesserungen/Refactorings vor basierend auf dem Kontext zur Frage: {q}"
+            # 'similar' / 'redundancy' or default
+            return q
+
+        ctx_items = items if not ui_settings.get('show_all_scored') else aggregated_items
+        context = "\n\n".join([(it.get('content') or '')[:800] for it in ctx_items])
+        task = _task_for_mode(ui_settings.get('mode', ''), query)
+        llm_prompt = f"Kontext:\n{context}\n\nAufgabe:\n{task}\n\nAntwort:".strip()
+        st.subheader("Answer (mode prompt)")
+        answer_text = ""
+        if generate_with_ollama is not None:
+            host = os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434')
+            model = os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b')
+            answer_text = generate_with_ollama(llm_prompt, model=model, host=host)
+        else:
+            answer_text = "[LLM unavailable] Install Ollama and ensure embeddinggemma.rag.generation is importable."
+        st.write(answer_text)
 
     if ui_settings.get('show_network', True):
         if go is None:
