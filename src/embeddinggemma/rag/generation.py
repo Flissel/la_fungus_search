@@ -9,7 +9,7 @@ if not _logger.handlers:
     _h.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
     _logger.addHandler(_h)
 _logger.setLevel(logging.INFO)
-def generate_with_ollama(prompt: str, model: str, host: str, timeout: int = 120) -> str:
+def generate_with_ollama(prompt: str, model: str, host: str, timeout: int = 500) -> str:
     try:
         url = f"{host.rstrip('/')}" + "/api/generate"
         _logger.info("generate_with_ollama: model=%s host=%s", model, host)

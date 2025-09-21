@@ -163,16 +163,23 @@ if run:
 
         # Live network snapshot placeholder + sidebar controls
         net_placeholder = None
-        # Sidebar sliders (with sensible defaults)
-        ui_settings['redraw_every'] = st.sidebar.number_input('Redraw every N steps', min_value=1, max_value=50, value=int(ui_settings.get('redraw_every', max(1, int(ui_settings.get('log_every', 1)) ))))
-        ui_settings['min_trail_strength'] = st.sidebar.slider('Min trail strength', min_value=0.0, max_value=1.0, value=float(ui_settings.get('min_trail_strength', 0.05)), step=0.01)
-        ui_settings['max_edges'] = st.sidebar.number_input('Max edges', min_value=50, max_value=2000, value=int(ui_settings.get('max_edges', 500)), step=50)
-        ui_settings['viz_dims'] = st.sidebar.selectbox('Viz dimensions', options=[2,3], index=0)
+        # Wrap controls in a form to avoid reruns during adjustment
+        with st.sidebar.form("viz_controls"):
+            redraw_every_in = st.number_input('Redraw every N steps', min_value=1, max_value=50, value=int(ui_settings.get('redraw_every', max(1, int(ui_settings.get('log_every', 1)) ))))
+            min_trail_in = st.slider('Min trail strength', min_value=0.0, max_value=1.0, value=float(ui_settings.get('min_trail_strength', 0.05)), step=0.01)
+            max_edges_in = st.number_input('Max edges', min_value=50, max_value=2000, value=int(ui_settings.get('max_edges', 500)), step=50)
+            viz_dims_in = st.selectbox('Viz dimensions', options=[2,3], index=0 if int(ui_settings.get('viz_dims', 2)) == 2 else 1)
+            apply_controls = st.form_submit_button("Apply")
+        if apply_controls:
+            ui_settings['redraw_every'] = int(redraw_every_in)
+            ui_settings['min_trail_strength'] = float(min_trail_in)
+            ui_settings['max_edges'] = int(max_edges_in)
+            ui_settings['viz_dims'] = int(viz_dims_in)
 
-        min_trail = float(ui_settings['min_trail_strength'])
-        max_edges = int(ui_settings['max_edges'])
-        redraw_every = max(1, int(ui_settings['redraw_every']))
-        viz_dims = int(ui_settings['viz_dims'])
+        min_trail = float(ui_settings.get('min_trail_strength', 0.05))
+        max_edges = int(ui_settings.get('max_edges', 500))
+        redraw_every = max(1, int(ui_settings.get('redraw_every', max(1, int(ui_settings.get('log_every', 1))))))
+        viz_dims = int(ui_settings.get('viz_dims', 2))
         if ui_settings.get('show_network', True) and go is not None:
             net_placeholder = st.empty()
 
