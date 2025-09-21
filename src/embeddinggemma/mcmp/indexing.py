@@ -25,8 +25,11 @@ def build_faiss_index(embs: np.ndarray, dim: int) -> Optional[object]:
     _logger.info("build_faiss_index: dim=%d docs=%d faiss=%s", dim, int(embs.shape[0]), str(_FAISS_OK))
     if not _FAISS_OK:
         return None
+    # For very small datasets, avoid IVF with huge cluster count
+    n_docs = int(embs.shape[0])
+    factory = "Flat" if n_docs < 4096 else "IVF4096,Flat"
     # Create index (cosine via inner product; caller should pass L2-normalized vectors if needed)
-    index = faiss.index_factory(dim, "IVF4096,Flat", faiss.METRIC_INNER_PRODUCT)
+    index = faiss.index_factory(dim, factory, faiss.METRIC_INNER_PRODUCT)
     # GPU diagnostics and move if possible
     try:
         gpu_count = int(getattr(faiss, 'get_num_gpus', lambda: 0)())
@@ -45,7 +48,11 @@ def build_faiss_index(embs: np.ndarray, dim: int) -> Optional[object]:
     embs = embs.astype(np.float32, copy=False)
     embs_n = _l2_normalize_rows(embs)
     # Train/add
-    index.train(embs_n)
+    # Train only when index is trainable (IVF), skip for Flat
+    try:
+        index.train(embs_n)
+    except Exception:
+        pass
     index.add(embs_n)
     try:
         index.nprobe = 12

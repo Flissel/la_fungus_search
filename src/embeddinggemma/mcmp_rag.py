@@ -108,6 +108,10 @@ class MCPMRetriever:
         self.kw_lambda: float = 0.0
         self.kw_terms: Set[str] = set()
 
+        # Expose Agent constructor for simulation module
+        # simulation.spawn_agents expects `retr.Agent` to be present
+        self.Agent = Agent  # type: ignore[attr-defined]
+
     # ---- Public API ----
     def add_documents(self, docs: List[str]) -> None:
         start_id = len(self.documents)
