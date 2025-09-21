@@ -22,6 +22,7 @@ from embeddinggemma.mcmp.simulation import (
     update_document_relevance as _update_document_relevance,
 )
 from embeddinggemma.mcmp.pca import pca_2d as _pca_2d
+from embeddinggemma.mcmp.pca import pca_fit_transform as _pca_fit_transform
 from embeddinggemma.mcmp.visualize import build_snapshot as _build_snapshot
 from embeddinggemma.mcmp.indexing import build_faiss_index as _build_faiss
 from embeddinggemma.mcmp.indexing import faiss_search as _faiss_search
@@ -192,12 +193,17 @@ class MCPMRetriever:
                                    method: str = "pca",
                                    whiten: bool = False,
                                    spread: float = 1.0,
-                                   jitter: float = 0.0) -> Dict[str, Any]:
+                                   jitter: float = 0.0,
+                                   dims: int = 2) -> Dict[str, Any]:
         if not self.documents:
             return {"documents": {"xy": [], "relevance": []}, "agents": {"xy": []}, "edges": []}
         embs = np.array([d.embedding for d in self.documents], dtype=np.float32)
-        coords = _pca_2d(embs, whiten=bool(whiten))
-        coords = coords if coords is not None else np.zeros((len(self.documents), 2), dtype=np.float32)
+        if int(dims) == 3:
+            coords, mean, comps, _ = _pca_fit_transform(embs, n_components=3, whiten=bool(whiten))
+        else:
+            coords = _pca_2d(embs, whiten=bool(whiten))
+        k = 3 if int(dims) == 3 else 2
+        coords = coords if coords is not None else np.zeros((len(self.documents), k), dtype=np.float32)
         rels = [float(d.relevance_score) for d in self.documents]
         trails = {k: v for k, v in (self.pheromone_trails or {}).items() if float(v) >= float(min_trail_strength)}
         return _build_snapshot(coords, rels, trails, max_edges=int(max_edges))

@@ -160,6 +160,22 @@ if run:
         retr.add_documents(shard)
         _log(f"Shard {s_start}-{s_end}: docs={len(shard)} | init simulation")
         retr.initialize_simulation(query)
+
+        # Live network snapshot placeholder + sidebar controls
+        net_placeholder = None
+        # Sidebar sliders (with sensible defaults)
+        ui_settings['redraw_every'] = st.sidebar.number_input('Redraw every N steps', min_value=1, max_value=50, value=int(ui_settings.get('redraw_every', max(1, int(ui_settings.get('log_every', 1)) ))))
+        ui_settings['min_trail_strength'] = st.sidebar.slider('Min trail strength', min_value=0.0, max_value=1.0, value=float(ui_settings.get('min_trail_strength', 0.05)), step=0.01)
+        ui_settings['max_edges'] = st.sidebar.number_input('Max edges', min_value=50, max_value=2000, value=int(ui_settings.get('max_edges', 500)), step=50)
+        ui_settings['viz_dims'] = st.sidebar.selectbox('Viz dimensions', options=[2,3], index=0)
+
+        min_trail = float(ui_settings['min_trail_strength'])
+        max_edges = int(ui_settings['max_edges'])
+        redraw_every = max(1, int(ui_settings['redraw_every']))
+        viz_dims = int(ui_settings['viz_dims'])
+        if ui_settings.get('show_network', True) and go is not None:
+            net_placeholder = st.empty()
+
         for _i in range(int(ui_settings['max_iterations'])):
             retr.step(1)
             if _i % max(1, int(ui_settings.get('log_every', 1))) == 0:
@@ -170,6 +186,50 @@ if run:
                     pass
                 m = _sim_metrics(retr)
                 _log(f"step={_i} avg_rel={m['avg_rel']:.4f} max_rel={m['max_rel']:.4f} trails={m['trails']} avg_speed={m['avg_speed']:.4f}")
+
+                # Live redraw of the network snapshot
+                if net_placeholder is not None and (_i % redraw_every == 0):
+                    try:
+                        snap = retr.get_snapshot(min_trail_strength=min_trail, max_edges=max_edges, method="pca", whiten=False,)
+                        docs_xy = snap.get("documents", {}).get("xy", [])
+                        docs_rel = snap.get("documents", {}).get("relevance", [])
+                        agents_xy = snap.get("agents", {}).get("xy", [])
+                        edges = snap.get("edges", [])
+                        if viz_dims == 3:
+                            fig = go.Figure()
+                            # Edges: project as straight segments in 3D
+                            for e in edges:
+                                fig.add_trace(go.Scatter3d(x=[e['x0'], e['x1']], y=[e['y0'], e['y1']], z=[0,0], mode='lines', line=dict(width=max(1, e['s'] * 3), color='rgba(0,150,0,0.25)'), showlegend=False))
+                            if docs_xy:
+                                xs = [p[0] for p in docs_xy]
+                                ys = [p[1] for p in docs_xy]
+                                zs = [p[2] if len(p) > 2 else 0 for p in docs_xy]
+                                sizes = [4 + 10*float(r) for r in (docs_rel or [0]*len(xs))]
+                                fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode='markers', marker=dict(size=sizes, color=docs_rel or [0]*len(xs), colorscale='Viridis', opacity=0.8), name='docs'))
+                            if agents_xy:
+                                xa = [p[0] for p in agents_xy]
+                                ya = [p[1] for p in agents_xy]
+                                za = [p[2] if len(p) > 2 else 0 for p in agents_xy]
+                                fig.add_trace(go.Scatter3d(x=xa, y=ya, z=za, mode='markers', marker=dict(size=3, color='rgba(200,0,0,0.6)'), name='agents'))
+                            fig.update_layout(margin=dict(l=10, r=10, t=30, b=10), height=600, title=f"Live Pheromone Network 3D (step={_i}, trails={len(edges)})")
+                            net_placeholder.plotly_chart(fig, use_container_width=True)
+                        else:
+                            fig = go.Figure()
+                            for e in edges:
+                                fig.add_trace(go.Scatter(x=[e['x0'], e['x1']], y=[e['y0'], e['y1']], mode='lines', line=dict(width=max(1, e['s'] * 3), color='rgba(0,150,0,0.25)'), hoverinfo='none', showlegend=False))
+                            if docs_xy:
+                                xs = [p[0] for p in docs_xy]
+                                ys = [p[1] for p in docs_xy]
+                                sizes = [8 + 12*float(r) for r in (docs_rel or [0]*len(xs))]
+                                fig.add_trace(go.Scatter(x=xs, y=ys, mode='markers', marker=dict(size=sizes, color='rgba(0,0,200,0.6)'), name='docs'))
+                            if agents_xy:
+                                xa = [p[0] for p in agents_xy]
+                                ya = [p[1] for p in agents_xy]
+                                fig.add_trace(go.Scatter(x=xa, y=ya, mode='markers', marker=dict(size=3, color='rgba(200,0,0,0.5)'), name='agents'))
+                            fig.update_layout(margin=dict(l=10, r=10, t=30, b=10), height=500, title=f"Live Pheromone Network (step={_i}, trails={len(edges)})", xaxis_title="x", yaxis_title="y")
+                            net_placeholder.plotly_chart(fig, use_container_width=True)
+                    except Exception:
+                        pass
         # Final metrics for shard
         m_final = _sim_metrics(retr)
         _log(f"final shard metrics: docs={m_final['docs']} agents={m_final['agents']} avg_rel={m_final['avg_rel']:.4f} max_rel={m_final['max_rel']:.4f} trails={m_final['trails']}")
