@@ -196,11 +196,39 @@ class MCPMRetriever:
         if not self.documents:
             return {"documents": {"xy": [], "relevance": []}, "agents": {"xy": []}, "edges": []}
         embs = np.array([d.embedding for d in self.documents], dtype=np.float32)
-        coords, mean, comps = _pca_2d(embs, whiten=bool(whiten))
+        coords = _pca_2d(embs, whiten=bool(whiten))
         coords = coords if coords is not None else np.zeros((len(self.documents), 2), dtype=np.float32)
         rels = [float(d.relevance_score) for d in self.documents]
         trails = {k: v for k, v in (self.pheromone_trails or {}).items() if float(v) >= float(min_trail_strength)}
         return _build_snapshot(coords, rels, trails, max_edges=int(max_edges))
+
+    # ---- Public getters for frontend/live updates ----
+    def get_query_embedding(self) -> Optional[np.ndarray]:
+        return None if self._current_query_embedding is None else self._current_query_embedding.copy()
+
+    def get_agent_positions(self) -> np.ndarray:
+        return np.array([a.position for a in self.agents], dtype=np.float32) if self.agents else np.zeros((0, 0), dtype=np.float32)
+
+    def get_doc_embeddings(self) -> np.ndarray:
+        return np.array([d.embedding for d in self.documents], dtype=np.float32) if self.documents else np.zeros((0, 0), dtype=np.float32)
+
+    def get_doc_relevances(self) -> List[Tuple[int, float]]:
+        return [(d.id, float(d.relevance_score)) for d in self.documents]
+
+    def get_pheromone_trails(self) -> Dict[Tuple[int, int], float]:
+        return dict(self.pheromone_trails)
+
+    def get_snapshot(self,
+                     min_trail_strength: float = 0.05,
+                     max_edges: int = 300,
+                     method: str = "pca",
+                     whiten: bool = False) -> Dict[str, Any]:
+        return self.get_visualization_snapshot(
+            min_trail_strength=min_trail_strength,
+            max_edges=max_edges,
+            method=method,
+            whiten=whiten,
+        )
 
     # ---- Delegates consumed by simulation.* ----
     def spawn_agents(self, query_embedding: np.ndarray) -> None:
