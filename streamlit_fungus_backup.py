@@ -197,9 +197,12 @@ if run:
                         edges = snap.get("edges", [])
                         if viz_dims == 3:
                             fig = go.Figure()
-                            # Edges: project as straight segments in 3D
+                            # Edges: draw with true z if provided
                             for e in edges:
-                                fig.add_trace(go.Scatter3d(x=[e['x0'], e['x1']], y=[e['y0'], e['y1']], z=[0,0], mode='lines', line=dict(width=max(1, e['s'] * 3), color='rgba(0,150,0,0.25)'), showlegend=False))
+                                if 'z0' in e and 'z1' in e:
+                                    fig.add_trace(go.Scatter3d(x=[e['x0'], e['x1']], y=[e['y0'], e['y1']], z=[e['z0'], e['z1']], mode='lines', line=dict(width=max(1, e['s'] * 3), color='rgba(0,150,0,0.25)'), showlegend=False))
+                                else:
+                                    fig.add_trace(go.Scatter3d(x=[e['x0'], e['x1']], y=[e['y0'], e['y1']], z=[0,0], mode='lines', line=dict(width=max(1, e['s'] * 3), color='rgba(0,150,0,0.25)'), showlegend=False))
                             if docs_xy:
                                 xs = [p[0] for p in docs_xy]
                                 ys = [p[1] for p in docs_xy]
