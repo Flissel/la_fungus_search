@@ -276,6 +276,87 @@ class SnapshotStreamer:
             except Exception:
                 continue
 
+    def _parse_chunk_header(self, content: str) -> tuple[str | None, int | None, int | None, int | None]:
+        try:
+            # Header format: "# file: <rel> | lines: a-b | window: w"
+            first = (content.splitlines() or [""])[0]
+            if not first.startswith('# file:'):
+                return None, None, None, None
+            parts = [p.strip() for p in first[1:].split('|')]
+            file_part = parts[0].split(':', 1)[1].strip() if len(parts) > 0 and ':' in parts[0] else None
+            lines_part = parts[1].split(':', 1)[1].strip() if len(parts) > 1 and ':' in parts[1] else None
+            win_part = parts[2].split(':', 1)[1].strip() if len(parts) > 2 and ':' in parts[2] else None
+            a, b = None, None
+            if lines_part and '-' in lines_part:
+                try:
+                    a = int(lines_part.split('-')[0].strip())
+                    b = int(lines_part.split('-')[1].strip())
+                except Exception:
+                    a, b = None, None
+            w = None
+            try:
+                if win_part:
+                    w = int(win_part)
+            except Exception:
+                w = None
+            return file_part, a, b, w
+        except Exception:
+            return None, None, None, None
+
+    def _neighbors_for_doc(self, doc_id: int, line_radius: int = 100, max_neighbors: int = 20) -> list[int]:
+        try:
+            d = self._doc_by_id(doc_id)
+            if d is None:
+                return []
+            f, a, b, _w = self._parse_chunk_header(getattr(d, 'content', ''))
+            if f is None or a is None or b is None:
+                return []
+            lo = max(1, int(a) - int(line_radius))
+            hi = int(b) + int(line_radius)
+            out: list[int] = []
+            for other in getattr(self.retr, 'documents', []) if self.retr is not None else []:
+                if int(getattr(other, 'id', -1)) == int(doc_id):
+                    continue
+                f2, a2, b2, _w2 = self._parse_chunk_header(getattr(other, 'content', ''))
+                if f2 == f and (a2 is not None and b2 is not None):
+                    if not (b2 < lo or a2 > hi):
+                        out.append(int(getattr(other, 'id', -1)))
+                if len(out) >= int(max_neighbors):
+                    break
+            return out
+        except Exception:
+            return []
+
+    def _apply_targeted_fetch(self, max_neighbors_per_seed: int = 10) -> None:
+        # Boost neighbors around seeds and then drain the seed queue
+        new_boosts = 0
+        try:
+            seeds = list(self._seeds_queue)
+            self._seeds_queue.clear()
+            for sid in seeds:
+                neigh = self._neighbors_for_doc(int(sid), max_neighbors=int(max_neighbors_per_seed))
+                for nid in neigh:
+                    self._doc_boost[nid] = self._doc_boost.get(nid, 0.0) + 0.3
+                    od = self._doc_by_id(nid)
+                    if od is not None:
+                        cur = float(getattr(od, 'relevance_score', 0.0))
+                        setattr(od, 'relevance_score', max(0.0, cur + 0.02))
+                        new_boosts += 1
+        except Exception:
+            return
+
+    def _apply_pruning(self) -> None:
+        try:
+            if self.retr is None:
+                return
+            for d in getattr(self.retr, 'documents', []):
+                c = getattr(d, 'content', '')
+                if len(c) < int(self.min_content_chars) or self._is_import_only(c):
+                    cur = float(getattr(d, 'relevance_score', 0.0))
+                    setattr(d, 'relevance_score', max(0.0, cur * (1.0 - float(self.import_only_penalty) * 0.5)))
+        except Exception:
+            pass
+
     async def start(self) -> None:
         if self.running:
             return
@@ -401,6 +482,9 @@ class SnapshotStreamer:
                                         judgements = self._llm_judge(docs)
                                         self._apply_judgements(judgements)
                                         self._reports_sent += 1
+                                        # targeted neighborhood boosts and pruning
+                                        self._apply_targeted_fetch(max_neighbors_per_seed=10)
+                                        self._apply_pruning()
                                 except Exception as _e_judge:
                                     await self._broadcast({"type": "log", "message": f"judge: failed: {_e_judge}"})
                         except Exception as e:
