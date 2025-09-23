@@ -83,10 +83,11 @@ def list_code_files(root_dir: str, max_files: int, exclude_dirs: List[str] = Non
     return files
 
 
-def collect_codebase_chunks(root_dir: str, windows: List[int], max_files: int, exclude_dirs: List[str] = None) -> List[str]:
+def collect_codebase_chunks(root_dir: str, windows: List[int], max_files: int, exclude_dirs: List[str] = None, workers: int | None = None) -> List[str]:
     files_to_process = list_code_files(root_dir, max_files, exclude_dirs)
     docs: List[str] = []
-    with ThreadPoolExecutor(max_workers=max(4, min(32, (os.cpu_count() or 8) * 2))) as ex:
+    max_workers = workers if (workers and workers > 0) else max(4, min(32, (os.cpu_count() or 8) * 2))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
         futures: Dict[Any, str] = {}
         for p in files_to_process:
             cached = _load_cached_chunks(p, windows)

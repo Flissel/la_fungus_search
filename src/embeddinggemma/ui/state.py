@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 class Settings:
     mode: str = "deep"
     top_k: int = 5
-    windows: List[int] = field(default_factory=lambda: [50, 100, 200, 300, 400])
+    windows: List[int] = field(default_factory=lambda: [])
     use_repo: bool = True
     root_folder: str = ""
     max_files: int = 1000

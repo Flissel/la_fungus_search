@@ -198,15 +198,50 @@ class MCPMRetriever:
         if not self.documents:
             return {"documents": {"xy": [], "relevance": []}, "agents": {"xy": []}, "edges": []}
         embs = np.array([d.embedding for d in self.documents], dtype=np.float32)
-        if int(dims) == 3:
-            coords, mean, comps, _ = _pca_fit_transform(embs, n_components=3, whiten=bool(whiten))
-        else:
-            coords = _pca_2d(embs, whiten=bool(whiten))
         k = 3 if int(dims) == 3 else 2
+        # Cache PCA basis for stable layout and consistent agent projection
+        if not hasattr(self, "_viz_pca"):
+            self._viz_pca = {}
+        if self._viz_pca.get("k") != k:
+            self._viz_pca.clear()
+        if not self._viz_pca:
+            coords, mean, comps, S = _pca_fit_transform(embs, n_components=k, whiten=bool(whiten))
+            self._viz_pca = {"mean": mean, "comps": comps, "S": S, "k": k, "whiten": bool(whiten)}
+        else:
+            mean = self._viz_pca["mean"]
+            comps = self._viz_pca["comps"]
+            S = self._viz_pca.get("S")
+            coords = (embs - mean) @ comps.T
+            if bool(self._viz_pca.get("whiten")) and S is not None:
+                s = S[:k]
+                safe = np.array([sv if sv != 0 else 1.0 for sv in s])
+                coords = coords / safe
         coords = coords if coords is not None else np.zeros((len(self.documents), k), dtype=np.float32)
         rels = [float(d.relevance_score) for d in self.documents]
+        meta = [{
+            "id": int(d.id),
+            "score": float(d.relevance_score),
+            "visits": int(d.visit_count),
+            "snippet": (d.content or '')[:140] if hasattr(d, 'content') else ''
+        } for d in self.documents]
         trails = {k: v for k, v in (self.pheromone_trails or {}).items() if float(v) >= float(min_trail_strength)}
-        return _build_snapshot(coords, rels, trails, max_edges=int(max_edges))
+        agents_xy = None
+        try:
+            if self.agents and self._viz_pca.get("comps") is not None:
+                import numpy as _np
+                mean = self._viz_pca["mean"]
+                comps = self._viz_pca["comps"]
+                S = self._viz_pca.get("S")
+                A = _np.array([getattr(a, 'position', None) for a in self.agents if getattr(a, 'position', None) is not None], dtype=_np.float32)
+                if A.size:
+                    agents_xy = (A - mean) @ comps.T
+                    if bool(self._viz_pca.get("whiten")) and S is not None:
+                        s = S[:k]
+                        safe = _np.array([sv if sv != 0 else 1.0 for sv in s], dtype=_np.float32)
+                        agents_xy = agents_xy / safe
+        except Exception:
+            agents_xy = None
+        return _build_snapshot(coords, rels, trails, meta, agents_xy, max_edges=int(max_edges))
 
     # ---- Public getters for frontend/live updates ----
     def get_query_embedding(self) -> Optional[np.ndarray]:
@@ -228,12 +263,14 @@ class MCPMRetriever:
                      min_trail_strength: float = 0.05,
                      max_edges: int = 300,
                      method: str = "pca",
-                     whiten: bool = False) -> Dict[str, Any]:
+                     whiten: bool = False,
+                     dims: int = 2) -> Dict[str, Any]:
         return self.get_visualization_snapshot(
             min_trail_strength=min_trail_strength,
             max_edges=max_edges,
             method=method,
             whiten=whiten,
+            dims=dims,
         )
 
     # ---- Delegates consumed by simulation.* ----

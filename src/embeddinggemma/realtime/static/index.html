@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MCMP Realtime</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    body { margin:0; font-family:sans-serif; background:#121212; color:#ddd; }
+    #controls { padding:10px; background:#1e1e1e; display:flex; gap:8px; align-items:center; }
+    #chart { width:100vw; height:88vh; }
+    input, select, button { background:#2a2a2a; color:#ddd; border:1px solid #444; padding:4px 8px; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <label>Viz dims
+      <select id="dims">
+        <option value="2">2D</option>
+        <option value="3">3D</option>
+      </select>
+    </label>
+    <label>Min trail <input id="mintrail" type="number" step="0.01" value="0.05" /></label>
+    <label>Max edges <input id="maxedges" type="number" step="50" value="600" /></label>
+    <button id="apply">Apply</button>
+    <span style="flex:1"></span>
+    <input id="query" placeholder="Query..." style="width:320px" />
+    <button id="search">Search</button>
+    <button id="answer">Answer</button>
+  </div>
+  <div id="chart"></div>
+  <script>
+    const chart = document.getElementById('chart');
+    let dims = 2;
+    let fig2d = { data: [], layout: { paper_bgcolor:'#121212', plot_bgcolor:'#121212', font:{color:'#ddd'}, margin:{l:10,r:10,t:30,b:10}, xaxis:{title:'x'}, yaxis:{title:'y'} } };
+    let fig3d = { data: [], layout: { paper_bgcolor:'#121212', scene:{xaxis:{title:'x'},yaxis:{title:'y'},zaxis:{title:'z'}}, font:{color:'#ddd'}, margin:{l:0,r:0,t:30,b:0} } };
+
+    function draw2d(snap) {
+      const docs = snap.documents || {}; const edges = snap.edges || []; const agents = snap.agents || {};
+      const pts = docs.xy || []; const rel = docs.relevance || [];
+      const traces = [];
+      // edges
+      for (const e of edges) {
+        traces.push({ x:[e.x0,e.x1], y:[e.y0,e.y1], mode:'lines', line:{width: Math.max(1, e.s*3), color:'rgba(0,150,0,0.25)'}, hoverinfo:'skip', showlegend:false, type:'scatter' });
+      }
+      if (pts.length) {
+        const xs = pts.map(p=>p[0]); const ys = pts.map(p=>p[1]);
+        const sizes = rel.map(r=>8+12*r);
+        traces.push({ x:xs, y:ys, mode:'markers', marker:{size:sizes, color:'rgba(0,0,200,0.7)'}, name:'docs', type:'scatter' });
+      }
+      if ((agents.xy||[]).length) {
+        const xa = agents.xy.map(p=>p[0]); const ya = agents.xy.map(p=>p[1]);
+        traces.push({ x:xa, y:ya, mode:'markers', marker:{size:3, color:'rgba(200,0,0,0.6)'}, name:'agents', type:'scatter' });
+      }
+      fig2d.data = traces; Plotly.react(chart, fig2d);
+    }
+
+    function draw3d(snap) {
+      const docs = snap.documents || {}; const edges = snap.edges || []; const agents = snap.agents || {};
+      const pts = docs.xy || []; const rel = docs.relevance || [];
+      const traces = [];
+      for (const e of edges) {
+        const z0 = ("z0" in e)? e.z0 : 0; const z1 = ("z1" in e)? e.z1 : 0;
+        traces.push({ x:[e.x0,e.x1], y:[e.y0,e.y1], z:[z0,z1], mode:'lines', line:{width: Math.max(1, e.s*3), color:'rgba(0,150,0,0.25)'}, showlegend:false, type:'scatter3d' });
+      }
+      if (pts.length) {
+        const xs = pts.map(p=>p[0]); const ys = pts.map(p=>p[1]); const zs = pts.map(p=>p[2]||0);
+        const sizes = rel.map(r=>4+10*r);
+        traces.push({ x:xs, y:ys, z:zs, mode:'markers', marker:{size:sizes, color:rel, colorscale:'Viridis', opacity:0.85}, name:'docs', type:'scatter3d' });
+      }
+      if ((agents.xy||[]).length) {
+        const xa = agents.xy.map(p=>p[0]); const ya = agents.xy.map(p=>p[1]); const za = agents.xy.map(p=>p[2]||0);
+        traces.push({ x:xa, y:ya, z:za, mode:'markers', marker:{size:3, color:'rgba(200,0,0,0.7)'}, name:'agents', type:'scatter3d' });
+      }
+      fig3d.data = traces; Plotly.react(chart, fig3d);
+    }
+
+    // websocket
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+    ws.onopen = () => console.log('ws connected');
+    ws.onmessage = (ev) => {
+      try { const obj = JSON.parse(ev.data); if (obj.type === 'snapshot') {
+        if (dims === 3) draw3d(obj.data); else draw2d(obj.data);
+      }} catch(_){}
+    };
+
+    document.getElementById('apply').onclick = async () => {
+      dims = parseInt(document.getElementById('dims').value);
+      const mintrail = parseFloat(document.getElementById('mintrail').value);
+      const maxedges = parseInt(document.getElementById('maxedges').value);
+      await fetch('/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ viz_dims:dims, min_trail_strength:mintrail, max_edges:maxedges }) });
+      try { ws.send(JSON.stringify({ type:'config', viz_dims:dims })); } catch(_){}
+    };
+
+    document.getElementById('search').onclick = async () => {
+      const q = document.getElementById('query').value || '';
+      const r = await fetch('/search', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ query:q, top_k:5 }) });
+      const j = await r.json();
+      alert(j.status === 'ok' ? JSON.stringify(j.results, null, 2) : j.message);
+    };
+
+    document.getElementById('answer').onclick = async () => {
+      const q = document.getElementById('query').value || '';
+      const r = await fetch('/answer', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ query:q, top_k:5 }) });
+      const j = await r.json();
+      alert(j.status === 'ok' ? j.answer : j.message);
+    };
+
+    // ensure backend is running
+    fetch('/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+  </script>
+</body>
+</html>
+

@@ -58,22 +58,26 @@ def calculate_pheromone_force(retr: Any, agent: Any) -> np.ndarray:
 
 def update_agent_position(retr: Any, agent: Any, iteration: int) -> None:
     _logger.debug("update_agent_position: agent_id=%s iter=%d", getattr(agent, 'id', '?'), iteration)
-    nearby_docs = retr.find_nearest_documents(agent.position, k=3)
+    nearby_docs = retr.find_nearest_documents(agent.position, k=5)
     if not nearby_docs:
         return
-    attraction_force = np.zeros_like(agent.position)
+    # Sphere-tangent attraction toward normalized doc embeddings
+    p = agent.position / (np.linalg.norm(agent.position) + 1e-12)
+    attraction_force = np.zeros_like(p)
     for doc, similarity in nearby_docs:
-        direction = doc.embedding - agent.position
-        distance = np.linalg.norm(direction)
-        if distance > 0:
-            force_strength = float(similarity) * (1.0 + float(doc.relevance_score))
-            attraction_force += (direction / distance) * force_strength
+        nd = doc.embedding / (np.linalg.norm(doc.embedding) + 1e-12)
+        tangential = nd - (p @ nd) * p  # remove radial component
+        norm_t = np.linalg.norm(tangential)
+        if norm_t > 0:
+            tangential = tangential / norm_t
+            weight = float(similarity) * (1.0 + float(doc.relevance_score))
+            attraction_force += weight * tangential
     pheromone_force = calculate_pheromone_force(retr, agent)
     exploration_force = np.random.normal(0, agent.exploration_factor, agent.position.shape)
-    total_force = 0.6 * attraction_force + 0.3 * pheromone_force + 0.1 * exploration_force
-    agent.velocity = 0.8 * agent.velocity + 0.2 * total_force
-    agent.position += agent.velocity
-    agent.position = agent.position / np.linalg.norm(agent.position)
+    total_force = 0.8 * attraction_force + 0.15 * pheromone_force + 0.05 * exploration_force
+    agent.velocity = 0.85 * agent.velocity + 0.15 * total_force
+    agent.position = p + agent.velocity
+    agent.position = agent.position / (np.linalg.norm(agent.position) + 1e-12)
     agent.age += 1
     if iteration % max(1, int(getattr(retr, 'log_every', 10))) == 0:
         _logger.debug(

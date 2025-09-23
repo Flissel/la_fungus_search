@@ -21,7 +21,7 @@ def sidebar(settings: Dict[str, Any]) -> Dict[str, Any]:
     sb.header("Settings")
     mode = sb.selectbox("Mode", ["deep", "structure", "exploratory", "summary", "similar", "redundancy", "repair", "Rag"], index=0)
     top_k = sb.number_input("Top K", min_value=1, max_value=20, value=5, step=1)
-    windows_str = sb.text_input("Windows (lines)", value=",".join(str(w) for w in settings.get('windows', [50,100,200,300,400])))
+    windows_str = sb.text_input("Windows (lines)", value=",".join(str(w) for w in settings.get('windows', [])))
     windows = [int(x.strip()) for x in windows_str.split(',') if x.strip().isdigit()]
     use_repo = sb.checkbox("Use code space (src) as corpus", value=True)
     root_folder = sb.text_input("Root folder (used when src is off)", value=os.getcwd())

@@ -37,10 +37,10 @@ def start_background_report(settings: Dict[str, Any], query_text: str):
 
         write_progress(job_id, {"status": "running", "percent": 0, "message": "Preparing corpus…"})
         if s.get('use_repo', True):
-            docs = collect_codebase_chunks('src', s.get('windows', [50, 100, 200, 300, 400]), int(s.get('max_files', 1000)), s.get('exclude_dirs', []))
+            docs = collect_codebase_chunks('src', s.get('windows', []), int(s.get('max_files', 1000)), s.get('exclude_dirs', []))
         else:
             rf = s.get('root_folder', os.getcwd())
-            docs = collect_codebase_chunks(rf, s.get('windows', [50, 100, 200, 300, 400]), int(s.get('max_files', 1000)), s.get('exclude_dirs', []))
+            docs = collect_codebase_chunks(rf, s.get('windows', []), int(s.get('max_files', 1000)), s.get('exclude_dirs', []))
         write_progress(job_id, {"status": "running", "percent": 10, "message": f"Corpus ready: {len(docs)} chunks"})
 
         retr = MCPMRetriever(

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import numpy as np
 import logging
 
@@ -15,6 +15,8 @@ _logger.setLevel(logging.INFO)
 def build_snapshot(docs_xy: np.ndarray,
                    relevances: List[float],
                    pheromone_trails: Dict[tuple, float],
+                   meta: Optional[List[Dict[str, Any]]] = None,
+                   agents_xy: Optional[np.ndarray] = None,
                    max_edges: int = 300) -> Dict[str, Any]:
     _logger.debug("build_snapshot: docs=%d trails=%d", int(len(docs_xy)), int(len(pheromone_trails or {})))
     edges = []
@@ -39,8 +41,8 @@ def build_snapshot(docs_xy: np.ndarray,
             if len(edges) >= max_edges:
                 break
     return {
-        "documents": {"xy": docs_xy.tolist(), "relevance": [float(r) for r in relevances]},
-        "agents": {"xy": []},
+        "documents": {"xy": docs_xy.tolist(), "relevance": [float(r) for r in relevances], "meta": meta or []},
+        "agents": {"xy": (agents_xy.tolist() if agents_xy is not None else [])},
         "edges": edges,
     }
 

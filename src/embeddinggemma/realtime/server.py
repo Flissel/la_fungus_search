@@ -1,0 +1,918 @@
+from __future__ import annotations
+from typing import List, Dict, Any, Set
+import os
+import asyncio
+import json
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, validator
+
+import numpy as np
+
+from embeddinggemma.mcmp_rag import MCPMRetriever
+from embeddinggemma.ui.corpus import collect_codebase_chunks, list_code_files  # type: ignore
+from embeddinggemma.rag.generation import generate_with_ollama  # type: ignore
+
+
+def _collect_py_documents(root_dir: str, max_files: int = 300, max_chars: int = 4000) -> List[str]:
+    docs: List[str] = []
+    count = 0
+    for dirpath, _dirnames, filenames in os.walk(root_dir):
+        for fn in filenames:
+            if not fn.endswith(".py"):
+                continue
+            try:
+                with open(os.path.join(dirpath, fn), "r", encoding="utf-8", errors="ignore") as f:
+                    txt = f.read()
+                    if txt:
+                        docs.append(txt[:max_chars])
+                        count += 1
+                        if count >= max_files:
+                            return docs
+            except Exception:
+                continue
+    return docs
+
+
+def _report_schema_hint() -> str:
+    return (
+        "Return ONLY JSON with key 'items' (array). Each item must include: "
+        "code_chunk (str), content (str), file_path (str), line_range ([int,int]), "
+        "code_purpose (str), code_dependencies (str[] or str), file_type (str), "
+        "embedding_score (number), relevance_to_query (str), query_initial (str), follow_up_queries (str[])."
+    )
+
+
+def _build_report_prompt(mode: str, query: str, top_k: int, docs: list[dict]) -> str:
+    mode = (mode or "deep").lower()
+    ctx = "\n\n".join([(it.get("content") or "")[:1200] for it in docs])
+    base = f"Mode: {mode}\nQuery: {query}\nTopK: {int(top_k)}\n\nContext begins:\n{ctx}\n\nContext ends.\n\n"
+    schema = _report_schema_hint()
+    if mode == "structure":
+        instr = (
+            "Identify modules, classes, functions, and their relationships. "
+            "Prefer summarizing public APIs and entrypoints. "
+        )
+    elif mode == "exploratory":
+        instr = (
+            "Surface diverse areas of the codebase relevant to the query. "
+            "Prefer coverage across files over depth. "
+        )
+    elif mode == "summary":
+        instr = (
+            "Produce concise high-level summaries for each chunk and reduce redundancy. "
+        )
+    elif mode == "repair":
+        instr = (
+            "Focus on error-prone or suspicious code and dependencies that may break. "
+        )
+    else:
+        # deep (default)
+        instr = (
+            "Extract purpose, dependencies, and how the code answers the query. "
+            "Prefer depth on the most relevant chunks. "
+        )
+    return base + instr + "\n" + schema + " Answer with JSON only."
+
+
+class SnapshotStreamer:
+    def __init__(self) -> None:
+        self.retr: MCPMRetriever | None = None
+        self.clients: Set[WebSocket] = set()
+        self.running: bool = False
+        self.task: asyncio.Task | None = None
+        # visualization config
+        self.redraw_every: int = 2
+        self.min_trail_strength: float = 0.05
+        self.max_edges: int = 600
+        self.viz_dims: int = 2
+        self.query: str = "Explain the architecture."
+        # corpus config
+        self.use_repo: bool = True
+        self.root_folder: str = os.getcwd()
+        self.max_files: int = 500
+        self.exclude_dirs: list[str] = [".venv", "node_modules", ".git", "external"]
+        # windows (chunk sizes in lines) must come from frontend; no hard-coded defaults
+        self.windows: list[int] = []
+        self.chunk_workers: int = max(4, (os.cpu_count() or 8))
+        # metrics
+        self.step_i: int = 0
+        self.last_metrics: dict[str, float | int] | None = None
+        # sim config
+        self.max_iterations: int = 200
+        self.num_agents: int = 200
+        self.exploration_bonus: float = 0.1
+        self.pheromone_decay: float = 0.95
+        self.embed_batch_size: int = 128
+        self.max_chunks_per_shard: int = 2000
+        # jobs
+        self.jobs: dict[str, dict] = {}
+        # hot state save for pause/resume
+        self._paused: bool = False
+        self._saved_state: dict | None = None
+        # results / stability
+        self.top_k: int = 10
+        self._avg_rel_history: list[float] = []
+        # reporting config
+        self.report_enabled: bool = False
+        self.report_every: int = 5
+        self.report_mode: str = "deep"
+
+    async def start(self) -> None:
+        if self.running:
+            return
+        # Build retriever and corpus
+        retr = MCPMRetriever(num_agents=self.num_agents, max_iterations=self.max_iterations, exploration_bonus=self.exploration_bonus, pheromone_decay=self.pheromone_decay, embed_batch_size=self.embed_batch_size)
+        if not self.windows:
+            raise RuntimeError("windows (chunk sizes) must be provided by frontend")
+        if self.use_repo:
+            docs = collect_codebase_chunks('src', self.windows, int(self.max_files), self.exclude_dirs, self.chunk_workers)
+        else:
+            rf = (self.root_folder or os.getcwd())
+            docs = collect_codebase_chunks(rf, self.windows, int(self.max_files), self.exclude_dirs, self.chunk_workers)
+        retr.add_documents(docs)
+        retr.initialize_simulation(self.query)
+        self.retr = retr
+        self.running = True
+        self.task = asyncio.create_task(self._run_loop())
+        # announce
+        try:
+            await self._broadcast({"type": "log", "message": f"started: docs={len(getattr(retr,'documents',[]))} agents={len(getattr(retr,'agents',[]))} windows={self.windows}"})
+        except Exception:
+            pass
+
+    async def stop(self) -> None:
+        self.running = False
+        if self.task is not None:
+            try:
+                await asyncio.wait_for(self.task, timeout=1.0)
+            except Exception:
+                pass
+            self.task = None
+
+    async def _run_loop(self) -> None:
+        assert self.retr is not None
+        self.step_i = 0
+        try:
+            while self.running:
+                if self._paused:
+                    await asyncio.sleep(0.05)
+                    continue
+                # step
+                try:
+                    self.retr.step(1)
+                except Exception as e:
+                    await self._broadcast({"type": "log", "message": f"error in step: {e}"})
+                    break
+                self.step_i += 1
+                # compute metrics
+                try:
+                    docs = getattr(self.retr, 'documents', [])
+                    agents = getattr(self.retr, 'agents', [])
+                    avg_rel = float(sum(getattr(d, 'relevance_score', 0.0) for d in docs) / max(1, len(docs))) if docs else 0.0
+                    max_rel = float(max((getattr(d, 'relevance_score', 0.0) for d in docs), default=0.0)) if docs else 0.0
+                    trails = len(getattr(self.retr, 'pheromone_trails', {}))
+                    self.last_metrics = {"step": int(self.step_i), "docs": len(docs), "agents": len(agents), "avg_rel": avg_rel, "max_rel": max_rel, "trails": trails}
+                except Exception:
+                    self.last_metrics = {"step": int(self.step_i)}
+
+                if self.step_i % max(1, int(self.redraw_every)) == 0:
+                    try:
+                        snap = self.retr.get_snapshot(min_trail_strength=self.min_trail_strength, max_edges=self.max_edges, method="pca", whiten=False, dims=int(self.viz_dims))
+                        await self._broadcast({"type": "snapshot", "step": int(self.step_i), "data": snap})
+                        if self.last_metrics is not None:
+                            await self._broadcast({"type": "metrics", "data": self.last_metrics})
+                        # Always broadcast current Top-K results for this step
+                        try:
+                            if self.retr is not None:
+                                res_now = self.retr.search(self.query, top_k=int(self.top_k))
+                                await self._broadcast({"type": "results", "step": int(self.step_i), "data": res_now.get("results", [])})
+                                await self._broadcast({"type": "log", "message": f"top_k={self.top_k} results_count={len(res_now.get('results', []))}"})
+                        except Exception:
+                            pass
+                        # Per-step report (optional)
+                        try:
+                            if self.report_enabled and (int(self.step_i) % max(1, int(self.report_every)) == 0) and self.retr is not None:
+                                res_top = self.retr.search(self.query, top_k=int(self.top_k))
+                                docs = res_top.get("results", [])
+                                await self._broadcast({"type": "log", "message": f"report: step={self.step_i} mode={self.report_mode} top_k_items={len(docs)}"})
+                                res_top = self.retr.search(self.query, top_k=int(self.top_k))
+                                mode = (self.report_mode or "deep").lower()
+                                prompt = _build_report_prompt(mode, self.query, int(self.top_k), docs)
+                                try:
+                                    await self._broadcast({"type": "log", "message": f"report: prompt_len={len(prompt)}"})
+                                except Exception:
+                                    pass
+                                try:
+                                    text = generate_with_ollama(prompt, model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'), host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'))
+                                except Exception as e:
+                                    await self._broadcast({"type": "log", "message": f"report: LLM error: {e}"})
+                                    text = "{}"
+                                # Parse JSON best-effort
+                                try:
+                                    raw = (text or "").strip()
+                                    if raw.startswith("```"):
+                                        raw = "\n".join([ln for ln in raw.splitlines() if not ln.strip().startswith("```")])
+                                    report_obj = json.loads(raw)
+                                except Exception:
+                                    report_obj = {"items": []}
+                                # Save and broadcast
+                                try:
+                                    reports_dir = os.path.join(SETTINGS_DIR, "reports")
+                                    os.makedirs(reports_dir, exist_ok=True)
+                                    pth = os.path.join(reports_dir, f"step_{int(self.step_i)}.json")
+                                    with open(pth, "w", encoding="utf-8") as f:
+                                        json.dump({"step": int(self.step_i), "mode": mode, "data": report_obj}, f, ensure_ascii=False, indent=2)
+                                    await self._broadcast({"type": "log", "message": f"report: saved {pth}"})
+                                except Exception as e:
+                                    await self._broadcast({"type": "log", "message": f"report: save failed: {e}"})
+                                await self._broadcast({"type": "report", "step": int(self.step_i), "data": report_obj})
+                                try:
+                                    await self._broadcast({"type": "log", "message": f"report: items={len(report_obj.get('items', [])) if isinstance(report_obj, dict) else 0}"})
+                                except Exception:
+                                    pass
+                        except Exception as e:
+                            await self._broadcast({"type": "log", "message": f"report: unexpected failure: {e}"})
+                        # Update stability window and broadcast results if stable
+                        try:
+                            avg_rel = float(self.last_metrics.get("avg_rel", 0.0)) if self.last_metrics else 0.0
+                            self._avg_rel_history.append(avg_rel)
+                            if len(self._avg_rel_history) > 5:
+                                self._avg_rel_history = self._avg_rel_history[-5:]
+                            if len(self._avg_rel_history) == 5:
+                                m = sum(self._avg_rel_history) / 5.0
+                                band = 0.05 * (m if m != 0.0 else 1.0)
+                                stable = all(abs(v - m) <= band for v in self._avg_rel_history)
+                                if stable and self.retr is not None:
+                                    try:
+                                        res = self.retr.search(self.query, top_k=int(self.top_k))
+                                        await self._broadcast({"type": "results_stable", "step": int(self.step_i), "data": res.get("results", [])})
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        await self._broadcast({"type": "log", "message": f"error in snapshot: {e}"})
+                        break
+                await asyncio.sleep(0)
+        except Exception as e:
+            try:
+                await self._broadcast({"type": "log", "message": f"run_loop aborted: {e}"})
+            except Exception:
+                pass
+
+    async def _broadcast(self, obj: Dict[str, Any]) -> None:
+        if not self.clients:
+            return
+        msg = json.dumps(obj)
+        stale: List[WebSocket] = []
+        for ws in list(self.clients):
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                stale.append(ws)
+        for ws in stale:
+            try:
+                self.clients.remove(ws)
+            except Exception:
+                pass
+
+
+streamer = SnapshotStreamer()
+app = FastAPI()
+
+# CORS for dev (Vite, direct origins)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8011",
+        "http://127.0.0.1:8011",
+        "*",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# serve simple static client
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Settings persistence
+SETTINGS_DIR = os.path.join(os.getcwd(), ".fungus_cache")
+SETTINGS_PATH = os.path.join(SETTINGS_DIR, "settings.json")
+os.makedirs(SETTINGS_DIR, exist_ok=True)
+
+def settings_dict() -> dict:
+    return {
+        "query": streamer.query,
+        "top_k": streamer.top_k,
+        "report_enabled": streamer.report_enabled,
+        "report_every": streamer.report_every,
+        "report_mode": streamer.report_mode,
+        "redraw_every": streamer.redraw_every,
+        "min_trail_strength": streamer.min_trail_strength,
+        "max_edges": streamer.max_edges,
+        "viz_dims": streamer.viz_dims,
+        "use_repo": streamer.use_repo,
+        "root_folder": streamer.root_folder,
+        "max_files": streamer.max_files,
+        "exclude_dirs": streamer.exclude_dirs,
+        "windows": streamer.windows,
+        "max_iterations": streamer.max_iterations,
+        "num_agents": streamer.num_agents,
+        "exploration_bonus": streamer.exploration_bonus,
+        "pheromone_decay": streamer.pheromone_decay,
+        "embed_batch_size": streamer.embed_batch_size,
+        "max_chunks_per_shard": streamer.max_chunks_per_shard,
+    }
+
+def apply_settings(d: dict) -> None:
+    try:
+        sm = SettingsModel(**d)
+        if sm.query is not None: streamer.query = sm.query
+        if getattr(sm, 'top_k', None) is not None: streamer.top_k = int(getattr(sm, 'top_k'))
+        if getattr(sm, 'report_enabled', None) is not None: streamer.report_enabled = bool(getattr(sm, 'report_enabled'))
+        if getattr(sm, 'report_every', None) is not None: streamer.report_every = int(getattr(sm, 'report_every'))
+        if getattr(sm, 'report_mode', None) is not None: streamer.report_mode = str(getattr(sm, 'report_mode'))
+        if sm.redraw_every is not None: streamer.redraw_every = int(sm.redraw_every)
+        if sm.min_trail_strength is not None: streamer.min_trail_strength = float(sm.min_trail_strength)
+        if sm.max_edges is not None: streamer.max_edges = int(sm.max_edges)
+        if sm.viz_dims is not None: streamer.viz_dims = int(sm.viz_dims)
+        if sm.use_repo is not None: streamer.use_repo = bool(sm.use_repo)
+        if sm.root_folder is not None: streamer.root_folder = str(sm.root_folder)
+        if sm.max_files is not None: streamer.max_files = int(sm.max_files)
+        if sm.exclude_dirs is not None: streamer.exclude_dirs = [str(x) for x in sm.exclude_dirs]
+        if sm.windows is not None: streamer.windows = [int(x) for x in sm.windows]
+        if sm.max_iterations is not None: streamer.max_iterations = int(sm.max_iterations)
+        if sm.num_agents is not None: streamer.num_agents = int(sm.num_agents)
+        if sm.exploration_bonus is not None: streamer.exploration_bonus = float(sm.exploration_bonus)
+        if sm.pheromone_decay is not None: streamer.pheromone_decay = float(sm.pheromone_decay)
+        if sm.embed_batch_size is not None: streamer.embed_batch_size = int(sm.embed_batch_size)
+        if sm.max_chunks_per_shard is not None: streamer.max_chunks_per_shard = int(sm.max_chunks_per_shard)
+    except Exception:
+        pass
+
+def load_settings_from_disk() -> None:
+    try:
+        if os.path.exists(SETTINGS_PATH):
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                d = json.load(f)
+                apply_settings(d)
+    except Exception:
+        pass
+
+def save_settings_to_disk() -> None:
+    try:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings_dict(), f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def settings_usage_lines(d: dict) -> list[str]:
+    """Produce human-readable mapping: Param => Script(s)."""
+    # Static knowledge of primary consumers; keep concise
+    usage_map = {
+        "query": ["mcmp_rag.py (initialize_simulation/search)", "realtime/server.py (/start)"],
+        "viz_dims": ["mcmp_rag.py (get_visualization_snapshot)", "frontend (Plotly 2D/3D)"] ,
+        "min_trail_strength": ["mcmp/visualize.py (build_snapshot)", "mcmp_rag.py (get_visualization_snapshot)"],
+        "max_edges": ["mcmp/visualize.py (build_snapshot)"],
+        "redraw_every": ["realtime/server.py (_run_loop WS cadence)"] ,
+        "num_agents": ["mcmp/simulation.py (spawn_agents)", "mcmp_rag.py (init MCPMRetriever)"] ,
+        "max_iterations": ["realtime/server.py (jobs/start)", "streamlit_fungus_backup.py (loop)"] ,
+        "exploration_bonus": ["mcmp/simulation.py (noise/force)"] ,
+        "pheromone_decay": ["mcmp/simulation.py (decay_pheromones)"] ,
+        "embed_batch_size": ["mcmp_rag.py (add_documents batched encode)"] ,
+        "max_chunks_per_shard": ["realtime/server.py (jobs/start sharding)"] ,
+        "use_repo": ["realtime/server.py (/start corpus path)"] ,
+        "root_folder": ["realtime/server.py (/start corpus path)"] ,
+        "max_files": ["ui/corpus.py (list_code_files)"] ,
+        "exclude_dirs": ["ui/corpus.py (list_code_files)"],
+        "windows": ["ui/corpus.py (chunk_python_file windows)"] ,
+        "chunk_workers": ["ui/corpus.py (ThreadPoolExecutor)"],
+        "top_k": ["mcmp_rag.py (search top_k)"] ,
+        "report_enabled": ["realtime/server.py (_run_loop report)"],
+        "report_every": ["realtime/server.py (_run_loop report cadence)"],
+        "report_mode": ["realtime/server.py (prompt template)"] ,
+        "mode": ["frontend/UX (prompt style)", "streamlit_fungus_backup.py (mode prompt)"] ,
+    }
+    lines: list[str] = []
+    for k, v in d.items():
+        if k in usage_map:
+            scripts = usage_map[k]
+            lines.append(f"{k}: {v} -> Scripts: {', '.join(scripts)}")
+    return lines
+
+
+class SettingsModel(BaseModel):
+    # visualization
+    redraw_every: int | None = Field(default=None, ge=1, le=100)
+    min_trail_strength: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_edges: int | None = Field(default=None, ge=10, le=5000)
+    viz_dims: int | None = Field(default=None)
+    query: str | None = None
+    top_k: int | None = Field(default=None, ge=1, le=200)
+    report_enabled: bool | None = None
+    report_every: int | None = Field(default=None, ge=1, le=100)
+    report_mode: str | None = None
+    # corpus
+    use_repo: bool | None = None
+    root_folder: str | None = None
+    max_files: int | None = Field(default=None, ge=0, le=20000)
+    exclude_dirs: list[str] | None = None
+    windows: list[int] | None = None
+    chunk_workers: int | None = Field(default=None, ge=1, le=128)
+    # sim knobs
+    max_iterations: int | None = Field(default=None, ge=1, le=5000)
+    num_agents: int | None = Field(default=None, ge=1, le=10000)
+    exploration_bonus: float | None = Field(default=None, ge=0.01, le=1.0)
+    pheromone_decay: float | None = Field(default=None, ge=0.5, le=0.999)
+    embed_batch_size: int | None = Field(default=None, ge=1, le=4096)
+    max_chunks_per_shard: int | None = Field(default=None, ge=0, le=100000)
+
+    @validator('viz_dims')
+    def _dims(cls, v):  # type: ignore
+        if v is None:
+            return v
+        if int(v) not in (2, 3):
+            raise ValueError('viz_dims must be 2 or 3')
+        return int(v)
+
+
+@app.get("/")
+async def index() -> HTMLResponse:
+    html_path = os.path.join(static_dir, "index.html")
+    if not os.path.exists(html_path):
+        # Minimal landing page
+        return HTMLResponse("""
+<!doctype html>
+<html><head><meta charset='utf-8'><title>MCMP Realtime</title></head>
+<body>
+<h3>MCMP Realtime</h3>
+<p>Open <a href='/static/index.html'>client</a> to view the network.</p>
+</body></html>
+""")
+    with open(html_path, "r", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
+
+
+@app.post("/start")
+async def http_start(req: Request) -> JSONResponse:
+    raw = await req.json() if req.headers.get("content-type", "").startswith("application/json") else {}
+    body = SettingsModel(**raw)
+    try:
+        await streamer._broadcast({"type": "log", "message": f"api:/start payload_keys={list(raw.keys()) if isinstance(raw, dict) else 'non-json'}"})
+    except Exception:
+        pass
+    # log values which are provided
+    try:
+        applied_dict = {}
+        try:
+            applied_dict = body.model_dump(exclude_none=True)  # pydantic v2
+        except Exception:
+            applied_dict = {k: v for k, v in getattr(body, '__dict__', {}).items() if v is not None}
+        await streamer._broadcast({"type": "log", "message": "api:/start applied: " + " ".join([f"{k}={applied_dict[k]}" for k in applied_dict])})
+    except Exception:
+        pass
+    if body.query is not None:
+        streamer.query = body.query
+    if body.redraw_every is not None:
+        streamer.redraw_every = int(body.redraw_every)
+    if body.min_trail_strength is not None:
+        streamer.min_trail_strength = float(body.min_trail_strength)
+    if body.max_edges is not None:
+        streamer.max_edges = int(body.max_edges)
+    if body.viz_dims is not None:
+        streamer.viz_dims = int(body.viz_dims)
+    if body.use_repo is not None:
+        streamer.use_repo = bool(body.use_repo)
+    if body.root_folder is not None:
+        streamer.root_folder = str(body.root_folder)
+    if body.max_files is not None:
+        streamer.max_files = int(body.max_files)
+    if body.exclude_dirs is not None:
+        streamer.exclude_dirs = [str(x) for x in body.exclude_dirs]
+    if body.windows is not None:
+        streamer.windows = [int(x) for x in body.windows]
+    if body.chunk_workers is not None:
+        streamer.chunk_workers = int(body.chunk_workers)
+    if body.max_iterations is not None:
+        streamer.max_iterations = int(body.max_iterations)
+    if body.num_agents is not None:
+        streamer.num_agents = int(body.num_agents)
+    if body.exploration_bonus is not None:
+        streamer.exploration_bonus = float(body.exploration_bonus)
+    if body.pheromone_decay is not None:
+        streamer.pheromone_decay = float(body.pheromone_decay)
+    if body.embed_batch_size is not None:
+        streamer.embed_batch_size = int(body.embed_batch_size)
+    if body.max_chunks_per_shard is not None:
+        streamer.max_chunks_per_shard = int(body.max_chunks_per_shard)
+    if body.top_k is not None:
+        streamer.top_k = int(body.top_k)
+    if getattr(body, 'report_enabled', None) is not None:
+        streamer.report_enabled = bool(getattr(body, 'report_enabled'))
+    if getattr(body, 'report_every', None) is not None:
+        streamer.report_every = int(getattr(body, 'report_every'))
+    if getattr(body, 'report_mode', None) is not None:
+        streamer.report_mode = str(getattr(body, 'report_mode'))
+    await streamer.start()
+    save_settings_to_disk()
+    return JSONResponse({"status": "ok"})
+
+
+@app.post("/config")
+async def http_config(req: Request) -> JSONResponse:
+    raw = await req.json()
+    body = SettingsModel(**raw)
+    try:
+        await streamer._broadcast({"type": "log", "message": f"api:/config payload_keys={list(raw.keys())}"})
+    except Exception:
+        pass
+    # log values which will be applied
+    try:
+        applied_dict = {}
+        try:
+            applied_dict = body.model_dump(exclude_none=True)
+        except Exception:
+            applied_dict = {k: v for k, v in getattr(body, '__dict__', {}).items() if v is not None}
+        await streamer._broadcast({"type": "log", "message": "api:/config applied: " + " ".join([f"{k}={applied_dict[k]}" for k in applied_dict])})
+    except Exception:
+        pass
+    if body.redraw_every is not None:
+        streamer.redraw_every = int(body.redraw_every)
+    if body.min_trail_strength is not None:
+        streamer.min_trail_strength = float(body.min_trail_strength)
+    if body.max_edges is not None:
+        streamer.max_edges = int(body.max_edges)
+    if body.viz_dims is not None:
+        streamer.viz_dims = int(body.viz_dims)
+    if body.use_repo is not None:
+        streamer.use_repo = bool(body.use_repo)
+    if body.root_folder is not None:
+        streamer.root_folder = str(body.root_folder)
+    if body.max_files is not None:
+        streamer.max_files = int(body.max_files)
+    if body.exclude_dirs is not None:
+        streamer.exclude_dirs = [str(x) for x in body.exclude_dirs]
+    if body.windows is not None:
+        streamer.windows = [int(x) for x in body.windows]
+    if body.chunk_workers is not None:
+        streamer.chunk_workers = int(body.chunk_workers)
+    if body.max_iterations is not None:
+        streamer.max_iterations = int(body.max_iterations)
+    if body.num_agents is not None:
+        streamer.num_agents = int(body.num_agents)
+    if body.exploration_bonus is not None:
+        streamer.exploration_bonus = float(body.exploration_bonus)
+    if body.pheromone_decay is not None:
+        streamer.pheromone_decay = float(body.pheromone_decay)
+    if body.embed_batch_size is not None:
+        streamer.embed_batch_size = int(body.embed_batch_size)
+    if body.max_chunks_per_shard is not None:
+        streamer.max_chunks_per_shard = int(body.max_chunks_per_shard)
+    if body.top_k is not None:
+        streamer.top_k = int(body.top_k)
+    if getattr(body, 'report_enabled', None) is not None:
+        streamer.report_enabled = bool(getattr(body, 'report_enabled'))
+    if getattr(body, 'report_every', None) is not None:
+        streamer.report_every = int(getattr(body, 'report_every'))
+    if getattr(body, 'report_mode', None) is not None:
+        streamer.report_mode = str(getattr(body, 'report_mode'))
+    save_settings_to_disk()
+    return JSONResponse({"status": "ok"})
+
+
+@app.post("/stop")
+async def http_stop() -> JSONResponse:
+    await streamer.stop()
+    return JSONResponse({"status": "stopped"})
+
+
+@app.post("/reset")
+async def http_reset() -> JSONResponse:
+    # Fully stop and clear simulation state so a fresh /start rebuilds corpus and retriever
+    try:
+        await streamer.stop()
+    except Exception:
+        pass
+    try:
+        streamer.retr = None
+        streamer.step_i = 0
+        streamer.last_metrics = None
+        streamer._paused = False
+        streamer._saved_state = None
+        streamer._avg_rel_history = []
+        # Keep configuration (query, windows, etc.) so the next /start can reuse or override
+        await streamer._broadcast({"type": "log", "message": "simulation reset"})
+    except Exception:
+        pass
+    return JSONResponse({"status": "reset"})
+
+
+@app.post("/pause")
+async def http_pause() -> JSONResponse:
+    streamer._paused = True
+    # save minimal state
+    try:
+        retr = streamer.retr
+        if retr is not None:
+            streamer._saved_state = {
+                "agents": [
+                    {
+                        "position": getattr(a, 'position', None).tolist() if getattr(a, 'position', None) is not None else None,
+                        "velocity": getattr(a, 'velocity', None).tolist() if getattr(a, 'velocity', None) is not None else None,
+                        "age": int(getattr(a, 'age', 0)),
+                    }
+                    for a in getattr(retr, 'agents', [])
+                ]
+            }
+    except Exception:
+        streamer._saved_state = None
+    return JSONResponse({"status": "paused"})
+
+
+@app.post("/resume")
+async def http_resume() -> JSONResponse:
+    streamer._paused = False
+    # restore minimal state
+    try:
+        retr = streamer.retr
+        if retr is not None and streamer._saved_state:
+            agents = streamer._saved_state.get("agents", [])
+            for i, a in enumerate(getattr(retr, 'agents', [])):
+                if i < len(agents):
+                    st = agents[i]
+                    import numpy as _np
+                    if st.get('position') is not None:
+                        a.position = _np.array(st['position'], dtype=_np.float32)
+                    if st.get('velocity') is not None:
+                        a.velocity = _np.array(st['velocity'], dtype=_np.float32)
+                    a.age = int(st.get('age', getattr(a, 'age', 0)))
+    except Exception:
+        pass
+    return JSONResponse({"status": "resumed"})
+
+
+@app.post("/agents/add")
+async def http_agents_add(req: Request) -> JSONResponse:
+    """Append N new agents with random positions/velocities in embedding space.
+    Recommended to call while paused to avoid visual glitches.
+    Body: { n: int }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    n = int(body.get("n", 0))
+    retr = streamer.retr
+    if retr is None:
+        return JSONResponse({"status": "error", "message": "retriever not started"}, status_code=400)
+    if not getattr(retr, "documents", []):
+        return JSONResponse({"status": "error", "message": "no documents indexed"}, status_code=400)
+    if n <= 0:
+        return JSONResponse({"status": "error", "message": "n must be > 0"}, status_code=400)
+    try:
+        dim = int(retr.documents[0].embedding.shape[0])  # type: ignore
+        import numpy as _np
+        current_len = len(getattr(retr, 'agents', []))
+        max_id = max([getattr(a, 'id', -1) for a in getattr(retr, 'agents', [])], default=-1)
+        for i in range(n):
+            pos = _np.random.normal(0, 1.0, size=(dim,)).astype(_np.float32)
+            norm = float(_np.linalg.norm(pos)) or 1.0
+            pos = pos / norm
+            vel = _np.random.normal(0, 0.05, size=(dim,)).astype(_np.float32)
+            agent = retr.Agent(  # type: ignore[attr-defined]
+                id=int(max_id + 1 + i),
+                position=pos,
+                velocity=vel,
+                exploration_factor=float(_np.random.uniform(0.05, max(0.05, float(getattr(retr, 'exploration_bonus', 0.1))))),
+            )
+            retr.agents.append(agent)
+        retr.num_agents = int(len(retr.agents))
+        return JSONResponse({"status": "ok", "added": int(n), "agents": int(len(retr.agents))})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/agents/resize")
+async def http_agents_resize(req: Request) -> JSONResponse:
+    """Resize agent population to target count. Adds random agents or trims list.
+    Body: { count: int }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    target = int(body.get("count", -1))
+    retr = streamer.retr
+    if retr is None:
+        return JSONResponse({"status": "error", "message": "retriever not started"}, status_code=400)
+    if target < 0:
+        return JSONResponse({"status": "error", "message": "count must be >= 0"}, status_code=400)
+    cur = len(getattr(retr, 'agents', []))
+    if target == cur:
+        return JSONResponse({"status": "ok", "agents": cur})
+    if target < cur:
+        try:
+            retr.agents = list(retr.agents)[:target]
+            retr.num_agents = int(target)
+            return JSONResponse({"status": "ok", "agents": int(len(retr.agents))})
+        except Exception as e:
+            return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    # Need to add agents
+    to_add = int(target - cur)
+    # Reuse add logic
+    fake_req = Request({'type': 'http'})  # type: ignore
+    fake_req._body = json.dumps({"n": to_add}).encode("utf-8")  # type: ignore
+    return await http_agents_add(fake_req)
+
+
+@app.websocket("/ws")
+async def ws_endpoint(ws: WebSocket):
+    await ws.accept()
+    streamer.clients.add(ws)
+    try:
+        # send an ack
+        await ws.send_text(json.dumps({"type": "hello", "message": "connected"}))
+        while True:
+            # allow clients to send small config updates
+            data = await ws.receive_text()
+            try:
+                obj = json.loads(data)
+                if isinstance(obj, dict) and obj.get("type") == "config":
+                    if "viz_dims" in obj:
+                        streamer.viz_dims = int(obj["viz_dims"])
+            except Exception:
+                pass
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            streamer.clients.remove(ws)
+        except Exception:
+            pass
+
+
+@app.get("/status")
+async def http_status() -> JSONResponse:
+    retr = streamer.retr
+    if retr is None:
+        return JSONResponse({"running": False})
+    return JSONResponse({
+        "running": streamer.running,
+        "docs": len(getattr(retr, 'documents', [])),
+        "agents": len(getattr(retr, 'agents', [])),
+        "metrics": streamer.last_metrics or {},
+    })
+
+
+@app.get("/settings")
+async def http_settings_get() -> JSONResponse:
+    sd = settings_dict()
+    return JSONResponse({"settings": sd, "usage": settings_usage_lines(sd)})
+
+
+@app.post("/settings")
+async def http_settings_post(req: Request) -> JSONResponse:
+    try:
+        body = await req.json()
+        apply_settings(body)
+        save_settings_to_disk()
+        sd = settings_dict()
+        return JSONResponse({"status": "ok", "settings": sd, "usage": settings_usage_lines(sd)})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+
+
+@app.post("/search")
+async def http_search(req: Request) -> JSONResponse:
+    body = await req.json()
+    query = str(body.get("query", ""))
+    top_k = int(body.get("top_k", 5))
+    retr = streamer.retr
+    if retr is None:
+        return JSONResponse({"status": "error", "message": "retriever not started"}, status_code=400)
+    try:
+        res = retr.search(query, top_k=top_k)
+        return JSONResponse({"status": "ok", "results": res.get('results', [])})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/answer")
+async def http_answer(req: Request) -> JSONResponse:
+    body = await req.json()
+    query = str(body.get("query", ""))
+    top_k = int(body.get("top_k", 5))
+    retr = streamer.retr
+    if retr is None:
+        return JSONResponse({"status": "error", "message": "retriever not started"}, status_code=400)
+    res = retr.search(query, top_k=top_k)
+    ctx = "\n\n".join([(it.get('content') or '')[:800] for it in res.get('results', [])])
+    prompt = f"Kontext:\n{ctx}\n\nAufgabe:\n{query}\n\nAntwort:"
+    text = generate_with_ollama(prompt, model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'), host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'))
+    return JSONResponse({"status": "ok", "answer": text, "results": res.get('results', [])})
+
+
+# Document detail endpoint
+@app.get("/doc/{doc_id}")
+async def http_doc(doc_id: int) -> JSONResponse:
+    retr = streamer.retr
+    if retr is None:
+        return JSONResponse({"status": "error", "message": "retriever not started"}, status_code=400)
+    try:
+        d = next((x for x in getattr(retr, 'documents', []) if int(getattr(x, 'id', -1)) == int(doc_id)), None)
+        if d is None:
+            return JSONResponse({"status": "error", "message": "doc not found"}, status_code=404)
+        emb = getattr(d, 'embedding', None)
+        emb_list = emb.tolist() if emb is not None else []
+        meta = getattr(d, 'metadata', {}) or {}
+        return JSONResponse({
+            "status": "ok",
+            "doc": {
+                "id": int(getattr(d, 'id', -1)),
+                "content": getattr(d, 'content', ''),
+                "embedding": emb_list,
+                "relevance_score": float(getattr(d, 'relevance_score', 0.0)),
+                "visit_count": int(getattr(d, 'visit_count', 0)),
+                "metadata": meta,
+            }
+        })
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+# Corpus listing endpoint
+@app.get("/corpus/list")
+async def http_corpus_list(root: str | None = None, page: int = 1, page_size: int = 200, exclude: str | None = None) -> JSONResponse:
+    try:
+        page = max(1, int(page))
+        page_size = max(1, min(2000, int(page_size)))
+        ex = [e.strip() for e in (exclude or "").split(',') if e and e.strip()]
+        use_root = root or ('src' if streamer.use_repo else streamer.root_folder)
+        files = list_code_files(use_root, 0, ex or streamer.exclude_dirs)
+        total = len(files)
+        start = (page - 1) * page_size
+        end = min(start + page_size, total)
+        return JSONResponse({"root": use_root, "total": total, "page": page, "page_size": page_size, "files": files[start:end]})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+# Background shard job
+@app.post("/jobs/start")
+async def http_jobs_start(req: Request) -> JSONResponse:
+    body = await req.json()
+    q = str(body.get("query", streamer.query))
+    job_id = str(len(streamer.jobs) + 1)
+    streamer.jobs[job_id] = {"status": "running", "progress": 0}
+
+    async def _job():
+        try:
+            # Build corpus
+            if streamer.use_repo:
+                docs = collect_codebase_chunks('src', streamer.windows, int(streamer.max_files), streamer.exclude_dirs)
+            else:
+                docs = collect_codebase_chunks(streamer.root_folder or os.getcwd(), streamer.windows, int(streamer.max_files), streamer.exclude_dirs)
+            total_chunks = len(docs)
+            shard_size = int(streamer.max_chunks_per_shard)
+            if shard_size <= 0 or shard_size >= total_chunks:
+                shard_ranges = [(0, total_chunks)]
+            else:
+                shard_ranges = [(i, min(i + shard_size, total_chunks)) for i in range(0, total_chunks, shard_size)]
+            num_shards = max(1, len(shard_ranges))
+            agg = []
+            for idx, (s, e) in enumerate(shard_ranges):
+                retr = MCPMRetriever(num_agents=streamer.num_agents, max_iterations=streamer.max_iterations, exploration_bonus=streamer.exploration_bonus, pheromone_decay=streamer.pheromone_decay, embed_batch_size=streamer.embed_batch_size)
+                retr.add_documents(docs[s:e])
+                retr.initialize_simulation(q)
+                for _ in range(streamer.max_iterations):
+                    retr.step(1)
+                res = retr.search(q, top_k=5)
+                agg.extend(res.get('results', []))
+                pct = int(100 * (idx + 1) / num_shards)
+                await streamer._broadcast({"type": "job_progress", "job_id": job_id, "percent": pct, "message": f"Processed shard {idx+1}/{num_shards}"})
+            streamer.jobs[job_id] = {"status": "done", "progress": 100, "results": agg}
+        except Exception as e:
+            streamer.jobs[job_id] = {"status": "error", "message": str(e)}
+
+    asyncio.create_task(_job())
+    return JSONResponse({"status": "ok", "job_id": job_id})
+
+
+@app.get("/jobs/status")
+async def http_jobs_status(job_id: str):
+    j = streamer.jobs.get(job_id)
+    if not j:
+        return JSONResponse({"status": "error", "message": "unknown job"}, status_code=404)
+    return JSONResponse({"status": "ok", "job": j})
+
+
