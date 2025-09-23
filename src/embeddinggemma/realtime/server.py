@@ -251,8 +251,21 @@ class SnapshotStreamer:
             # basic budget check
             if int(self._tokens_used) > int(self.max_report_tokens):
                 return {}
+            # pre-generation clarity log for judge
+            try:
+                ids = [int(it.get('id', it.get('doc_id', -1))) for it in (results or [])]
+                _ = asyncio.create_task(self._broadcast({
+                    "type": "log",
+                    "message": f"judge: preparing doc_ids={ids} schema=items[doc_id,is_relevant,why,entry_point,missing_context[],follow_up_queries[],keywords[],inspect[]]"
+                }))
+            except Exception:
+                pass
             try:
                 _ = asyncio.create_task(self._broadcast({"type": "log", "message": f"judge: prompt_len={len(prompt)}"}))
+            except Exception:
+                pass
+            try:
+                _ = asyncio.create_task(self._broadcast({"type": "log", "message": "judge: generating..."}))
             except Exception:
                 pass
             text = generate_with_ollama(prompt, model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'), host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'))
@@ -519,12 +532,24 @@ class SnapshotStreamer:
                                 docs = self._enrich_results_with_ids(res_top.get("results", []))
                                 await self._broadcast({"type": "log", "message": f"report: step={self.step_i} mode={self.report_mode} top_k_items={len(docs)}"})
                                 mode = (self.report_mode or "deep").lower()
+                                # pre-generation clarity log
+                                try:
+                                    await self._broadcast({
+                                        "type": "log",
+                                        "message": (
+                                            f"report: preparing mode={mode} items={len(docs)} "
+                                            "fields=items[code_chunk,content,file_path,line_range,code_purpose,code_dependencies,file_type,embedding_score,relevance_to_query,query_initial,follow_up_queries]"
+                                        )
+                                    })
+                                except Exception:
+                                    pass
                                 prompt = _build_report_prompt(mode, self.query, int(self.top_k), docs)
                                 try:
                                     await self._broadcast({"type": "log", "message": f"report: prompt_len={len(prompt)}"})
                                 except Exception:
                                     pass
                                 try:
+                                    await self._broadcast({"type": "log", "message": "report: generating..."})
                                     text = generate_with_ollama(prompt, model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'), host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'))
                                 except Exception as e:
                                     await self._broadcast({"type": "log", "message": f"report: LLM error: {e}"})
