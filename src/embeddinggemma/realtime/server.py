@@ -215,40 +215,117 @@ class SnapshotStreamer:
         blended.sort(key=lambda x: x.get('blended_score', 0.0), reverse=True)
         return blended[: int(self.top_k)]
 
-    def _llm_judge(self, results: list[dict]) -> dict[int, dict]:
-        judged: dict[int, dict] = {}
+    def _build_judge_prompt(self, query: str, results: list[dict]) -> str:
+        # Keep prompt compact; pass only needed fields
+        items = []
         for it in results:
             try:
-                doc_id = int(it.get('id', it.get('doc_id', -1)))
-                if doc_id in self._judge_cache:
-                    judged[doc_id] = self._judge_cache[doc_id]
-                    continue
-                content = str(it.get('content', ''))
-                score = float(it.get('score', 0.0))
-                relevant = score >= 0.5
-                entry_point = any(tok in content for tok in ['if __name__ == "__main__"', 'def main', 'class ', 'FastAPI(', 'app = FastAPI'])
-                missing_context = []  # placeholder
-                follow = []
-                if relevant:
-                    # naive keyword extraction: top words
-                    words = [w for w in content.split() if w.isidentifier() and len(w) > 3]
-                    keywords = list(dict.fromkeys(words[:5]))
-                else:
-                    keywords = []
-                judge = {
-                    'is_relevant': bool(relevant),
-                    'why': 'heuristic based on cosine score',
-                    'entry_point': bool(entry_point),
-                    'missing_context': missing_context,
-                    'follow_up_queries': follow,
-                    'keywords': keywords,
-                    'suggest_inspect': [],
-                }
-                self._judge_cache[doc_id] = judge
-                judged[doc_id] = judge
+                items.append({
+                    'doc_id': int(it.get('id', it.get('doc_id', -1))),
+                    'score': float(it.get('score', 0.0)),
+                    'content': (it.get('content') or '')[:1200],
+                })
             except Exception:
                 continue
-        return judged
+        schema = (
+            "Return ONLY JSON with key 'items' (array). Each item must include: "
+            "doc_id (int), is_relevant (bool), why (str), entry_point (bool), "
+            "missing_context (str[]), follow_up_queries (str[]), keywords (str[]), inspect (str[])."
+        )
+        return (
+            f"Query: {query}\n\n" +
+            "Evaluate the following code chunks for relevance to the query. "
+            "Mark entry_point for main functions, API routes, or top-level orchestrators.\n\n" +
+            json.dumps({'chunks': items}, ensure_ascii=False) + "\n\n" +
+            schema
+        )
+
+    def _llm_judge(self, results: list[dict]) -> dict[int, dict]:
+        # Enforce token/step budget (approximate by characters)
+        if int(self._reports_sent) >= int(self.max_reports):
+            return {}
+        judged: dict[int, dict] = {}
+        try:
+            prompt = self._build_judge_prompt(self.query, results)
+            self._tokens_used += len(prompt)
+            # basic budget check
+            if int(self._tokens_used) > int(self.max_report_tokens):
+                return {}
+            try:
+                _ = asyncio.create_task(self._broadcast({"type": "log", "message": f"judge: prompt_len={len(prompt)}"}))
+            except Exception:
+                pass
+            text = generate_with_ollama(prompt, model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'), host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'))
+            raw = (text or "").strip()
+            if raw.startswith("```"):
+                raw = "\n".join([ln for ln in raw.splitlines() if not ln.strip().startswith("```")])
+            obj = json.loads(raw)
+            arr = obj.get('items', []) if isinstance(obj, dict) else []
+            for j in arr:
+                try:
+                    did = int(j.get('doc_id'))
+                    self._judge_cache[did] = j
+                    judged[did] = j
+                except Exception:
+                    continue
+            try:
+                _ = asyncio.create_task(self._broadcast({"type": "log", "message": f"judge: parsed={len(judged)}"}))
+            except Exception:
+                pass
+            return judged
+        except Exception as e:
+            try:
+                _ = asyncio.create_task(self._broadcast({"type": "log", "message": f"judge: LLM fallback due to: {e}"}))
+            except Exception:
+                pass
+            # Fallback: heuristic
+            for it in results:
+                try:
+                    doc_id = int(it.get('id', it.get('doc_id', -1)))
+                    if doc_id in self._judge_cache:
+                        judged[doc_id] = self._judge_cache[doc_id]
+                        continue
+                    content = str(it.get('content', ''))
+                    score = float(it.get('score', 0.0))
+                    relevant = score >= 0.5
+                    entry_point = any(tok in content for tok in ['if __name__ == "__main__"', 'def main', 'class ', 'FastAPI(', 'app = FastAPI'])
+                    judge = {
+                        'doc_id': doc_id,
+                        'is_relevant': bool(relevant),
+                        'why': 'heuristic based on cosine score',
+                        'entry_point': bool(entry_point),
+                        'missing_context': [],
+                        'follow_up_queries': [],
+                        'keywords': [],
+                        'inspect': [],
+                    }
+                    self._judge_cache[doc_id] = judge
+                    judged[doc_id] = judge
+                except Exception:
+                    continue
+            return judged
+
+    def _enrich_results_with_ids(self, items: list[dict]) -> list[dict]:
+        if self.retr is None or not isinstance(items, list):
+            return items or []
+        try:
+            # map content to (id, score)
+            cmap: dict[str, tuple[int, float]] = {}
+            for d in getattr(self.retr, 'documents', []):
+                cmap[getattr(d, 'content', '')] = (int(getattr(d, 'id', -1)), float(getattr(d, 'relevance_score', 0.0)))
+            out: list[dict] = []
+            for it in items:
+                c = str(it.get('content', ''))
+                did, sc = cmap.get(c, (-1, float(it.get('relevance_score', it.get('score', 0.0)))))
+                new_it = dict(it)
+                if did != -1:
+                    new_it['id'] = did
+                if 'score' not in new_it:
+                    new_it['score'] = sc
+                out.append(new_it)
+            return out
+        except Exception:
+            return items
 
     def _apply_judgements(self, judged: dict[int, dict]) -> None:
         # votes and boosts
@@ -439,9 +516,8 @@ class SnapshotStreamer:
                         try:
                             if self.report_enabled and (int(self.step_i) % max(1, int(self.report_every)) == 0) and self.retr is not None:
                                 res_top = self.retr.search(self.query, top_k=int(self.top_k))
-                                docs = res_top.get("results", [])
+                                docs = self._enrich_results_with_ids(res_top.get("results", []))
                                 await self._broadcast({"type": "log", "message": f"report: step={self.step_i} mode={self.report_mode} top_k_items={len(docs)}"})
-                                res_top = self.retr.search(self.query, top_k=int(self.top_k))
                                 mode = (self.report_mode or "deep").lower()
                                 prompt = _build_report_prompt(mode, self.query, int(self.top_k), docs)
                                 try:
