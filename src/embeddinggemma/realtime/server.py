@@ -121,6 +121,160 @@ class SnapshotStreamer:
         self.report_enabled: bool = False
         self.report_every: int = 5
         self.report_mode: str = "deep"
+        # contextual steering (experimental)
+        self.alpha: float = 0.7  # cosine
+        self.beta: float = 0.1   # visit_norm
+        self.gamma: float = 0.1  # trail_degree
+        self.delta: float = 0.1  # LLM_vote
+        self.epsilon: float = 0.0  # length prior (bm25-like)
+        self.min_content_chars: int = 80
+        self.import_only_penalty: float = 0.4
+        self.max_reports: int = 20
+        self.max_report_tokens: int = 20000
+        self._reports_sent: int = 0
+        self._tokens_used: int = 0
+        self.judge_enabled: bool = True
+        self._judge_cache: dict[int, dict] = {}
+        self._llm_vote: dict[int, int] = {}
+        self._doc_boost: dict[int, float] = {}
+        self._query_pool: list[str] = []
+        self._seeds_queue: list[int] = []
+
+    def _doc_by_id(self, doc_id: int):
+        try:
+            if self.retr is None:
+                return None
+            return next((x for x in getattr(self.retr, 'documents', []) if int(getattr(x, 'id', -1)) == int(doc_id)), None)
+        except Exception:
+            return None
+
+    def _trail_degree_map(self) -> dict[int, int]:
+        try:
+            if self.retr is None:
+                return {}
+            trails = getattr(self.retr, 'pheromone_trails', {}) or {}
+            deg: dict[int, int] = {}
+            for (a, b), _s in trails.items():
+                deg[int(a)] = deg.get(int(a), 0) + 1
+                deg[int(b)] = deg.get(int(b), 0) + 1
+            return deg
+        except Exception:
+            return {}
+
+    def _is_import_only(self, content: str) -> bool:
+        if not content:
+            return False
+        lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+        if not lines:
+            return False
+        non_comments = [ln for ln in lines if not ln.startswith('#')]
+        if not non_comments:
+            return True
+        code_like = [ln for ln in non_comments if not (ln.startswith('import ') or ln.startswith('from ') or ln.startswith('"""') or ln.startswith("'''"))]
+        return len(code_like) == 0
+
+    def _compute_blended_topk(self, results: list[dict]) -> list[dict]:
+        if not isinstance(results, list):
+            return []
+        deg_map = self._trail_degree_map()
+        blended: list[dict] = []
+        for it in results:
+            try:
+                doc_id = int(it.get('id', it.get('doc_id', -1)))
+                cosine = float(it.get('score', 0.0))
+                content = str(it.get('content', ''))
+                visits = 0.0
+                if self.retr is not None:
+                    d = self._doc_by_id(doc_id)
+                    if d is not None:
+                        visits = float(getattr(d, 'visit_count', 0))
+                visit_norm = visits / max(1.0, visits + 10.0)
+                trail_degree = float(deg_map.get(doc_id, 0))
+                trail_degree = trail_degree / max(1.0, trail_degree + 10.0)
+                llm_vote = float(self._llm_vote.get(doc_id, 0))  # -1,0,1
+                len_prior = min(1.0, float(len(content)) / 800.0)
+                # penalties
+                if self._is_import_only(content):
+                    len_prior *= (1.0 - float(self.import_only_penalty))
+                if len(content) < int(self.min_content_chars):
+                    len_prior *= 0.5
+                boost = float(self._doc_boost.get(doc_id, 0.0))
+                score = (
+                    float(self.alpha) * cosine +
+                    float(self.beta) * visit_norm +
+                    float(self.gamma) * trail_degree +
+                    float(self.delta) * llm_vote +
+                    float(self.epsilon) * len_prior +
+                    0.05 * boost
+                )
+                out = dict(it)
+                out['blended_score'] = float(score)
+                blended.append(out)
+            except Exception:
+                continue
+        blended.sort(key=lambda x: x.get('blended_score', 0.0), reverse=True)
+        return blended[: int(self.top_k)]
+
+    def _llm_judge(self, results: list[dict]) -> dict[int, dict]:
+        judged: dict[int, dict] = {}
+        for it in results:
+            try:
+                doc_id = int(it.get('id', it.get('doc_id', -1)))
+                if doc_id in self._judge_cache:
+                    judged[doc_id] = self._judge_cache[doc_id]
+                    continue
+                content = str(it.get('content', ''))
+                score = float(it.get('score', 0.0))
+                relevant = score >= 0.5
+                entry_point = any(tok in content for tok in ['if __name__ == "__main__"', 'def main', 'class ', 'FastAPI(', 'app = FastAPI'])
+                missing_context = []  # placeholder
+                follow = []
+                if relevant:
+                    # naive keyword extraction: top words
+                    words = [w for w in content.split() if w.isidentifier() and len(w) > 3]
+                    keywords = list(dict.fromkeys(words[:5]))
+                else:
+                    keywords = []
+                judge = {
+                    'is_relevant': bool(relevant),
+                    'why': 'heuristic based on cosine score',
+                    'entry_point': bool(entry_point),
+                    'missing_context': missing_context,
+                    'follow_up_queries': follow,
+                    'keywords': keywords,
+                    'suggest_inspect': [],
+                }
+                self._judge_cache[doc_id] = judge
+                judged[doc_id] = judge
+            except Exception:
+                continue
+        return judged
+
+    def _apply_judgements(self, judged: dict[int, dict]) -> None:
+        # votes and boosts
+        for doc_id, j in judged.items():
+            try:
+                vote = 1 if bool(j.get('is_relevant')) else -1
+                self._llm_vote[doc_id] = vote
+                # update doc boost and optionally relevance
+                boost_delta = 0.5 if vote > 0 else -0.2
+                self._doc_boost[doc_id] = self._doc_boost.get(doc_id, 0.0) + boost_delta
+                d = self._doc_by_id(doc_id)
+                if d is not None:
+                    cur = float(getattr(d, 'relevance_score', 0.0))
+                    setattr(d, 'relevance_score', max(0.0, cur + (0.05 * boost_delta)))
+                # seed queue
+                if bool(j.get('entry_point')) and doc_id not in self._seeds_queue:
+                    self._seeds_queue.append(doc_id)
+                # query pool
+                for kw in j.get('keywords', []) or []:
+                    if isinstance(kw, str) and kw and kw not in self._query_pool:
+                        self._query_pool.append(kw)
+                for q in j.get('follow_up_queries', []) or []:
+                    if isinstance(q, str) and q and q not in self._query_pool:
+                        self._query_pool.append(q)
+            except Exception:
+                continue
 
     async def start(self) -> None:
         if self.running:
@@ -191,6 +345,12 @@ class SnapshotStreamer:
                             if self.retr is not None:
                                 res_now = self.retr.search(self.query, top_k=int(self.top_k))
                                 await self._broadcast({"type": "results", "step": int(self.step_i), "data": res_now.get("results", [])})
+                                # blended Top-K with contextual steering weights
+                                try:
+                                    blended = self._compute_blended_topk(res_now.get("results", []))
+                                    await self._broadcast({"type": "results_blended", "step": int(self.step_i), "data": blended})
+                                except Exception as _e_blend:
+                                    await self._broadcast({"type": "log", "message": f"blend: failed: {_e_blend}"})
                                 await self._broadcast({"type": "log", "message": f"top_k={self.top_k} results_count={len(res_now.get('results', []))}"})
                         except Exception:
                             pass
@@ -235,6 +395,14 @@ class SnapshotStreamer:
                                     await self._broadcast({"type": "log", "message": f"report: items={len(report_obj.get('items', [])) if isinstance(report_obj, dict) else 0}"})
                                 except Exception:
                                     pass
+                                # Contextual steering: judge + actions (budgeted)
+                                try:
+                                    if self.judge_enabled and (self._reports_sent < int(self.max_reports)):
+                                        judgements = self._llm_judge(docs)
+                                        self._apply_judgements(judgements)
+                                        self._reports_sent += 1
+                                except Exception as _e_judge:
+                                    await self._broadcast({"type": "log", "message": f"judge: failed: {_e_judge}"})
                         except Exception as e:
                             await self._broadcast({"type": "log", "message": f"report: unexpected failure: {e}"})
                         # Update stability window and broadcast results if stable
@@ -317,6 +485,16 @@ def settings_dict() -> dict:
         "report_enabled": streamer.report_enabled,
         "report_every": streamer.report_every,
         "report_mode": streamer.report_mode,
+        "alpha": streamer.alpha,
+        "beta": streamer.beta,
+        "gamma": streamer.gamma,
+        "delta": streamer.delta,
+        "epsilon": streamer.epsilon,
+        "min_content_chars": streamer.min_content_chars,
+        "import_only_penalty": streamer.import_only_penalty,
+        "max_reports": streamer.max_reports,
+        "max_report_tokens": streamer.max_report_tokens,
+        "judge_enabled": streamer.judge_enabled,
         "redraw_every": streamer.redraw_every,
         "min_trail_strength": streamer.min_trail_strength,
         "max_edges": streamer.max_edges,
@@ -342,6 +520,16 @@ def apply_settings(d: dict) -> None:
         if getattr(sm, 'report_enabled', None) is not None: streamer.report_enabled = bool(getattr(sm, 'report_enabled'))
         if getattr(sm, 'report_every', None) is not None: streamer.report_every = int(getattr(sm, 'report_every'))
         if getattr(sm, 'report_mode', None) is not None: streamer.report_mode = str(getattr(sm, 'report_mode'))
+        if getattr(sm, 'alpha', None) is not None: streamer.alpha = float(getattr(sm, 'alpha'))
+        if getattr(sm, 'beta', None) is not None: streamer.beta = float(getattr(sm, 'beta'))
+        if getattr(sm, 'gamma', None) is not None: streamer.gamma = float(getattr(sm, 'gamma'))
+        if getattr(sm, 'delta', None) is not None: streamer.delta = float(getattr(sm, 'delta'))
+        if getattr(sm, 'epsilon', None) is not None: streamer.epsilon = float(getattr(sm, 'epsilon'))
+        if getattr(sm, 'min_content_chars', None) is not None: streamer.min_content_chars = int(getattr(sm, 'min_content_chars'))
+        if getattr(sm, 'import_only_penalty', None) is not None: streamer.import_only_penalty = float(getattr(sm, 'import_only_penalty'))
+        if getattr(sm, 'max_reports', None) is not None: streamer.max_reports = int(getattr(sm, 'max_reports'))
+        if getattr(sm, 'max_report_tokens', None) is not None: streamer.max_report_tokens = int(getattr(sm, 'max_report_tokens'))
+        if getattr(sm, 'judge_enabled', None) is not None: streamer.judge_enabled = bool(getattr(sm, 'judge_enabled'))
         if sm.redraw_every is not None: streamer.redraw_every = int(sm.redraw_every)
         if sm.min_trail_strength is not None: streamer.min_trail_strength = float(sm.min_trail_strength)
         if sm.max_edges is not None: streamer.max_edges = int(sm.max_edges)
@@ -423,6 +611,17 @@ class SettingsModel(BaseModel):
     report_enabled: bool | None = None
     report_every: int | None = Field(default=None, ge=1, le=100)
     report_mode: str | None = None
+    # contextual steering weights and budgets
+    alpha: float | None = Field(default=None, ge=0.0, le=2.0)
+    beta: float | None = Field(default=None, ge=0.0, le=2.0)
+    gamma: float | None = Field(default=None, ge=0.0, le=2.0)
+    delta: float | None = Field(default=None, ge=0.0, le=2.0)
+    epsilon: float | None = Field(default=None, ge=0.0, le=2.0)
+    min_content_chars: int | None = Field(default=None, ge=0, le=20000)
+    import_only_penalty: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_reports: int | None = Field(default=None, ge=0, le=1000)
+    max_report_tokens: int | None = Field(default=None, ge=0, le=1000000)
+    judge_enabled: bool | None = None
     # corpus
     use_repo: bool | None = None
     root_folder: str | None = None
@@ -524,6 +723,10 @@ async def http_start(req: Request) -> JSONResponse:
         streamer.report_every = int(getattr(body, 'report_every'))
     if getattr(body, 'report_mode', None) is not None:
         streamer.report_mode = str(getattr(body, 'report_mode'))
+    # contextual steering settings
+    for k in ["alpha","beta","gamma","delta","epsilon","min_content_chars","import_only_penalty","max_reports","max_report_tokens","judge_enabled"]:
+        if getattr(body, k, None) is not None:
+            setattr(streamer, k, getattr(body, k))
     await streamer.start()
     save_settings_to_disk()
     return JSONResponse({"status": "ok"})
@@ -587,6 +790,10 @@ async def http_config(req: Request) -> JSONResponse:
         streamer.report_every = int(getattr(body, 'report_every'))
     if getattr(body, 'report_mode', None) is not None:
         streamer.report_mode = str(getattr(body, 'report_mode'))
+    # contextual steering settings
+    for k in ["alpha","beta","gamma","delta","epsilon","min_content_chars","import_only_penalty","max_reports","max_report_tokens","judge_enabled"]:
+        if getattr(body, k, None) is not None:
+            setattr(streamer, k, getattr(body, k))
     save_settings_to_disk()
     return JSONResponse({"status": "ok"})
 
