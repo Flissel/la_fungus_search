@@ -268,7 +268,25 @@ class SnapshotStreamer:
                 _ = asyncio.create_task(self._broadcast({"type": "log", "message": "judge: generating..."}))
             except Exception:
                 pass
-            text = generate_with_ollama(prompt, model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'), host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'))
+            llm_opts = {}
+            try:
+                if os.environ.get('OLLAMA_NUM_GPU'):
+                    llm_opts['num_gpu'] = int(os.environ.get('OLLAMA_NUM_GPU'))
+                if os.environ.get('OLLAMA_NUM_THREAD'):
+                    llm_opts['num_thread'] = int(os.environ.get('OLLAMA_NUM_THREAD'))
+                if os.environ.get('OLLAMA_NUM_BATCH'):
+                    llm_opts['num_batch'] = int(os.environ.get('OLLAMA_NUM_BATCH'))
+            except Exception:
+                llm_opts = {}
+            judge_prompt_path = os.path.join(SETTINGS_DIR, f"reports/judge_prompt_step_{int(self.step_i)}.txt")
+            text = generate_with_ollama(
+                prompt,
+                model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'),
+                host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'),
+                system=os.environ.get('OLLAMA_SYSTEM'),
+                options=(llm_opts or None),
+                save_prompt_path=judge_prompt_path,
+            )
             raw = (text or "").strip()
             if raw.startswith("```"):
                 raw = "\n".join([ln for ln in raw.splitlines() if not ln.strip().startswith("```")])
@@ -550,7 +568,25 @@ class SnapshotStreamer:
                                     pass
                                 try:
                                     await self._broadcast({"type": "log", "message": "report: generating..."})
-                                    text = generate_with_ollama(prompt, model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'), host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'))
+                                    llm_opts = {}
+                                    try:
+                                        if os.environ.get('OLLAMA_NUM_GPU'):
+                                            llm_opts['num_gpu'] = int(os.environ.get('OLLAMA_NUM_GPU'))
+                                        if os.environ.get('OLLAMA_NUM_THREAD'):
+                                            llm_opts['num_thread'] = int(os.environ.get('OLLAMA_NUM_THREAD'))
+                                        if os.environ.get('OLLAMA_NUM_BATCH'):
+                                            llm_opts['num_batch'] = int(os.environ.get('OLLAMA_NUM_BATCH'))
+                                    except Exception:
+                                        llm_opts = {}
+                                    prompt_path = os.path.join(SETTINGS_DIR, f"reports/prompt_step_{int(self.step_i)}.txt")
+                                    text = generate_with_ollama(
+                                        prompt,
+                                        model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'),
+                                        host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'),
+                                        system=os.environ.get('OLLAMA_SYSTEM'),
+                                        options=(llm_opts or None),
+                                        save_prompt_path=prompt_path,
+                                    )
                                 except Exception as e:
                                     await self._broadcast({"type": "log", "message": f"report: LLM error: {e}"})
                                     text = "{}"
@@ -1211,7 +1247,25 @@ async def http_answer(req: Request) -> JSONResponse:
     res = retr.search(query, top_k=top_k)
     ctx = "\n\n".join([(it.get('content') or '')[:800] for it in res.get('results', [])])
     prompt = f"Kontext:\n{ctx}\n\nAufgabe:\n{query}\n\nAntwort:"
-    text = generate_with_ollama(prompt, model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'), host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'))
+    llm_opts = {}
+    try:
+        if os.environ.get('OLLAMA_NUM_GPU'):
+            llm_opts['num_gpu'] = int(os.environ.get('OLLAMA_NUM_GPU'))
+        if os.environ.get('OLLAMA_NUM_THREAD'):
+            llm_opts['num_thread'] = int(os.environ.get('OLLAMA_NUM_THREAD'))
+        if os.environ.get('OLLAMA_NUM_BATCH'):
+            llm_opts['num_batch'] = int(os.environ.get('OLLAMA_NUM_BATCH'))
+    except Exception:
+        llm_opts = {}
+    answer_prompt_path = os.path.join(SETTINGS_DIR, "reports/answer_prompt.txt")
+    text = generate_with_ollama(
+        prompt,
+        model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'),
+        host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'),
+        system=os.environ.get('OLLAMA_SYSTEM'),
+        options=(llm_opts or None),
+        save_prompt_path=answer_prompt_path,
+    )
     return JSONResponse({"status": "ok", "answer": text, "results": res.get('results', [])})
 
 
