@@ -1,0 +1,16 @@
+# Backend LLM
+OLLAMA_MODEL=qwen2.5-coder:7b
+OLLAMA_HOST=http://127.0.0.1:11434
+OLLAMA_SYSTEM=You are a precise code analysis assistant. Output strict JSON as requested.
+OLLAMA_NUM_GPU=1
+OLLAMA_NUM_THREAD=12
+OLLAMA_NUM_BATCH=128
+
+# Embeddings
+EMBEDDING_MODEL=google/embeddinggemma-300m
+DEVICE_MODE=cuda
+
+# Backend port
+EMBEDDINGGEMMA_BACKEND_PORT=8011
+
+

@@ -663,6 +663,12 @@ streamer = SnapshotStreamer()
 app = FastAPI()
 
 # CORS for dev (Vite, direct origins) and dynamic port from env
+# Load .env if present
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except Exception:
+    pass
 PORT = int(os.environ.get('EMBEDDINGGEMMA_BACKEND_PORT', '8011'))
 app.add_middleware(
     CORSMiddleware,

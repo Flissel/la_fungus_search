@@ -26,4 +26,17 @@ Artifacts:
   - step_<i>.json
   - answer_prompt.txt
 
+.env support:
+- Create a `.env` in repo root; it will be auto-loaded by the backend.
+- Example (`.env.example` provided):
+  - OLLAMA_MODEL=qwen2.5-coder:7b
+  - OLLAMA_HOST=http://127.0.0.1:11434
+  - OLLAMA_SYSTEM=You are a precise code analysis assistant. Output strict JSON as requested.
+  - OLLAMA_NUM_GPU=1
+  - OLLAMA_NUM_THREAD=12
+  - OLLAMA_NUM_BATCH=128
+  - EMBEDDING_MODEL=google/embeddinggemma-300m
+  - DEVICE_MODE=cuda
+  - EMBEDDINGGEMMA_BACKEND_PORT=8011
+
 
