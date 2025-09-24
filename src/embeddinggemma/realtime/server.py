@@ -16,6 +16,7 @@ import numpy as np
 from embeddinggemma.mcmp_rag import MCPMRetriever
 from embeddinggemma.ui.corpus import collect_codebase_chunks, list_code_files  # type: ignore
 from embeddinggemma.rag.generation import generate_with_ollama  # type: ignore
+from embeddinggemma.prompts import get_report_instructions
 
 
 def _collect_py_documents(root_dir: str, max_files: int = 300, max_chars: int = 4000) -> List[str]:
@@ -52,30 +53,7 @@ def _build_report_prompt(mode: str, query: str, top_k: int, docs: list[dict]) ->
     ctx = "\n\n".join([(it.get("content") or "")[:1200] for it in docs])
     base = f"Mode: {mode}\nQuery: {query}\nTopK: {int(top_k)}\n\nContext begins:\n{ctx}\n\nContext ends.\n\n"
     schema = _report_schema_hint()
-    if mode == "structure":
-        instr = (
-            "Identify modules, classes, functions, and their relationships. "
-            "Prefer summarizing public APIs and entrypoints. "
-        )
-    elif mode == "exploratory":
-        instr = (
-            "Surface diverse areas of the codebase relevant to the query. "
-            "Prefer coverage across files over depth. "
-        )
-    elif mode == "summary":
-        instr = (
-            "Produce concise high-level summaries for each chunk and reduce redundancy. "
-        )
-    elif mode == "repair":
-        instr = (
-            "Focus on error-prone or suspicious code and dependencies that may break. "
-        )
-    else:
-        # deep (default)
-        instr = (
-            "Extract purpose, dependencies, and how the code answers the query. "
-            "Prefer depth on the most relevant chunks. "
-        )
+    instr = get_report_instructions(mode)
     return base + instr + "\n" + schema + " Answer with JSON only."
 
 
@@ -469,7 +447,17 @@ class SnapshotStreamer:
         if self.running:
             return
         # Build retriever and corpus
-        retr = MCPMRetriever(num_agents=self.num_agents, max_iterations=self.max_iterations, exploration_bonus=self.exploration_bonus, pheromone_decay=self.pheromone_decay, embed_batch_size=self.embed_batch_size)
+        embedding_model_name = os.environ.get('EMBEDDING_MODEL', 'google/embeddinggemma-300m')
+        device_mode = os.environ.get('DEVICE_MODE', 'auto')
+        retr = MCPMRetriever(
+            embedding_model_name=embedding_model_name,
+            num_agents=self.num_agents,
+            max_iterations=self.max_iterations,
+            exploration_bonus=self.exploration_bonus,
+            pheromone_decay=self.pheromone_decay,
+            embed_batch_size=self.embed_batch_size,
+            device_mode=device_mode,
+        )
         if not self.windows:
             raise RuntimeError("windows (chunk sizes) must be provided by frontend")
         if self.use_repo:
@@ -674,7 +662,8 @@ class SnapshotStreamer:
 streamer = SnapshotStreamer()
 app = FastAPI()
 
-# CORS for dev (Vite, direct origins)
+# CORS for dev (Vite, direct origins) and dynamic port from env
+PORT = int(os.environ.get('EMBEDDINGGEMMA_BACKEND_PORT', '8011'))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
