@@ -261,6 +261,7 @@ export default function App() {
               <option value='structure'>structure</option>
               <option value='exploratory'>exploratory</option>
               <option value='summary'>summary</option>
+              <option value='steering'>steering</option>
               <option value='similar'>similar</option>
               <option value='redundancy'>redundancy</option>
               <option value='repair'>repair</option>
