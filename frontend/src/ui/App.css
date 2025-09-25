@@ -108,3 +108,13 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
   border-color: #23262e;
 }
 
+/* Buttons contrast in dark theme */
+[data-theme='dark'] .button { background: #1d4ed8; color: #ffffff; }
+[data-theme='dark'] .button.secondary { background: #2a2f3a; color: #e5e7eb; border: 1px solid #374151; }
+
+/* Plotly text/icons in dark theme */
+[data-theme='dark'] .js-plotly-plot text { fill: #e5e7eb !important; }
+[data-theme='dark'] .modebar-btn svg path,
+[data-theme='dark'] .modebar-btn svg rect,
+[data-theme='dark'] .modebar-btn svg circle { fill: #e5e7eb !important; stroke: #e5e7eb !important; }
+
