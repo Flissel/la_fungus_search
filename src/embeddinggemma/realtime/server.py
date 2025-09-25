@@ -66,9 +66,9 @@ class SnapshotStreamer:
         # visualization config
         self.redraw_every: int = 2
         self.min_trail_strength: float = 0.05
-        self.max_edges: int = 600
-        self.viz_dims: int = 2
-        self.query: str = "Explain the architecture."
+        self.max_edges: int = 1500
+        self.viz_dims: int = 3
+        self.query: str = "Classify the code into modules."
         # corpus config
         self.use_repo: bool = True
         self.root_folder: str = os.getcwd()
@@ -99,6 +99,8 @@ class SnapshotStreamer:
         self.report_enabled: bool = False
         self.report_every: int = 5
         self.report_mode: str = "deep"
+        # judge/report prompt mode (for LLM steering)
+        self.judge_mode: str = "steering"
         # contextual steering (experimental)
         self.alpha: float = 0.7  # cosine
         self.beta: float = 0.1   # visit_norm
@@ -117,6 +119,21 @@ class SnapshotStreamer:
         self._doc_boost: dict[int, float] = {}
         self._query_pool: list[str] = []
         self._seeds_queue: list[int] = []
+        # LLM (Ollama) configuration
+        try:
+            self.ollama_model: str = os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b')
+            self.ollama_host: str = os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434')
+            self.ollama_system: str | None = os.environ.get('OLLAMA_SYSTEM')
+            self.ollama_num_gpu: int | None = int(os.environ.get('OLLAMA_NUM_GPU')) if os.environ.get('OLLAMA_NUM_GPU') else None
+            self.ollama_num_thread: int | None = int(os.environ.get('OLLAMA_NUM_THREAD')) if os.environ.get('OLLAMA_NUM_THREAD') else None
+            self.ollama_num_batch: int | None = int(os.environ.get('OLLAMA_NUM_BATCH')) if os.environ.get('OLLAMA_NUM_BATCH') else None
+        except Exception:
+            self.ollama_model = 'qwen2.5-coder:7b'
+            self.ollama_host = 'http://127.0.0.1:11434'
+            self.ollama_system = None
+            self.ollama_num_gpu = None
+            self.ollama_num_thread = None
+            self.ollama_num_batch = None
 
     def _doc_by_id(self, doc_id: int):
         try:
@@ -205,13 +222,16 @@ class SnapshotStreamer:
                 })
             except Exception:
                 continue
+        mode = (self.judge_mode or self.report_mode or "steering").lower()
+        instr = get_report_instructions(mode)
         schema = (
             "Return ONLY JSON with key 'items' (array). Each item must include: "
             "doc_id (int), is_relevant (bool), why (str), entry_point (bool), "
             "missing_context (str[]), follow_up_queries (str[]), keywords (str[]), inspect (str[])."
         )
         return (
-            f"Query: {query}\n\n" +
+            f"Mode: {mode}\nQuery: {query}\n\n" +
+            instr + "\n" +
             "Evaluate the following code chunks for relevance to the query. "
             "Mark entry_point for main functions, API routes, or top-level orchestrators.\n\n" +
             json.dumps({'chunks': items}, ensure_ascii=False) + "\n\n" +
@@ -248,20 +268,20 @@ class SnapshotStreamer:
                 pass
             llm_opts = {}
             try:
-                if os.environ.get('OLLAMA_NUM_GPU'):
-                    llm_opts['num_gpu'] = int(os.environ.get('OLLAMA_NUM_GPU'))
-                if os.environ.get('OLLAMA_NUM_THREAD'):
-                    llm_opts['num_thread'] = int(os.environ.get('OLLAMA_NUM_THREAD'))
-                if os.environ.get('OLLAMA_NUM_BATCH'):
-                    llm_opts['num_batch'] = int(os.environ.get('OLLAMA_NUM_BATCH'))
+                if isinstance(self.ollama_num_gpu, int):
+                    llm_opts['num_gpu'] = int(self.ollama_num_gpu)
+                if isinstance(self.ollama_num_thread, int):
+                    llm_opts['num_thread'] = int(self.ollama_num_thread)
+                if isinstance(self.ollama_num_batch, int):
+                    llm_opts['num_batch'] = int(self.ollama_num_batch)
             except Exception:
                 llm_opts = {}
             judge_prompt_path = os.path.join(SETTINGS_DIR, f"reports/judge_prompt_step_{int(self.step_i)}.txt")
             text = generate_with_ollama(
                 prompt,
-                model=os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b'),
-                host=os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434'),
-                system=os.environ.get('OLLAMA_SYSTEM'),
+                model=self.ollama_model,
+                host=self.ollama_host,
+                system=self.ollama_system,
                 options=(llm_opts or None),
                 save_prompt_path=judge_prompt_path,
             )
@@ -701,6 +721,7 @@ def settings_dict() -> dict:
         "report_enabled": streamer.report_enabled,
         "report_every": streamer.report_every,
         "report_mode": streamer.report_mode,
+        "judge_mode": streamer.judge_mode,
         "alpha": streamer.alpha,
         "beta": streamer.beta,
         "gamma": streamer.gamma,
@@ -726,6 +747,13 @@ def settings_dict() -> dict:
         "pheromone_decay": streamer.pheromone_decay,
         "embed_batch_size": streamer.embed_batch_size,
         "max_chunks_per_shard": streamer.max_chunks_per_shard,
+        # LLM settings
+        "ollama_model": streamer.ollama_model,
+        "ollama_host": streamer.ollama_host,
+        "ollama_system": streamer.ollama_system,
+        "ollama_num_gpu": streamer.ollama_num_gpu,
+        "ollama_num_thread": streamer.ollama_num_thread,
+        "ollama_num_batch": streamer.ollama_num_batch,
     }
 
 def apply_settings(d: dict) -> None:
@@ -827,6 +855,7 @@ class SettingsModel(BaseModel):
     report_enabled: bool | None = None
     report_every: int | None = Field(default=None, ge=1, le=100)
     report_mode: str | None = None
+    judge_mode: str | None = None
     # contextual steering weights and budgets
     alpha: float | None = Field(default=None, ge=0.0, le=2.0)
     beta: float | None = Field(default=None, ge=0.0, le=2.0)
@@ -852,6 +881,13 @@ class SettingsModel(BaseModel):
     pheromone_decay: float | None = Field(default=None, ge=0.5, le=0.999)
     embed_batch_size: int | None = Field(default=None, ge=1, le=4096)
     max_chunks_per_shard: int | None = Field(default=None, ge=0, le=100000)
+    # LLM (Ollama) configuration
+    ollama_model: str | None = None
+    ollama_host: str | None = None
+    ollama_system: str | None = None
+    ollama_num_gpu: int | None = Field(default=None, ge=0, le=128)
+    ollama_num_thread: int | None = Field(default=None, ge=0, le=4096)
+    ollama_num_batch: int | None = Field(default=None, ge=0, le=4096)
 
     @validator('viz_dims')
     def _dims(cls, v):  # type: ignore
@@ -939,8 +975,14 @@ async def http_start(req: Request) -> JSONResponse:
         streamer.report_every = int(getattr(body, 'report_every'))
     if getattr(body, 'report_mode', None) is not None:
         streamer.report_mode = str(getattr(body, 'report_mode'))
+    if getattr(body, 'judge_mode', None) is not None:
+        streamer.judge_mode = str(getattr(body, 'judge_mode'))
     # contextual steering settings
     for k in ["alpha","beta","gamma","delta","epsilon","min_content_chars","import_only_penalty","max_reports","max_report_tokens","judge_enabled"]:
+        if getattr(body, k, None) is not None:
+            setattr(streamer, k, getattr(body, k))
+    # LLM configuration overrides
+    for k in ["ollama_model","ollama_host","ollama_system","ollama_num_gpu","ollama_num_thread","ollama_num_batch"]:
         if getattr(body, k, None) is not None:
             setattr(streamer, k, getattr(body, k))
     await streamer.start()
@@ -1006,8 +1048,14 @@ async def http_config(req: Request) -> JSONResponse:
         streamer.report_every = int(getattr(body, 'report_every'))
     if getattr(body, 'report_mode', None) is not None:
         streamer.report_mode = str(getattr(body, 'report_mode'))
+    if getattr(body, 'judge_mode', None) is not None:
+        streamer.judge_mode = str(getattr(body, 'judge_mode'))
     # contextual steering settings
     for k in ["alpha","beta","gamma","delta","epsilon","min_content_chars","import_only_penalty","max_reports","max_report_tokens","judge_enabled"]:
+        if getattr(body, k, None) is not None:
+            setattr(streamer, k, getattr(body, k))
+    # LLM configuration overrides
+    for k in ["ollama_model","ollama_host","ollama_system","ollama_num_gpu","ollama_num_thread","ollama_num_batch"]:
         if getattr(body, k, None) is not None:
             setattr(streamer, k, getattr(body, k))
     save_settings_to_disk()
