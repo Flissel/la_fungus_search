@@ -304,10 +304,12 @@ export default function App() {
             </select>
           </div>
         </div>
-        <div className='group'>
-          <span className='label'>Query</span>
-          <input className='input' value={query} onChange={e=>setQuery(e.target.value)} />
-        </div>
+        <details open>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Simulation</summary>
+          <div className='group'>
+            <span className='label'>Query</span>
+            <input className='input' value={query} onChange={e=>setQuery(e.target.value)} />
+          </div>
         <div className='row group'>
           <div>
             <span className='label'>Mode</span>
@@ -327,6 +329,7 @@ export default function App() {
             <input className='number' type='number' step={1} value={topK} onChange={e=>setTopK(parseInt(e.target.value)||1)} />
           </div>
         </div>
+        </details>
         <div className='row group'>
           <div>
             <span className='label'>Judge Mode</span>
@@ -340,17 +343,19 @@ export default function App() {
             </select>
           </div>
         </div>
-        <div className='row group'>
-          <div>
-            <span className='label'>LLM Provider</span>
-            <select className='select' value={llmProvider} onChange={e=>setLlmProvider(e.target.value)}>
-              <option value='ollama'>ollama</option>
-              <option value='openai'>openai</option>
-              <option value='google'>google</option>
-              <option value='grok'>grok</option>
-            </select>
+        <details>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Models</summary>
+          <div className='row group'>
+            <div>
+              <span className='label'>LLM Provider</span>
+              <select className='select' value={llmProvider} onChange={e=>setLlmProvider(e.target.value)}>
+                <option value='ollama'>ollama</option>
+                <option value='openai'>openai</option>
+                <option value='google'>google</option>
+                <option value='grok'>grok</option>
+              </select>
+            </div>
           </div>
-        </div>
         <div className='group'>
           <span className='label'>Ollama Model</span>
           <input className='input' value={ollamaModel} onChange={e=>setOllamaModel(e.target.value)} placeholder='e.g., qwen2.5-coder:7b' />
@@ -421,31 +426,35 @@ export default function App() {
             </div>
           </>
         )}
-        <div className='group'>
-          <span className='label'>Windows (lines)</span>
-          <input className='input' value={windows} onChange={e=>setWindows(e.target.value)} />
-        </div>
-        <div className='group'>
-          <label><input type='checkbox' checked={useRepo} onChange={e=>setUseRepo(e.target.checked)} /> Use code space (src) as corpus</label>
-        </div>
-        <div className='group'>
-          <span className='label'>Root folder (used when src is off)</span>
-          <input className='input' value={rootFolder} onChange={e=>setRootFolder(e.target.value)} placeholder='C:\\Users\\User\\Desktop\\EmbeddingGemma' />
-        </div>
-        <div className='row group'>
-          <div>
-            <span className='label'>Max files to index</span>
-            <input className='number' type='number' step={50} value={maxFiles} onChange={e=>setMaxFiles(parseInt(e.target.value)||0)} />
+        </details>
+        <details>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Chunking</summary>
+          <div className='group'>
+            <span className='label'>Windows (lines)</span>
+            <input className='input' value={windows} onChange={e=>setWindows(e.target.value)} />
           </div>
-          <div>
-            <span className='label'>Chunk workers (threads)</span>
-            <input className='number' type='number' step={1} value={chunkWorkers} onChange={e=>setChunkWorkers(parseInt(e.target.value)||1)} />
+          <div className='group'>
+            <label><input type='checkbox' checked={useRepo} onChange={e=>setUseRepo(e.target.checked)} /> Use code space (src) as corpus</label>
           </div>
-        </div>
-        <div className='group'>
-          <span className='label'>Exclude folders</span>
-          <input className='input' value={excludeDirs} onChange={e=>setExcludeDirs(e.target.value)} />
-        </div>
+          <div className='group'>
+            <span className='label'>Root folder (used when src is off)</span>
+            <input className='input' value={rootFolder} onChange={e=>setRootFolder(e.target.value)} placeholder='C:\\Users\\User\\Desktop\\EmbeddingGemma' />
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Max files to index</span>
+              <input className='number' type='number' step={50} value={maxFiles} onChange={e=>setMaxFiles(parseInt(e.target.value)||0)} />
+            </div>
+            <div>
+              <span className='label'>Chunk workers (threads)</span>
+              <input className='number' type='number' step={1} value={chunkWorkers} onChange={e=>setChunkWorkers(parseInt(e.target.value)||1)} />
+            </div>
+          </div>
+          <div className='group'>
+            <span className='label'>Exclude folders</span>
+            <input className='input' value={excludeDirs} onChange={e=>setExcludeDirs(e.target.value)} />
+          </div>
+        </details>
         <div className='row group'>
           <div>
             <span className='label'>Viz dims</span>

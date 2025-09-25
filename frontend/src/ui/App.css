@@ -82,3 +82,29 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 .progress-bar { height: 100%; background: linear-gradient(90deg, var(--primary), #22c55e); }
 
 
+/* Dark theme contrast fixes */
+[data-theme='dark'] .sidebar,
+[data-theme='dark'] .sidebar .title,
+[data-theme='dark'] .sidebar .label,
+[data-theme='dark'] .sidebar summary {
+  color: var(--text);
+}
+[data-theme='dark'] .sidebar .label {
+  color: var(--muted);
+}
+[data-theme='dark'] .sidebar .input,
+[data-theme='dark'] .sidebar .number,
+[data-theme='dark'] .sidebar .select {
+  background: #1f2937; /* slate-800 */
+  color: #e5e7eb;      /* gray-200 */
+  border-color: #374151; /* slate-700 */
+}
+[data-theme='dark'] .results {
+  background: #0f1115;
+}
+[data-theme='dark'] .log {
+  background: #0f1115;
+  color: #e5e7eb;
+  border-color: #23262e;
+}
+
