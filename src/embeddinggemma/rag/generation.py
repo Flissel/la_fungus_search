@@ -27,6 +27,10 @@ def generate_with_ollama(
             except Exception:
                 pass
         _logger.info("generate_with_ollama: model=%s host=%s", model, host)
+        try:
+            _logger.info("generate_with_ollama: prompt_len=%d", len(prompt))
+        except Exception:
+            pass
         payload: Dict[str, Any] = {"model": model, "prompt": prompt, "stream": False}
         if system:
             payload["system"] = system
@@ -35,7 +39,12 @@ def generate_with_ollama(
         r = requests.post(url, json=payload, timeout=timeout)
         r.raise_for_status()
         _logger.info("generate_with_ollama: status=%s", r.status_code)
-        return r.json().get('response', '')
+        resp = r.json().get('response', '')
+        try:
+            _logger.info("generate_with_ollama: response_len=%d", len(resp or ""))
+        except Exception:
+            pass
+        return resp
         
     except Exception as e:
         _logger.error("generate_with_ollama error: %s", e)
