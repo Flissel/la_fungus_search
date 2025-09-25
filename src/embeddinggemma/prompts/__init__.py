@@ -56,3 +56,54 @@ def get_report_instructions(mode: str) -> str:
 
 
 
+def report_schema_hint() -> str:
+    return (
+        "Return ONLY JSON with key 'items' (array). Each item must include: "
+        "code_chunk (str), content (str), file_path (str), line_range ([int,int]), "
+        "code_purpose (str), code_dependencies (str[] or str), file_type (str), "
+        "embedding_score (number), relevance_to_query (str), query_initial (str), follow_up_queries (str[])."
+    )
+
+
+def judge_schema_hint() -> str:
+    return (
+        "Return ONLY JSON with key 'items' (array). Each item must include: "
+        "doc_id (int), is_relevant (bool), why (str), entry_point (bool), "
+        "missing_context (str[]), follow_up_queries (str[]), keywords (str[]), inspect (str[])."
+    )
+
+
+def build_report_prompt(mode: str, query: str, top_k: int, docs: list[dict]) -> str:
+    m = (mode or "deep").lower()
+    ctx = "\n\n".join([(it.get("content") or "")[:1200] for it in (docs or [])])
+    base = f"Mode: {m}\nQuery: {query}\nTopK: {int(top_k)}\n\nContext begins:\n{ctx}\n\nContext ends.\n\n"
+    schema = report_schema_hint()
+    instr = get_report_instructions(m)
+    return base + instr + "\n" + schema + " Answer with JSON only."
+
+
+def build_judge_prompt(mode: str, query: str, results: list[dict]) -> str:
+    m = (mode or "steering").lower()
+    items = []
+    for it in (results or []):
+        try:
+            items.append({
+                'doc_id': int(it.get('id', it.get('doc_id', -1))),
+                'score': float(it.get('score', 0.0)),
+                'content': (it.get('content') or '')[:1200],
+            })
+        except Exception:
+            continue
+    instr = get_report_instructions(m)
+    schema = judge_schema_hint()
+    return (
+        f"Mode: {m}\nQuery: {query}\n\n" +
+        instr + "\n" +
+        "Evaluate the following code chunks for relevance to the query. "
+        "Mark entry_point for main functions, API routes, or top-level orchestrators.\n\n" +
+        __import__('json').dumps({'chunks': items}, ensure_ascii=False) + "\n\n" +
+        schema
+    )
+
+
+
