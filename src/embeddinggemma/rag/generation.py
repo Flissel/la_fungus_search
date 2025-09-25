@@ -112,6 +112,16 @@ def generate_text(
     openai_api_key: Optional[str] = None,
     openai_base_url: Optional[str] = None,
     openai_temperature: Optional[float] = None,
+    # Google (OpenAI-compatible endpoint if used)
+    google_model: Optional[str] = None,
+    google_api_key: Optional[str] = None,
+    google_base_url: Optional[str] = None,
+    google_temperature: Optional[float] = None,
+    # Grok (OpenAI-compatible)
+    grok_model: Optional[str] = None,
+    grok_api_key: Optional[str] = None,
+    grok_base_url: Optional[str] = None,
+    grok_temperature: Optional[float] = None,
     # Common
     timeout: int = 500,
     save_prompt_path: Optional[str] = None,
@@ -125,6 +135,28 @@ def generate_text(
             base_url=(openai_base_url or 'https://api.openai.com'),
             system=system,
             temperature=float(openai_temperature if openai_temperature is not None else 0.0),
+            timeout=timeout,
+            save_prompt_path=save_prompt_path,
+        )
+    if p == 'google':
+        return generate_with_openai(
+            prompt,
+            model=google_model or 'gemini-1.5-pro',
+            api_key=google_api_key or '',
+            base_url=(google_base_url or 'https://generativelanguage.googleapis.com'),
+            system=system,
+            temperature=float(google_temperature if google_temperature is not None else 0.0),
+            timeout=timeout,
+            save_prompt_path=save_prompt_path,
+        )
+    if p == 'grok':
+        return generate_with_openai(
+            prompt,
+            model=grok_model or 'grok-2-latest',
+            api_key=grok_api_key or '',
+            base_url=(grok_base_url or 'https://api.x.ai'),
+            system=system,
+            temperature=float(grok_temperature if grok_temperature is not None else 0.0),
             timeout=timeout,
             save_prompt_path=save_prompt_path,
         )

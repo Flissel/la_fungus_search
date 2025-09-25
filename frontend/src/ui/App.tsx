@@ -38,6 +38,12 @@ export default function App() {
   const [openaiModel, setOpenaiModel] = useState<string>('')
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>('')
   const [openaiTemperature, setOpenaiTemperature] = useState<number>(0)
+  const [googleModel, setGoogleModel] = useState<string>('')
+  const [googleBaseUrl, setGoogleBaseUrl] = useState<string>('')
+  const [googleTemperature, setGoogleTemperature] = useState<number>(0)
+  const [grokModel, setGrokModel] = useState<string>('')
+  const [grokBaseUrl, setGrokBaseUrl] = useState<string>('')
+  const [grokTemperature, setGrokTemperature] = useState<number>(0)
   const [useRepo, setUseRepo] = useState<boolean>(true)
   const [rootFolder, setRootFolder] = useState<string>('')
   const [maxFiles, setMaxFiles] = useState<number>(1000)
@@ -127,6 +133,12 @@ export default function App() {
     if ((openaiModel||'').trim()) extra.openai_model = (openaiModel||'').trim()
     if ((openaiBaseUrl||'').trim()) extra.openai_base_url = (openaiBaseUrl||'').trim()
     if (Number.isFinite(openaiTemperature)) extra.openai_temperature = Number(openaiTemperature)
+    if ((googleModel||'').trim()) extra.google_model = (googleModel||'').trim()
+    if ((googleBaseUrl||'').trim()) extra.google_base_url = (googleBaseUrl||'').trim()
+    if (Number.isFinite(googleTemperature)) extra.google_temperature = Number(googleTemperature)
+    if ((grokModel||'').trim()) extra.grok_model = (grokModel||'').trim()
+    if ((grokBaseUrl||'').trim()) extra.grok_base_url = (grokBaseUrl||'').trim()
+    if (Number.isFinite(grokTemperature)) extra.grok_temperature = Number(grokTemperature)
     await axios.post(API + '/config', {
       viz_dims: dims,
       min_trail_strength: minTrail,
@@ -167,6 +179,12 @@ export default function App() {
       if ((openaiModel||'').trim()) extra.openai_model = (openaiModel||'').trim()
       if ((openaiBaseUrl||'').trim()) extra.openai_base_url = (openaiBaseUrl||'').trim()
       if (Number.isFinite(openaiTemperature)) extra.openai_temperature = Number(openaiTemperature)
+      if ((googleModel||'').trim()) extra.google_model = (googleModel||'').trim()
+      if ((googleBaseUrl||'').trim()) extra.google_base_url = (googleBaseUrl||'').trim()
+      if (Number.isFinite(googleTemperature)) extra.google_temperature = Number(googleTemperature)
+      if ((grokModel||'').trim()) extra.grok_model = (grokModel||'').trim()
+      if ((grokBaseUrl||'').trim()) extra.grok_base_url = (grokBaseUrl||'').trim()
+      if (Number.isFinite(grokTemperature)) extra.grok_temperature = Number(grokTemperature)
       await axios.post(API + '/start', {
         query,
         viz_dims: dims,
@@ -328,6 +346,8 @@ export default function App() {
             <select className='select' value={llmProvider} onChange={e=>setLlmProvider(e.target.value)}>
               <option value='ollama'>ollama</option>
               <option value='openai'>openai</option>
+              <option value='google'>google</option>
+              <option value='grok'>grok</option>
             </select>
           </div>
         </div>
@@ -369,18 +389,38 @@ export default function App() {
           <span className='label'>OpenAI Temperature</span>
           <input className='number' type='number' step={0.1} value={openaiTemperature} onChange={e=>setOpenaiTemperature(parseFloat(e.target.value)||0)} />
         </div>
-        <div className='row group'>
-          <div>
-            <label className='label'>Per-step Report</label>
-            <label style={{display:'flex',gap:8,alignItems:'center'}}>
-              <input type='checkbox' checked={reportEnabled} onChange={e=>setReportEnabled(e.target.checked)} /> Enable
-            </label>
-          </div>
-          <div>
-            <span className='label'>Report every N steps</span>
-            <input className='number' type='number' step={1} value={reportEvery} onChange={e=>setReportEvery(parseInt(e.target.value)||1)} />
-          </div>
-        </div>
+        {llmProvider==='google' && (
+          <>
+            <div className='group'>
+              <span className='label'>Google Model</span>
+              <input className='input' value={googleModel} onChange={e=>setGoogleModel(e.target.value)} placeholder='e.g., gemini-1.5-pro' />
+            </div>
+            <div className='group'>
+              <span className='label'>Google Base URL</span>
+              <input className='input' value={googleBaseUrl} onChange={e=>setGoogleBaseUrl(e.target.value)} placeholder='https://generativelanguage.googleapis.com' />
+            </div>
+            <div className='group'>
+              <span className='label'>Google Temperature</span>
+              <input className='number' type='number' step={0.1} value={googleTemperature} onChange={e=>setGoogleTemperature(parseFloat(e.target.value)||0)} />
+            </div>
+          </>
+        )}
+        {llmProvider==='grok' && (
+          <>
+            <div className='group'>
+              <span className='label'>Grok Model</span>
+              <input className='input' value={grokModel} onChange={e=>setGrokModel(e.target.value)} placeholder='e.g., grok-2-latest' />
+            </div>
+            <div className='group'>
+              <span className='label'>Grok Base URL</span>
+              <input className='input' value={grokBaseUrl} onChange={e=>setGrokBaseUrl(e.target.value)} placeholder='https://api.x.ai' />
+            </div>
+            <div className='group'>
+              <span className='label'>Grok Temperature</span>
+              <input className='number' type='number' step={0.1} value={grokTemperature} onChange={e=>setGrokTemperature(parseFloat(e.target.value)||0)} />
+            </div>
+          </>
+        )}
         <div className='group'>
           <span className='label'>Windows (lines)</span>
           <input className='input' value={windows} onChange={e=>setWindows(e.target.value)} />
