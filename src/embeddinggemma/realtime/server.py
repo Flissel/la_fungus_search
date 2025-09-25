@@ -134,6 +134,16 @@ class SnapshotStreamer:
         self.openai_api_key: str | None = os.environ.get('OPENAI_API_KEY')
         self.openai_base_url: str | None = os.environ.get('OPENAI_BASE_URL')
         self.openai_temperature: float = float(os.environ.get('OPENAI_TEMPERATURE', '0.0'))
+        # Google
+        self.google_model: str = os.environ.get('GOOGLE_MODEL', 'gemini-1.5-pro')
+        self.google_api_key: str | None = os.environ.get('GOOGLE_API_KEY')
+        self.google_base_url: str | None = os.environ.get('GOOGLE_BASE_URL')
+        self.google_temperature: float = float(os.environ.get('GOOGLE_TEMPERATURE', '0.0'))
+        # Grok
+        self.grok_model: str = os.environ.get('GROK_MODEL', 'grok-2-latest')
+        self.grok_api_key: str | None = os.environ.get('GROK_API_KEY')
+        self.grok_base_url: str | None = os.environ.get('GROK_BASE_URL')
+        self.grok_temperature: float = float(os.environ.get('GROK_TEMPERATURE', '0.0'))
 
     def _doc_by_id(self, doc_id: int):
         try:
@@ -267,6 +277,16 @@ class SnapshotStreamer:
                 openai_api_key=(self.openai_api_key or ''),
                 openai_base_url=(self.openai_base_url or 'https://api.openai.com'),
                 openai_temperature=float(getattr(self, 'openai_temperature', 0.0)),
+                # google
+                google_model=self.google_model,
+                google_api_key=(self.google_api_key or ''),
+                google_base_url=(self.google_base_url or 'https://generativelanguage.googleapis.com'),
+                google_temperature=float(getattr(self, 'google_temperature', 0.0)),
+                # grok
+                grok_model=self.grok_model,
+                grok_api_key=(self.grok_api_key or ''),
+                grok_base_url=(self.grok_base_url or 'https://api.x.ai'),
+                grok_temperature=float(getattr(self, 'grok_temperature', 0.0)),
                 save_prompt_path=judge_prompt_path,
             )
             raw = (text or "").strip()
@@ -582,6 +602,14 @@ class SnapshotStreamer:
                                         openai_api_key=(self.openai_api_key or ''),
                                         openai_base_url=(self.openai_base_url or 'https://api.openai.com'),
                                         openai_temperature=float(getattr(self, 'openai_temperature', 0.0)),
+                                        google_model=self.google_model,
+                                        google_api_key=(self.google_api_key or ''),
+                                        google_base_url=(self.google_base_url or 'https://generativelanguage.googleapis.com'),
+                                        google_temperature=float(getattr(self, 'google_temperature', 0.0)),
+                                        grok_model=self.grok_model,
+                                        grok_api_key=(self.grok_api_key or ''),
+                                        grok_base_url=(self.grok_base_url or 'https://api.x.ai'),
+                                        grok_temperature=float(getattr(self, 'grok_temperature', 0.0)),
                                         save_prompt_path=prompt_path,
                                     )
                                 except Exception as e:
@@ -747,6 +775,12 @@ def settings_dict() -> dict:
         "openai_model": streamer.openai_model,
         "openai_base_url": streamer.openai_base_url,
         "openai_temperature": streamer.openai_temperature,
+        "google_model": streamer.google_model,
+        "google_base_url": streamer.google_base_url,
+        "google_temperature": streamer.google_temperature,
+        "grok_model": streamer.grok_model,
+        "grok_base_url": streamer.grok_base_url,
+        "grok_temperature": streamer.grok_temperature,
     }
 
 def apply_settings(d: dict) -> None:
@@ -790,6 +824,16 @@ def apply_settings(d: dict) -> None:
         if getattr(sm, 'ollama_num_gpu', None) is not None: streamer.ollama_num_gpu = int(getattr(sm, 'ollama_num_gpu'))
         if getattr(sm, 'ollama_num_thread', None) is not None: streamer.ollama_num_thread = int(getattr(sm, 'ollama_num_thread'))
         if getattr(sm, 'ollama_num_batch', None) is not None: streamer.ollama_num_batch = int(getattr(sm, 'ollama_num_batch'))
+        if getattr(sm, 'llm_provider', None) is not None: streamer.llm_provider = str(getattr(sm, 'llm_provider'))
+        if getattr(sm, 'openai_model', None) is not None: streamer.openai_model = str(getattr(sm, 'openai_model'))
+        if getattr(sm, 'openai_base_url', None) is not None: streamer.openai_base_url = str(getattr(sm, 'openai_base_url'))
+        if getattr(sm, 'openai_temperature', None) is not None: streamer.openai_temperature = float(getattr(sm, 'openai_temperature'))
+        if getattr(sm, 'google_model', None) is not None: streamer.google_model = str(getattr(sm, 'google_model'))
+        if getattr(sm, 'google_base_url', None) is not None: streamer.google_base_url = str(getattr(sm, 'google_base_url'))
+        if getattr(sm, 'google_temperature', None) is not None: streamer.google_temperature = float(getattr(sm, 'google_temperature'))
+        if getattr(sm, 'grok_model', None) is not None: streamer.grok_model = str(getattr(sm, 'grok_model'))
+        if getattr(sm, 'grok_base_url', None) is not None: streamer.grok_base_url = str(getattr(sm, 'grok_base_url'))
+        if getattr(sm, 'grok_temperature', None) is not None: streamer.grok_temperature = float(getattr(sm, 'grok_temperature'))
     except Exception:
         pass
 
@@ -906,6 +950,16 @@ class SettingsModel(BaseModel):
     openai_api_key: str | None = None
     openai_base_url: str | None = None
     openai_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    # Google
+    google_model: str | None = None
+    google_api_key: str | None = None
+    google_base_url: str | None = None
+    google_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    # Grok
+    grok_model: str | None = None
+    grok_api_key: str | None = None
+    grok_base_url: str | None = None
+    grok_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
 
     @validator('viz_dims')
     def _dims(cls, v):  # type: ignore
@@ -1004,6 +1058,9 @@ async def http_start(req: Request) -> JSONResponse:
         if getattr(body, k, None) is not None:
             setattr(streamer, k, getattr(body, k))
     for k in ["llm_provider","openai_model","openai_api_key","openai_base_url","openai_temperature"]:
+        if getattr(body, k, None) is not None:
+            setattr(streamer, k, getattr(body, k))
+    for k in ["google_model","google_api_key","google_base_url","google_temperature","grok_model","grok_api_key","grok_base_url","grok_temperature"]:
         if getattr(body, k, None) is not None:
             setattr(streamer, k, getattr(body, k))
     # OpenAI overrides
@@ -1337,6 +1394,14 @@ async def http_answer(req: Request) -> JSONResponse:
         openai_api_key=(streamer.openai_api_key or ''),
         openai_base_url=(streamer.openai_base_url or 'https://api.openai.com'),
         openai_temperature=float(getattr(streamer, 'openai_temperature', 0.0)),
+        google_model=streamer.google_model,
+        google_api_key=(streamer.google_api_key or ''),
+        google_base_url=(streamer.google_base_url or 'https://generativelanguage.googleapis.com'),
+        google_temperature=float(getattr(streamer, 'google_temperature', 0.0)),
+        grok_model=streamer.grok_model,
+        grok_api_key=(streamer.grok_api_key or ''),
+        grok_base_url=(streamer.grok_base_url or 'https://api.x.ai'),
+        grok_temperature=float(getattr(streamer, 'grok_temperature', 0.0)),
         save_prompt_path=answer_prompt_path,
     )
     return JSONResponse({"status": "ok", "answer": text, "results": res.get('results', [])})
