@@ -15,7 +15,7 @@ import numpy as np
 
 from embeddinggemma.mcmp_rag import MCPMRetriever
 from embeddinggemma.ui.corpus import collect_codebase_chunks, list_code_files  # type: ignore
-from embeddinggemma.rag.generation import generate_with_ollama  # type: ignore
+from embeddinggemma.rag.generation import generate_with_ollama, generate_text  # type: ignore
 from embeddinggemma.prompts import get_report_instructions
 from embeddinggemma.prompts import build_report_prompt as prompts_build_report_prompt
 from embeddinggemma.prompts import build_judge_prompt as prompts_build_judge_prompt
@@ -128,6 +128,12 @@ class SnapshotStreamer:
             self.ollama_num_gpu = None
             self.ollama_num_thread = None
             self.ollama_num_batch = None
+        # OpenAI configuration (optional)
+        self.llm_provider: str = os.environ.get('LLM_PROVIDER', 'ollama')
+        self.openai_model: str = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
+        self.openai_api_key: str | None = os.environ.get('OPENAI_API_KEY')
+        self.openai_base_url: str | None = os.environ.get('OPENAI_BASE_URL')
+        self.openai_temperature: float = float(os.environ.get('OPENAI_TEMPERATURE', '0.0'))
 
     def _doc_by_id(self, doc_id: int):
         try:
@@ -248,12 +254,19 @@ class SnapshotStreamer:
             except Exception:
                 llm_opts = {}
             judge_prompt_path = os.path.join(SETTINGS_DIR, f"reports/judge_prompt_step_{int(self.step_i)}.txt")
-            text = generate_with_ollama(
-                prompt,
-                model=self.ollama_model,
-                host=self.ollama_host,
+            text = generate_text(
+                provider=(self.llm_provider or 'ollama'),
+                prompt=prompt,
                 system=self.ollama_system,
-                options=(llm_opts or None),
+                # ollama
+                ollama_model=self.ollama_model,
+                ollama_host=self.ollama_host,
+                ollama_options=(llm_opts or None),
+                # openai
+                openai_model=self.openai_model,
+                openai_api_key=(self.openai_api_key or ''),
+                openai_base_url=(self.openai_base_url or 'https://api.openai.com'),
+                openai_temperature=float(getattr(self, 'openai_temperature', 0.0)),
                 save_prompt_path=judge_prompt_path,
             )
             raw = (text or "").strip()
@@ -558,12 +571,17 @@ class SnapshotStreamer:
                                     except Exception:
                                         llm_opts = {}
                                     prompt_path = os.path.join(SETTINGS_DIR, f"reports/prompt_step_{int(self.step_i)}.txt")
-                                    text = generate_with_ollama(
-                                        prompt,
-                                        model=self.ollama_model,
-                                        host=self.ollama_host,
+                                    text = generate_text(
+                                        provider=(self.llm_provider or 'ollama'),
+                                        prompt=prompt,
                                         system=self.ollama_system,
-                                        options=(llm_opts or None),
+                                        ollama_model=self.ollama_model,
+                                        ollama_host=self.ollama_host,
+                                        ollama_options=(llm_opts or None),
+                                        openai_model=self.openai_model,
+                                        openai_api_key=(self.openai_api_key or ''),
+                                        openai_base_url=(self.openai_base_url or 'https://api.openai.com'),
+                                        openai_temperature=float(getattr(self, 'openai_temperature', 0.0)),
                                         save_prompt_path=prompt_path,
                                     )
                                 except Exception as e:
@@ -725,6 +743,10 @@ def settings_dict() -> dict:
         "ollama_num_gpu": streamer.ollama_num_gpu,
         "ollama_num_thread": streamer.ollama_num_thread,
         "ollama_num_batch": streamer.ollama_num_batch,
+        "llm_provider": streamer.llm_provider,
+        "openai_model": streamer.openai_model,
+        "openai_base_url": streamer.openai_base_url,
+        "openai_temperature": streamer.openai_temperature,
     }
 
 def apply_settings(d: dict) -> None:
@@ -820,6 +842,10 @@ def settings_usage_lines(d: dict) -> list[str]:
         "ollama_num_gpu": ["realtime/server.py (LLM GPU opts)"] ,
         "ollama_num_thread": ["realtime/server.py (LLM CPU threads)"] ,
         "ollama_num_batch": ["realtime/server.py (LLM batch)"] ,
+        "llm_provider": ["realtime/server.py (choose provider)"] ,
+        "openai_model": ["realtime/server.py (OpenAI model)"] ,
+        "openai_base_url": ["realtime/server.py (OpenAI endpoint)"] ,
+        "openai_temperature": ["realtime/server.py (OpenAI temperature)"] ,
         "mode": ["frontend/UX (prompt style)", "streamlit_fungus_backup.py (mode prompt)"] ,
     }
     lines: list[str] = []
@@ -874,6 +900,12 @@ class SettingsModel(BaseModel):
     ollama_num_gpu: int | None = Field(default=None, ge=0, le=128)
     ollama_num_thread: int | None = Field(default=None, ge=0, le=4096)
     ollama_num_batch: int | None = Field(default=None, ge=0, le=4096)
+    # OpenAI
+    llm_provider: str | None = None  # 'ollama' | 'openai'
+    openai_model: str | None = None
+    openai_api_key: str | None = None
+    openai_base_url: str | None = None
+    openai_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
 
     @validator('viz_dims')
     def _dims(cls, v):  # type: ignore
@@ -969,6 +1001,13 @@ async def http_start(req: Request) -> JSONResponse:
             setattr(streamer, k, getattr(body, k))
     # LLM configuration overrides
     for k in ["ollama_model","ollama_host","ollama_system","ollama_num_gpu","ollama_num_thread","ollama_num_batch"]:
+        if getattr(body, k, None) is not None:
+            setattr(streamer, k, getattr(body, k))
+    for k in ["llm_provider","openai_model","openai_api_key","openai_base_url","openai_temperature"]:
+        if getattr(body, k, None) is not None:
+            setattr(streamer, k, getattr(body, k))
+    # OpenAI overrides
+    for k in ["llm_provider","openai_model","openai_api_key","openai_base_url","openai_temperature"]:
         if getattr(body, k, None) is not None:
             setattr(streamer, k, getattr(body, k))
     await streamer.start()
@@ -1287,12 +1326,17 @@ async def http_answer(req: Request) -> JSONResponse:
     except Exception:
         llm_opts = {}
     answer_prompt_path = os.path.join(SETTINGS_DIR, "reports/answer_prompt.txt")
-    text = generate_with_ollama(
-        prompt,
-        model=streamer.ollama_model,
-        host=streamer.ollama_host,
+    text = generate_text(
+        provider=(streamer.llm_provider or 'ollama'),
+        prompt=prompt,
         system=streamer.ollama_system,
-        options=(llm_opts or None),
+        ollama_model=streamer.ollama_model,
+        ollama_host=streamer.ollama_host,
+        ollama_options=(llm_opts or None),
+        openai_model=streamer.openai_model,
+        openai_api_key=(streamer.openai_api_key or ''),
+        openai_base_url=(streamer.openai_base_url or 'https://api.openai.com'),
+        openai_temperature=float(getattr(streamer, 'openai_temperature', 0.0)),
         save_prompt_path=answer_prompt_path,
     )
     return JSONResponse({"status": "ok", "answer": text, "results": res.get('results', [])})

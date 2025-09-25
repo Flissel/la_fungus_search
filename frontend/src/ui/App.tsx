@@ -34,6 +34,10 @@ export default function App() {
   const [ollamaNumGpu, setOllamaNumGpu] = useState<number>(0)
   const [ollamaNumThread, setOllamaNumThread] = useState<number>(0)
   const [ollamaNumBatch, setOllamaNumBatch] = useState<number>(0)
+  const [llmProvider, setLlmProvider] = useState<string>('ollama')
+  const [openaiModel, setOpenaiModel] = useState<string>('')
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>('')
+  const [openaiTemperature, setOpenaiTemperature] = useState<number>(0)
   const [useRepo, setUseRepo] = useState<boolean>(true)
   const [rootFolder, setRootFolder] = useState<string>('')
   const [maxFiles, setMaxFiles] = useState<number>(1000)
@@ -119,6 +123,10 @@ export default function App() {
     if (Number(ollamaNumGpu) > 0) extra.ollama_num_gpu = Number(ollamaNumGpu)
     if (Number(ollamaNumThread) > 0) extra.ollama_num_thread = Number(ollamaNumThread)
     if (Number(ollamaNumBatch) > 0) extra.ollama_num_batch = Number(ollamaNumBatch)
+    if ((llmProvider||'').trim()) extra.llm_provider = (llmProvider||'').trim()
+    if ((openaiModel||'').trim()) extra.openai_model = (openaiModel||'').trim()
+    if ((openaiBaseUrl||'').trim()) extra.openai_base_url = (openaiBaseUrl||'').trim()
+    if (Number.isFinite(openaiTemperature)) extra.openai_temperature = Number(openaiTemperature)
     await axios.post(API + '/config', {
       viz_dims: dims,
       min_trail_strength: minTrail,
@@ -155,6 +163,10 @@ export default function App() {
       if (Number(ollamaNumGpu) > 0) extra.ollama_num_gpu = Number(ollamaNumGpu)
       if (Number(ollamaNumThread) > 0) extra.ollama_num_thread = Number(ollamaNumThread)
       if (Number(ollamaNumBatch) > 0) extra.ollama_num_batch = Number(ollamaNumBatch)
+      if ((llmProvider||'').trim()) extra.llm_provider = (llmProvider||'').trim()
+      if ((openaiModel||'').trim()) extra.openai_model = (openaiModel||'').trim()
+      if ((openaiBaseUrl||'').trim()) extra.openai_base_url = (openaiBaseUrl||'').trim()
+      if (Number.isFinite(openaiTemperature)) extra.openai_temperature = Number(openaiTemperature)
       await axios.post(API + '/start', {
         query,
         viz_dims: dims,
@@ -310,6 +322,15 @@ export default function App() {
             </select>
           </div>
         </div>
+        <div className='row group'>
+          <div>
+            <span className='label'>LLM Provider</span>
+            <select className='select' value={llmProvider} onChange={e=>setLlmProvider(e.target.value)}>
+              <option value='ollama'>ollama</option>
+              <option value='openai'>openai</option>
+            </select>
+          </div>
+        </div>
         <div className='group'>
           <span className='label'>Ollama Model</span>
           <input className='input' value={ollamaModel} onChange={e=>setOllamaModel(e.target.value)} placeholder='e.g., qwen2.5-coder:7b' />
@@ -335,6 +356,18 @@ export default function App() {
         <div className='group'>
           <span className='label'>Ollama Batch</span>
           <input className='number' type='number' step={1} value={ollamaNumBatch} onChange={e=>setOllamaNumBatch(parseInt(e.target.value)||0)} />
+        </div>
+        <div className='group'>
+          <span className='label'>OpenAI Model</span>
+          <input className='input' value={openaiModel} onChange={e=>setOpenaiModel(e.target.value)} placeholder='e.g., gpt-4o-mini' />
+        </div>
+        <div className='group'>
+          <span className='label'>OpenAI Base URL</span>
+          <input className='input' value={openaiBaseUrl} onChange={e=>setOpenaiBaseUrl(e.target.value)} placeholder='https://api.openai.com' />
+        </div>
+        <div className='group'>
+          <span className='label'>OpenAI Temperature</span>
+          <input className='number' type='number' step={0.1} value={openaiTemperature} onChange={e=>setOpenaiTemperature(parseFloat(e.target.value)||0)} />
         </div>
         <div className='row group'>
           <div>
