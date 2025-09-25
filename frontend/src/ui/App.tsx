@@ -27,6 +27,13 @@ export default function App() {
   const [reportEnabled, setReportEnabled] = useState<boolean>(false)
   const [reportEvery, setReportEvery] = useState<number>(5)
   const [topK, setTopK] = useState<number>(5)
+  const [judgeMode, setJudgeMode] = useState<string>('steering')
+  const [ollamaModel, setOllamaModel] = useState<string>('')
+  const [ollamaHost, setOllamaHost] = useState<string>('')
+  const [ollamaSystem, setOllamaSystem] = useState<string>('')
+  const [ollamaNumGpu, setOllamaNumGpu] = useState<number>(0)
+  const [ollamaNumThread, setOllamaNumThread] = useState<number>(0)
+  const [ollamaNumBatch, setOllamaNumBatch] = useState<number>(0)
   const [useRepo, setUseRepo] = useState<boolean>(true)
   const [rootFolder, setRootFolder] = useState<string>('')
   const [maxFiles, setMaxFiles] = useState<number>(1000)
@@ -104,6 +111,14 @@ export default function App() {
   }, [])
 
   async function apply() {
+    const extra:any = {}
+    if ((judgeMode||'').trim()) extra.judge_mode = (judgeMode||'').trim()
+    if ((ollamaModel||'').trim()) extra.ollama_model = (ollamaModel||'').trim()
+    if ((ollamaHost||'').trim()) extra.ollama_host = (ollamaHost||'').trim()
+    if ((ollamaSystem||'').trim()) extra.ollama_system = (ollamaSystem||'').trim()
+    if (Number(ollamaNumGpu) > 0) extra.ollama_num_gpu = Number(ollamaNumGpu)
+    if (Number(ollamaNumThread) > 0) extra.ollama_num_thread = Number(ollamaNumThread)
+    if (Number(ollamaNumBatch) > 0) extra.ollama_num_batch = Number(ollamaNumBatch)
     await axios.post(API + '/config', {
       viz_dims: dims,
       min_trail_strength: minTrail,
@@ -125,12 +140,21 @@ export default function App() {
       report_enabled: reportEnabled,
       report_every: reportEvery,
       report_mode: mode,
+      ...extra,
     })
     try { wsRef.current?.send(JSON.stringify({ type: 'config', viz_dims: dims })) } catch {}
   }
 
   async function start() {
     try {
+      const extra:any = {}
+      if ((judgeMode||'').trim()) extra.judge_mode = (judgeMode||'').trim()
+      if ((ollamaModel||'').trim()) extra.ollama_model = (ollamaModel||'').trim()
+      if ((ollamaHost||'').trim()) extra.ollama_host = (ollamaHost||'').trim()
+      if ((ollamaSystem||'').trim()) extra.ollama_system = (ollamaSystem||'').trim()
+      if (Number(ollamaNumGpu) > 0) extra.ollama_num_gpu = Number(ollamaNumGpu)
+      if (Number(ollamaNumThread) > 0) extra.ollama_num_thread = Number(ollamaNumThread)
+      if (Number(ollamaNumBatch) > 0) extra.ollama_num_batch = Number(ollamaNumBatch)
       await axios.post(API + '/start', {
         query,
         viz_dims: dims,
@@ -153,6 +177,7 @@ export default function App() {
         report_enabled: reportEnabled,
         report_every: reportEvery,
         report_mode: mode,
+        ...extra,
       })
       setToasts(t => [...t, 'Simulation started'])
     } catch (e:any) {
@@ -261,6 +286,7 @@ export default function App() {
               <option value='structure'>structure</option>
               <option value='exploratory'>exploratory</option>
               <option value='summary'>summary</option>
+              <option value='steering'>steering</option>
               <option value='similar'>similar</option>
               <option value='redundancy'>redundancy</option>
               <option value='repair'>repair</option>
@@ -270,6 +296,45 @@ export default function App() {
             <span className='label'>Top K</span>
             <input className='number' type='number' step={1} value={topK} onChange={e=>setTopK(parseInt(e.target.value)||1)} />
           </div>
+        </div>
+        <div className='row group'>
+          <div>
+            <span className='label'>Judge Mode</span>
+            <select className='select' value={judgeMode} onChange={e=>setJudgeMode(e.target.value)}>
+              <option value='steering'>steering</option>
+              <option value='deep'>deep</option>
+              <option value='structure'>structure</option>
+              <option value='exploratory'>exploratory</option>
+              <option value='summary'>summary</option>
+              <option value='repair'>repair</option>
+            </select>
+          </div>
+        </div>
+        <div className='group'>
+          <span className='label'>Ollama Model</span>
+          <input className='input' value={ollamaModel} onChange={e=>setOllamaModel(e.target.value)} placeholder='e.g., qwen2.5-coder:7b' />
+        </div>
+        <div className='group'>
+          <span className='label'>Ollama Host</span>
+          <input className='input' value={ollamaHost} onChange={e=>setOllamaHost(e.target.value)} placeholder='http://127.0.0.1:11434' />
+        </div>
+        <div className='group'>
+          <span className='label'>Ollama System Prompt</span>
+          <input className='input' value={ollamaSystem} onChange={e=>setOllamaSystem(e.target.value)} placeholder='Optional system prompt' />
+        </div>
+        <div className='row group'>
+          <div>
+            <span className='label'>Ollama GPUs</span>
+            <input className='number' type='number' step={1} value={ollamaNumGpu} onChange={e=>setOllamaNumGpu(parseInt(e.target.value)||0)} />
+          </div>
+          <div>
+            <span className='label'>Ollama Threads</span>
+            <input className='number' type='number' step={1} value={ollamaNumThread} onChange={e=>setOllamaNumThread(parseInt(e.target.value)||0)} />
+          </div>
+        </div>
+        <div className='group'>
+          <span className='label'>Ollama Batch</span>
+          <input className='number' type='number' step={1} value={ollamaNumBatch} onChange={e=>setOllamaNumBatch(parseInt(e.target.value)||0)} />
         </div>
         <div className='row group'>
           <div>
