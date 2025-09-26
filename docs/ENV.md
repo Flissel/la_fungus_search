@@ -11,6 +11,23 @@ Backend (FastAPI):
 - OLLAMA_NUM_THREAD: CPU threads for generation (int)
 - OLLAMA_NUM_BATCH: batch size for generation (int)
 
+- LLM_PROVIDER: which provider to use for judge/report/answer (ollama|openai|google|grok)
+
+- OPENAI_MODEL: OpenAI model id (e.g., gpt-4o-mini)
+- OPENAI_API_KEY: OpenAI API key
+- OPENAI_BASE_URL: OpenAI-compatible base URL (default https://api.openai.com)
+- OPENAI_TEMPERATURE: sampling temperature (0.0-2.0)
+
+- GOOGLE_MODEL: Google model id (e.g., gemini-1.5-pro)
+- GOOGLE_API_KEY: Google API key
+- GOOGLE_BASE_URL: Google Generative Language API base URL (default https://generativelanguage.googleapis.com)
+- GOOGLE_TEMPERATURE: sampling temperature (0.0-2.0)
+
+- GROK_MODEL: Grok model id (e.g., grok-2-latest)
+- GROK_API_KEY: Grok API key
+- GROK_BASE_URL: Grok API base URL (default https://api.x.ai)
+- GROK_TEMPERATURE: sampling temperature (0.0-2.0)
+
 Frontend (Vite):
 - VITE_BACKEND_PORT: backend port (for proxy) if not default
 
@@ -38,5 +55,18 @@ Artifacts:
   - EMBEDDING_MODEL=google/embeddinggemma-300m
   - DEVICE_MODE=cuda
   - EMBEDDINGGEMMA_BACKEND_PORT=8011
+  - LLM_PROVIDER=openai
+  - OPENAI_MODEL=gpt-4o-mini
+  - OPENAI_API_KEY=sk-...
+  - OPENAI_BASE_URL=https://api.openai.com
+  - OPENAI_TEMPERATURE=0.0
+  - GOOGLE_MODEL=gemini-1.5-pro
+  - GOOGLE_API_KEY=...
+  - GOOGLE_BASE_URL=https://generativelanguage.googleapis.com
+  - GOOGLE_TEMPERATURE=0.0
+  - GROK_MODEL=grok-2-latest
+  - GROK_API_KEY=...
+  - GROK_BASE_URL=https://api.x.ai
+  - GROK_TEMPERATURE=0.0
 
 
