@@ -27,6 +27,8 @@ export default function App() {
   const [reportEnabled, setReportEnabled] = useState<boolean>(false)
   const [reportEvery, setReportEvery] = useState<number>(5)
   const [topK, setTopK] = useState<number>(5)
+  const [mqEnabled, setMqEnabled] = useState<boolean>(false)
+  const [mqCount, setMqCount] = useState<number>(5)
   const [judgeMode, setJudgeMode] = useState<string>('steering')
   const [ollamaModel, setOllamaModel] = useState<string>('')
   const [ollamaHost, setOllamaHost] = useState<string>('')
@@ -160,6 +162,8 @@ export default function App() {
       report_enabled: reportEnabled,
       report_every: reportEvery,
       report_mode: mode,
+      mq_enabled: mqEnabled,
+      mq_count: mqCount,
       ...extra,
     })
     try { wsRef.current?.send(JSON.stringify({ type: 'config', viz_dims: dims })) } catch {}
@@ -207,6 +211,8 @@ export default function App() {
         report_enabled: reportEnabled,
         report_every: reportEvery,
         report_mode: mode,
+        mq_enabled: mqEnabled,
+        mq_count: mqCount,
         ...extra,
       })
       setToasts(t => [...t, 'Simulation started'])
@@ -342,7 +348,19 @@ export default function App() {
               <option value='repair'>repair</option>
             </select>
           </div>
+            <div>
+              <label className='label'>Multi-query (LLM assist)</label>
+              <label style={{display:'flex',gap:8,alignItems:'center'}}>
+                <input type='checkbox' checked={mqEnabled} onChange={e=>setMqEnabled(e.target.checked)} /> Enable
+              </label>
+            </div>
         </div>
+          {mqEnabled && (
+            <div className='group'>
+              <span className='label'>Multi-query count</span>
+              <input className='number' type='number' step={1} value={mqCount} onChange={e=>setMqCount(parseInt(e.target.value)||1)} />
+            </div>
+          )}
         <details>
           <summary style={{cursor:'pointer', fontWeight:700}}>Models</summary>
           <div className='row group'>

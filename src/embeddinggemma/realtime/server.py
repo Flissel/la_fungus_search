@@ -19,6 +19,7 @@ from embeddinggemma.rag.generation import generate_with_ollama, generate_text  #
 from embeddinggemma.prompts import get_report_instructions
 from embeddinggemma.prompts import build_report_prompt as prompts_build_report_prompt
 from embeddinggemma.prompts import build_judge_prompt as prompts_build_judge_prompt
+from embeddinggemma.ui.queries import dedup_multi_queries  # type: ignore
 
 
 def _collect_py_documents(root_dir: str, max_files: int = 300, max_chars: int = 4000) -> List[str]:
@@ -781,6 +782,8 @@ def settings_dict() -> dict:
         "grok_model": streamer.grok_model,
         "grok_base_url": streamer.grok_base_url,
         "grok_temperature": streamer.grok_temperature,
+        "mq_enabled": bool(getattr(streamer, 'mq_enabled', False)),
+        "mq_count": int(getattr(streamer, 'mq_count', 5)),
     }
 
 def apply_settings(d: dict) -> None:
@@ -824,6 +827,8 @@ def apply_settings(d: dict) -> None:
         if getattr(sm, 'ollama_num_gpu', None) is not None: streamer.ollama_num_gpu = int(getattr(sm, 'ollama_num_gpu'))
         if getattr(sm, 'ollama_num_thread', None) is not None: streamer.ollama_num_thread = int(getattr(sm, 'ollama_num_thread'))
         if getattr(sm, 'ollama_num_batch', None) is not None: streamer.ollama_num_batch = int(getattr(sm, 'ollama_num_batch'))
+        if getattr(sm, 'mq_enabled', None) is not None: streamer.mq_enabled = bool(getattr(sm, 'mq_enabled'))
+        if getattr(sm, 'mq_count', None) is not None: streamer.mq_count = int(getattr(sm, 'mq_count'))
         if getattr(sm, 'llm_provider', None) is not None: streamer.llm_provider = str(getattr(sm, 'llm_provider'))
         if getattr(sm, 'openai_model', None) is not None: streamer.openai_model = str(getattr(sm, 'openai_model'))
         if getattr(sm, 'openai_base_url', None) is not None: streamer.openai_base_url = str(getattr(sm, 'openai_base_url'))
@@ -960,6 +965,9 @@ class SettingsModel(BaseModel):
     grok_api_key: str | None = None
     grok_base_url: str | None = None
     grok_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    # Multi-query
+    mq_enabled: bool | None = None
+    mq_count: int | None = Field(default=None, ge=1, le=10)
 
     @validator('viz_dims')
     def _dims(cls, v):  # type: ignore
@@ -1049,6 +1057,10 @@ async def http_start(req: Request) -> JSONResponse:
         streamer.report_mode = str(getattr(body, 'report_mode'))
     if getattr(body, 'judge_mode', None) is not None:
         streamer.judge_mode = str(getattr(body, 'judge_mode'))
+    if getattr(body, 'mq_enabled', None) is not None:
+        streamer.mq_enabled = bool(getattr(body, 'mq_enabled'))
+    if getattr(body, 'mq_count', None) is not None:
+        streamer.mq_count = int(getattr(body, 'mq_count'))
     # contextual steering settings
     for k in ["alpha","beta","gamma","delta","epsilon","min_content_chars","import_only_penalty","max_reports","max_report_tokens","judge_enabled"]:
         if getattr(body, k, None) is not None:
@@ -1132,6 +1144,10 @@ async def http_config(req: Request) -> JSONResponse:
         streamer.report_mode = str(getattr(body, 'report_mode'))
     if getattr(body, 'judge_mode', None) is not None:
         streamer.judge_mode = str(getattr(body, 'judge_mode'))
+    if getattr(body, 'mq_enabled', None) is not None:
+        streamer.mq_enabled = bool(getattr(body, 'mq_enabled'))
+    if getattr(body, 'mq_count', None) is not None:
+        streamer.mq_count = int(getattr(body, 'mq_count'))
     # contextual steering settings
     for k in ["alpha","beta","gamma","delta","epsilon","min_content_chars","import_only_penalty","max_reports","max_report_tokens","judge_enabled"]:
         if getattr(body, k, None) is not None:
