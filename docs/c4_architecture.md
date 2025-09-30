@@ -6,62 +6,30 @@ This document provides comprehensive C4 diagrams for the TRAE (EmbeddingGemma) s
 
 ```mermaid
 graph TB
-    subgraph "Development Environment"
-        Python["🐍 Python 3.10+<br/>Virtual Environment<br/>.venv/"]
-        NodeJS["⚛️ Node.js Environment<br/>npm packages<br/>frontend/node_modules/"]
-        Scripts["🔧 PowerShell Scripts<br/>run-streamlit.ps1<br/>run-realtime.ps1"]
+    subgraph "TRAE System Boundary"
+        TRAE["🧠 TRAE System<br/>Multi-agent code retrieval<br/>and analysis platform"]
     end
     
-    subgraph "External Dependencies & Services"
-        Ollama["🤖 Ollama Server<br/>Local LLM service<br/>Port 11434<br/>ENV: OLLAMA_MODEL, OLLAMA_HOST"]
-        Qdrant["🗄️ Qdrant Vector DB<br/>Vector storage<br/>Port 6333<br/>ENV: QDRANT_URL, QDRANT_API_KEY"]
-        HF["🤗 Hugging Face Hub<br/>Model downloads<br/>EmbeddingGemma-300M<br/>Transformers, sentence-transformers"]
-        GPU["🚀 GPU Support<br/>CUDA/MPS (optional)<br/>PyTorch with GPU"]
-    end
+    User["👤 Developer/Researcher<br/>Explores and analyzes codebases<br/>using MCMP-RAG"]
     
-    subgraph "TRAE System Core"
-        TRAE["🧠 TRAE System<br/>Multi-agent code retrieval<br/>and analysis platform<br/><br/>• MCMP-RAG simulation<br/>• Enterprise RAG<br/>• Agent chat & tools"]
-    end
+    Ollama["🤖 Ollama Server<br/>External LLM service<br/>HTTP API"]
+    Qdrant["🗄️ Qdrant Vector DB<br/>External vector storage<br/>gRPC/HTTP"]
+    HF["🤗 Hugging Face<br/>External model provider<br/>HTTPS"]
+    FS["📁 File System<br/>Local source code<br/>and cache storage"]
     
-    subgraph "File System & Storage"
-        FS["📁 Source Code<br/>Git repositories<br/>Python codebases"]
-        Cache["💾 Local Cache<br/>.fungus_cache/<br/>chunks, reports, gifs"]
-        Models["🏗️ Model Cache<br/>models/<br/>HuggingFace models"]
-        Config["⚙️ Configuration<br/>pyproject.toml<br/>requirements.txt<br/>vite.config.ts"]
-    end
-    
-    User["👤 Developer/Researcher<br/>Code exploration & analysis<br/>using MCMP and RAG methods"]
-    
-    User -->|"Web Interfaces"| TRAE
-    User -->|"Setup & Configuration"| Scripts
-    
-    TRAE -->|"LLM Inference"| Ollama
-    TRAE -->|"Vector Operations"| Qdrant
-    TRAE -->|"Model Loading"| HF
-    TRAE -->|"GPU Acceleration"| GPU
-    
-    TRAE -->|"Read Source Code"| FS
-    TRAE -->|"Cache Results"| Cache
-    TRAE -->|"Load Models"| Models
-    
-    Scripts -->|"Environment Setup"| Python
-    Scripts -->|"Dependency Install"| NodeJS
-    Scripts -->|"Load Config"| Config
-    
-    Config -->|"Python Dependencies"| Python
-    Config -->|"Frontend Dependencies"| NodeJS
+    User -->|"Uses web interfaces"| TRAE
+    TRAE -->|"Requests text generation"| Ollama
+    TRAE -->|"Stores/queries vectors"| Qdrant
+    TRAE -->|"Downloads models"| HF
+    TRAE -->|"Reads code, stores cache"| FS
     
     classDef user fill:#4A90E2,stroke:#2E5C8A,stroke-width:2px,color:white
     classDef system fill:#7ED321,stroke:#5A9E18,stroke-width:2px,color:white
     classDef external fill:#9B9B9B,stroke:#6B6B6B,stroke-width:2px,color:white
-    classDef storage fill:#BD10E0,stroke:#8B0A9E,stroke-width:2px,color:white
-    classDef dev fill:#F5A623,stroke:#D1890B,stroke-width:2px,color:white
     
     class User user
     class TRAE system
-    class Ollama,Qdrant,HF,GPU external
-    class FS,Cache,Models,Config storage
-    class Python,NodeJS,Scripts dev
+    class Ollama,Qdrant,HF,FS external
 ```
 
 ## C4 Level 2: Container Diagram
@@ -71,47 +39,49 @@ graph TB
     User["👤 Developer<br/>User exploring codebases"]
     
     subgraph "TRAE System"
-        ReactFE["⚛️ React Frontend<br/>React + TypeScript + Vite<br/>Port 5173<br/><br/>Interactive UI for MCMP<br/>visualization and real-time<br/>monitoring"]
+        ReactFE["⚛️ React Frontend<br/>frontend/<br/>Port 5173<br/><br/>Interactive UI for real-time<br/>MCMP visualization"]
         
-        StreamlitUI["🌊 Streamlit UI<br/>Python + Streamlit<br/>Port 8501<br/><br/>Alternative web interface<br/>for MCMP-RAG, Enterprise<br/>RAG, and agent chat"]
+        StreamlitUI["🌊 Streamlit UI<br/>streamlit_fungus_backup.py<br/>Port 8501<br/><br/>Primary interface for MCMP-RAG<br/>Enterprise RAG, and agent chat"]
         
-        FastAPI["🚀 FastAPI Backend<br/>Python + FastAPI<br/>Port 8011<br/><br/>Real-time simulation server<br/>with WebSocket support"]
+        FastAPI["🚀 FastAPI Backend<br/>src/embeddinggemma/realtime/server.py<br/>Port 8011<br/><br/>Real-time simulation server<br/>with WebSocket support"]
         
-        MCMP["🧠 MCMP Engine<br/>Python<br/><br/>Multi-agent Physarum-inspired<br/>retrieval with pheromone trails"]
+        MCMP["🧠 MCMP Engine<br/>src/embeddinggemma/mcmp/<br/><br/>Multi-agent simulation with<br/>pheromone-based retrieval"]
         
-        RAG["📚 RAG Engine<br/>Python + LlamaIndex<br/><br/>Traditional semantic search<br/>with hybrid scoring"]
+        RAG["📚 RAG Engine<br/>src/embeddinggemma/rag/<br/><br/>Enterprise semantic search<br/>with AST chunking"]
         
-        Cache["💾 Cache Store<br/>File System<br/>.fungus_cache/<br/><br/>Local storage for chunks,<br/>reports, and snapshots"]
+        UI["🎨 UI Components<br/>src/embeddinggemma/ui/<br/><br/>Reusable components for<br/>corpus, queries, reports"]
+        
+        Cache["💾 Cache Store<br/>.fungus_cache/ (auto-created)<br/><br/>Local storage for chunks,<br/>reports, and snapshots"]
     end
     
-    subgraph "External Systems"
-        Ollama["🤖 Ollama Server<br/>Local LLM service<br/>Port 11434"]
-        QdrantDB["🗄️ Qdrant Vector DB<br/>Vector database<br/>Port 6333"]
-        HFModels["🤗 Hugging Face<br/>Model repository<br/>EmbeddingGemma-300M"]
-        SourceCode["📁 Source Code<br/>Git repositories<br/>and file systems"]
-    end
+    Ollama["🤖 Ollama Server<br/>External LLM service"]
+    QdrantDB["🗄️ Qdrant Vector DB<br/>External vector database"]
+    HFModels["🤗 Hugging Face<br/>External model provider"]
+    SourceCode["📁 Source Code<br/>Local file system"]
     
-    User -->|HTTPS| ReactFE
-    User -->|HTTPS| StreamlitUI
+    User -->|HTTP| ReactFE
+    User -->|HTTP| StreamlitUI
     
     ReactFE <-->|WebSocket + HTTP| FastAPI
-    StreamlitUI -->|Python calls| MCMP
-    StreamlitUI -->|Python calls| RAG
+    StreamlitUI -->|Python imports| MCMP
+    StreamlitUI -->|Python imports| RAG
+    StreamlitUI -->|Python imports| UI
     
-    FastAPI -->|Controls simulation| MCMP
-    MCMP -->|Stores snapshots| Cache
-    RAG -->|Stores/queries vectors| QdrantDB
+    FastAPI -->|Controls| MCMP
+    MCMP -->|Writes| Cache
+    RAG -->|Stores vectors| QdrantDB
     RAG -->|Caches results| Cache
     
-    MCMP -->|Generates reports| Ollama
-    RAG -->|Generates answers| Ollama
-    StreamlitUI -->|Agent chat| Ollama
+    MCMP -->|HTTP requests| Ollama
+    RAG -->|HTTP requests| Ollama
+    UI -->|HTTP requests| Ollama
     
-    MCMP -->|Loads embeddings| HFModels
-    RAG -->|Loads models| HFModels
+    MCMP -->|Downloads models| HFModels
+    RAG -->|Downloads models| HFModels
     
-    MCMP -->|Reads files| SourceCode
-    RAG -->|Indexes files| SourceCode
+    MCMP -->|File I/O| SourceCode
+    RAG -->|File I/O| SourceCode
+    UI -->|File I/O| SourceCode
     
     classDef frontend fill:#4A90E2,stroke:#2E5C8A,stroke-width:2px,color:white
     classDef backend fill:#7ED321,stroke:#5A9E18,stroke-width:2px,color:white
@@ -121,9 +91,9 @@ graph TB
     
     class ReactFE,StreamlitUI frontend
     class FastAPI backend
-    class MCMP,RAG engine
-    class Cache,QdrantDB storage
-    class Ollama,HFModels,SourceCode external
+    class MCMP,RAG,UI engine
+    class Cache storage
+    class Ollama,QdrantDB,HFModels,SourceCode external
 ```
 
 ## C4 Level 3: Component Diagram - FastAPI Backend
@@ -358,141 +328,62 @@ flowchart TD
     style GenerateReport fill:#f3e5f5
 ```
 
-## Complete Setup & Deployment Diagram
+## Runtime Deployment Diagram
 
 ```mermaid
 graph TB
-    subgraph "Developer Machine (Windows/Linux/Mac)"
-        subgraph "Setup Phase"
-            SetupScripts["🔧 Setup Scripts<br/>run-streamlit.ps1<br/>run-realtime.ps1"]
-            ConfigFiles["📄 Configuration Files<br/>pyproject.toml<br/>requirements.txt<br/>package.json<br/>vite.config.ts"]
-            EnvVars["🌍 Environment Variables<br/>OLLAMA_MODEL=qwen2.5-coder:7b<br/>OLLAMA_HOST=http://127.0.0.1:11434<br/>QDRANT_URL=http://localhost:6333<br/>RAG_COLLECTION=codebase<br/>EMBED_MODEL=google/embeddinggemma-300m"]
-        end
+    subgraph "TRAE System Runtime"
+        StreamlitApp["🌊 Streamlit Application<br/>streamlit_fungus_backup.py<br/>Port 8501"]
         
-        subgraph "Python Environment (.venv) - Requirements"
-            PythonCore["🐍 Python Core Dependencies<br/>torch>=2.0.0<br/>numpy>=1.21.0<br/>scikit-learn>=1.0.0<br/>pandas>=1.3.0<br/>requests>=2.28.0"]
-            
-            EmbeddingStack["🔤 Embedding Stack<br/>sentence-transformers>=3.0.0<br/>transformers>=4.35.0<br/>faiss-cpu>=1.7.0<br/>sentencepiece>=0.1.99"]
-            
-            WebFrameworks["🌐 Web Frameworks<br/>streamlit>=1.28.0<br/>fastapi + uvicorn<br/>websockets + wsproto"]
-            
-            MLLibs["🧠 ML/AI Libraries<br/>ollama>=0.1.0<br/>qdrant-client>=1.7.0<br/>llama-index>=0.9.0<br/>rank-bm25>=0.2.2"]
-            
-            VisualizationLibs["📊 Visualization<br/>plotly>=5.0.0<br/>matplotlib>=3.5.0<br/>networkx>=3.0"]
-            
-            UtilityLibs["🛠️ Utilities<br/>gitpython>=3.1.40<br/>python-simhash>=0.0.1<br/>scikit-learn-extra>=0.3.0"]
-        end
+        FastAPIServer["🚀 FastAPI Server<br/>src/embeddinggemma/realtime/server.py<br/>Port 8011"]
         
-        subgraph "Node.js Environment (frontend/)"
-            ReactStack["⚛️ React Stack<br/>react@18.3.1<br/>react-dom@18.3.1<br/>@types/react@18.3.3"]
-            
-            BuildTools["🔨 Build Tools<br/>vite@5.4.3<br/>@vitejs/plugin-react@4.3.1<br/>typescript@5.6.2"]
-            
-            PlotlyStack["📊 Plotting<br/>plotly.js-dist-min@2.35.2<br/>react-plotly.js@2.6.0"]
-            
-            HTTPClient["🌐 HTTP Client<br/>axios@1.7.7"]
-            
-            TestingTools["🧪 Testing<br/>@playwright/test@1.48.2"]
-        end
+        ReactDev["⚛️ React Dev Server<br/>frontend/ (Vite)<br/>Port 5173"]
         
-        subgraph "Runtime Services"
-            StreamlitApp["🌊 Streamlit UI<br/>streamlit_fungus_backup.py<br/>Port 8501<br/>Primary research interface"]
-            
-            FastAPIServer["🚀 FastAPI Server<br/>realtime/server.py<br/>Port 8011<br/>WebSocket + REST API"]
-            
-            ReactDev["⚛️ React Dev Server<br/>Vite dev server<br/>Port 5173<br/>Real-time visualization"]
-        end
+        MCMPModules["🧠 MCMP Modules<br/>src/embeddinggemma/mcmp/<br/>simulation.py, embeddings.py<br/>indexing.py, pca.py, visualize.py"]
         
-        subgraph "Core Engines (In-Process)"
-            MCMPEngine["🧠 MCMP Engine<br/>src/embeddinggemma/mcmp/<br/>Multi-agent simulation<br/>Pheromone-based retrieval"]
-            
-            RAGEngine["📚 RAG Engine<br/>src/embeddinggemma/rag/<br/>Enterprise semantic search<br/>AST chunking + hybrid scoring"]
-            
-            UIComponents["🎨 UI Components<br/>src/embeddinggemma/ui/<br/>Corpus builder, queries<br/>Agent chat, reports"]
-        end
+        RAGModules["📚 RAG Modules<br/>src/embeddinggemma/rag/<br/>chunking.py, search.py<br/>vectorstore.py, generation.py"]
         
-        subgraph "Local Storage"
-            FileCache["💾 Cache (.fungus_cache/)<br/>• Simulation snapshots<br/>• Report JSONs<br/>• Generated GIFs<br/>• Settings persistence"]
-            
-            ModelsCache["🏗️ Models Cache (models/)<br/>• EmbeddingGemma-300M<br/>• Tokenizer files<br/>• FAISS indices"]
-            
-            SourceCode["📁 Source Code<br/>• Git repositories<br/>• Python codebases<br/>• AST-parsed chunks"]
-        end
+        UIModules["🎨 UI Modules<br/>src/embeddinggemma/ui/<br/>corpus.py, queries.py<br/>agent.py, reports.py"]
         
-        subgraph "External Services (Local/Remote)"
-            QdrantService["🗄️ Qdrant Vector DB<br/>Port 6333<br/>• Vector collections<br/>• Similarity search<br/>• Persistent storage"]
-            
-            OllamaService["🤖 Ollama Server<br/>Port 11434<br/>• Local LLM inference<br/>• Report generation<br/>• Chat completion"]
-        end
+        Cache["💾 Cache Directory<br/>.fungus_cache/<br/>Auto-created at runtime"]
     end
     
-    subgraph "External Cloud Services"
-        HFHub["🤗 HuggingFace Hub<br/>• Model downloads<br/>• EmbeddingGemma-300M<br/>• Tokenizers<br/>• License validation"]
-        
-        GitRepos["📦 Git Repositories<br/>• Source code repos<br/>• Version control<br/>• Clone/pull operations"]
-    end
+    Ollama["🤖 Ollama Server<br/>External dependency"]
+    QdrantDB["🗄️ Qdrant Vector DB<br/>External dependency"]
+    HFModels["🤗 Hugging Face<br/>External model source"]
+    LocalFiles["📁 Local Files<br/>Source code to analyze"]
     
-    subgraph "Hardware Resources"
-        CPU["💻 CPU<br/>• MCMP simulation<br/>• Python processing<br/>• Multi-threading"]
-        
-        GPU["🚀 GPU (Optional)<br/>• PyTorch acceleration<br/>• CUDA/MPS support<br/>• Embedding inference"]
-        
-        Memory["🧠 RAM<br/>• Document embeddings<br/>• Agent positions<br/>• Model weights"]
-        
-        Storage["💿 Disk Storage<br/>• Model cache<br/>• Vector indices<br/>• Simulation data"]
-    end
+    StreamlitApp -->|imports| MCMPModules
+    StreamlitApp -->|imports| RAGModules
+    StreamlitApp -->|imports| UIModules
     
-    %% Setup Dependencies
-    SetupScripts -->|Initialize| PythonCore
-    SetupScripts -->|Install| ReactStack
-    ConfigFiles -->|Define| PythonCore
-    ConfigFiles -->|Configure| BuildTools
-    EnvVars -->|Configure| OllamaService
-    EnvVars -->|Configure| QdrantService
+    FastAPIServer -->|imports| MCMPModules
+    ReactDev -->|proxies to| FastAPIServer
     
-    %% Runtime Dependencies
-    StreamlitApp -->|Uses| UIComponents
-    StreamlitApp -->|Runs| MCMPEngine
-    StreamlitApp -->|Runs| RAGEngine
-    FastAPIServer -->|Controls| MCMPEngine
-    ReactDev -->|Proxies to| FastAPIServer
+    MCMPModules -->|HTTP| Ollama
+    RAGModules -->|HTTP/gRPC| QdrantDB
+    RAGModules -->|HTTP| Ollama
+    UIModules -->|HTTP| Ollama
     
-    %% Core Engine Dependencies
-    MCMPEngine -->|Loads| EmbeddingStack
-    MCMPEngine -->|Uses| VisualizationLibs
-    RAGEngine -->|Uses| MLLibs
-    RAGEngine -->|Connects| QdrantService
-    UIComponents -->|Calls| OllamaService
+    MCMPModules -->|downloads| HFModels
+    RAGModules -->|downloads| HFModels
     
-    %% Storage Dependencies
-    MCMPEngine -->|Saves| FileCache
-    RAGEngine -->|Caches| ModelsCache
-    MCMPEngine -->|Reads| SourceCode
-    RAGEngine -->|Indexes| SourceCode
+    MCMPModules -->|writes| Cache
+    RAGModules -->|writes| Cache
     
-    %% External Dependencies
-    ModelsCache <-->|Downloads| HFHub
-    SourceCode <-->|Clones| GitRepos
-    OllamaService -->|Inference| CPU
-    EmbeddingStack -->|Acceleration| GPU
-    MCMPEngine -->|Uses| Memory
-    FileCache -->|Persists| Storage
+    MCMPModules -->|reads| LocalFiles
+    RAGModules -->|reads| LocalFiles
+    UIModules -->|reads| LocalFiles
     
-    classDef setup fill:#FF6B6B,stroke:#E55555,stroke-width:2px,color:white
-    classDef python fill:#4A90E2,stroke:#2E5C8A,stroke-width:2px,color:white
-    classDef nodejs fill:#7ED321,stroke:#5A9E18,stroke-width:2px,color:white
-    classDef runtime fill:#F5A623,stroke:#D1890B,stroke-width:2px,color:white
+    classDef trae fill:#4A90E2,stroke:#2E5C8A,stroke-width:2px,color:white
+    classDef modules fill:#7ED321,stroke:#5A9E18,stroke-width:2px,color:white
     classDef storage fill:#BD10E0,stroke:#8B0A9E,stroke-width:2px,color:white
     classDef external fill:#9B9B9B,stroke:#6B6B6B,stroke-width:2px,color:white
-    classDef hardware fill:#50E3C2,stroke:#2DB398,stroke-width:2px,color:white
     
-    class SetupScripts,ConfigFiles,EnvVars setup
-    class PythonCore,EmbeddingStack,WebFrameworks,MLLibs,VisualizationLibs,UtilityLibs python
-    class ReactStack,BuildTools,PlotlyStack,HTTPClient,TestingTools nodejs
-    class StreamlitApp,FastAPIServer,ReactDev,MCMPEngine,RAGEngine,UIComponents runtime
-    class FileCache,ModelsCache,SourceCode,QdrantService storage
-    class OllamaService,HFHub,GitRepos external
-    class CPU,GPU,Memory,Storage hardware
+    class StreamlitApp,FastAPIServer,ReactDev trae
+    class MCMPModules,RAGModules,UIModules modules
+    class Cache storage
+    class Ollama,QdrantDB,HFModels,LocalFiles external
 ```
 
 ## C4 Level 3: Component Diagram - Streamlit UI
@@ -622,95 +513,80 @@ flowchart LR
 - **Caching Strategy**: Heavy use of local file caching for performance (.fungus_cache directory)
 - **Model Integration**: Deep integration with HuggingFace ecosystem, particularly EmbeddingGemma model
 
-## Complete Architecture Summary
+## Current System Architecture Summary
 
-### Core System Components
+### Core Application Components (What Exists)
 
-| Component | Technology | Port | Purpose | Key Features |
-|-----------|------------|------|---------|--------------|
-| **React Frontend** | React 18 + TypeScript + Vite | 5173 | Interactive MCMP visualization | Real-time plotting, WebSocket, theme support |
-| **Streamlit UI** | Python + Streamlit | 8501 | Primary research interface | Multi-query, agent chat, Enterprise RAG |
-| **FastAPI Backend** | Python + FastAPI | 8011 | Real-time simulation server | WebSocket streaming, agent management |
-| **MCMP Engine** | Python | In-process | Multi-agent retrieval | Physarum-inspired, pheromone trails |
-| **RAG Engine** | Python + LlamaIndex | In-process | Traditional semantic search | AST chunking, hybrid scoring |
-| **Qdrant Vector DB** | Vector Database | 6333 | Persistent vector storage | Cosine similarity, collections |
-| **Ollama Server** | LLM Service | 11434 | Text generation | Report generation, chat completion |
+| Component | File Location | Port | Type | Purpose |
+|-----------|---------------|------|------|---------|
+| **Streamlit UI** | streamlit_fungus_backup.py | 8501 | Python app | Primary research interface |
+| **React Frontend** | frontend/ | 5173 | TypeScript app | Real-time visualization |
+| **FastAPI Backend** | src/embeddinggemma/realtime/server.py | 8011 | Python API | WebSocket simulation server |
+| **MCMP Engine** | src/embeddinggemma/mcmp/ | - | Python modules | Multi-agent retrieval |
+| **RAG Engine** | src/embeddinggemma/rag/ | - | Python modules | Semantic search |
+| **UI Components** | src/embeddinggemma/ui/ | - | Python modules | Shared UI logic |
 
-### Setup & Configuration Components
+### Python Module Structure (Current State)
 
-| Component | Files | Purpose | Dependencies |
-|-----------|-------|---------|--------------|
-| **PowerShell Scripts** | run-streamlit.ps1, run-realtime.ps1 | Launch services | Python .venv, dependency installation |
-| **Python Config** | pyproject.toml, requirements.txt | Python dependencies | 22 core packages, GPU support optional |
-| **Node.js Config** | package.json, vite.config.ts | Frontend dependencies | React 18, Plotly, Axios, TypeScript |
-| **Environment Variables** | OLLAMA_*, QDRANT_*, RAG_* | Runtime configuration | Service URLs, model names, API keys |
+| Module | Files | Purpose |
+|--------|-------|---------|
+| **mcmp/** | simulation.py, embeddings.py, indexing.py, pca.py, visualize.py | Multi-agent simulation |
+| **rag/** | chunking.py, search.py, vectorstore.py, generation.py, config.py | Enterprise RAG |
+| **ui/** | corpus.py, queries.py, agent.py, reports.py, state.py, components.py | UI components |
+| **agents/** | agent_fungus_rag.py | Agent chat functionality |
+| **realtime/** | server.py | FastAPI WebSocket server |
 
-### Python Dependencies (requirements.txt)
+### Configuration Files (What Exists)
 
-| Category | Key Packages | Versions | Purpose |
-|----------|--------------|----------|---------|
-| **Core ML** | torch, numpy, scikit-learn | >=2.0.0, >=1.21.0, >=1.0.0 | Foundation libraries |
-| **Embeddings** | sentence-transformers, transformers, faiss-cpu | >=3.0.0, >=4.35.0, >=1.7.0 | Text embedding & search |
-| **Web Frameworks** | streamlit, fastapi, uvicorn | >=1.28.0, latest, latest | User interfaces |
-| **Vector DB** | qdrant-client, llama-index | >=1.7.0, >=0.9.0 | Enterprise RAG |
-| **LLM Integration** | ollama | >=0.1.0 | Local language models |
-| **Visualization** | plotly, matplotlib, networkx | >=5.0.0, >=3.5.0, >=3.0 | Data visualization |
-| **Utilities** | pandas, requests, gitpython | >=1.3.0, >=2.28.0, >=3.1.40 | Data processing |
+| File | Purpose | Content |
+|------|---------|---------|
+| **pyproject.toml** | Python project config | Dependencies, metadata |
+| **requirements.txt** | Python dependencies | 22 packages with versions |
+| **package.json** | Node.js dependencies | React, Vite, Plotly, TypeScript |
+| **vite.config.ts** | Vite configuration | Dev server, proxy rules |
+| **.python-version** | Python version | 3.12 |
+| **CONTRIBUTING.md** | Development guide | Setup, linting, testing |
 
-### Node.js Dependencies (package.json)
+### Current Codebase File Structure
 
-| Category | Key Packages | Versions | Purpose |
-|----------|--------------|----------|---------|
-| **React Core** | react, react-dom, @types/react | 18.3.1, 18.3.1, 18.3.3 | Frontend framework |
-| **Build Tools** | vite, @vitejs/plugin-react, typescript | 5.4.3, 4.3.1, 5.6.2 | Development & build |
-| **Visualization** | plotly.js-dist-min, react-plotly.js | 2.35.2, 2.6.0 | Interactive plotting |
-| **HTTP Client** | axios | 1.7.7 | API communication |
-| **Testing** | @playwright/test | 1.48.2 | E2E testing |
-
-## Port Configuration & Environment Variables
-
-### Service Ports
-
-| Service | Default Port | Alt Port | Protocol | Access Pattern |
-|---------|--------------|----------|----------|----------------|
-| React Dev Server | 5173 | - | HTTP/WS | Development UI |
-| Streamlit UI | 8501 | - | HTTP | Primary research interface |
-| FastAPI Backend | 8011 | - | HTTP/WS | Real-time API |
-| Qdrant Vector DB | 6333 | 6337 | gRPC/HTTP | Vector operations |
-| Ollama LLM | 11434 | - | HTTP | LLM inference |
-
-### Environment Variables Configuration
-
-| Variable | Default Value | Purpose | Usage |
-|----------|---------------|---------|--------|
-| **OLLAMA_MODEL** | qwen2.5-coder:7b | LLM model name | Report generation, chat, multi-query |
-| **OLLAMA_HOST** | http://127.0.0.1:11434 | Ollama service URL | All LLM communication |
-| **QDRANT_URL** | http://localhost:6333 | Qdrant database URL | Enterprise RAG vector storage |
-| **QDRANT_API_KEY** | (optional) | API authentication | Qdrant Cloud access |
-| **RAG_COLLECTION** | codebase | Vector collection name | Qdrant collection management |
-| **EMBED_MODEL** | google/embeddinggemma-300m | Embedding model | Text vectorization |
-| **RAG_LLM_MODEL** | Qwen/Qwen2.5-Coder-1.5B-Instruct | RAG LLM model | Answer generation |
-| **RAG_LLM_DEVICE** | auto | Device for LLM | auto/cuda/cpu |
-| **RAG_USE_OLLAMA** | 0 | Use Ollama for RAG | 1=enabled, 0=disabled |
-| **RAG_PERSIST_DIR** | ./enterprise_index | RAG index directory | Persistent storage path |
-
-### Vite Proxy Configuration (vite.config.ts)
-
-```typescript
-server: {
-  port: 5173,
-  proxy: {
-    '/ws': 'http://localhost:8011',        // WebSocket proxy
-    '/start': 'http://localhost:8011',     // Simulation control
-    '/config': 'http://localhost:8011',    // Configuration
-    '/search': 'http://localhost:8011',    // Search API
-    '/answer': 'http://localhost:8011',    // Answer generation
-    '/status': 'http://localhost:8011',    // Status check
-    '/agents': 'http://localhost:8011',    // Agent management
-    '/corpus': 'http://localhost:8011',    // Corpus operations
-    '/jobs': 'http://localhost:8011'       // Background jobs
-  }
-}
+```
+EmbeddingGemma/
+├── streamlit_fungus_backup.py          # Primary Streamlit interface
+├── run-streamlit.ps1                   # Streamlit launcher script
+├── run-realtime.ps1                    # FastAPI launcher script
+├── frontend/                           # React application
+│   ├── src/ui/App.tsx                  # Main React component
+│   ├── package.json                    # Node.js dependencies
+│   └── vite.config.ts                  # Vite dev server config
+├── src/embeddinggemma/
+│   ├── mcmp/                           # Multi-agent simulation
+│   │   ├── simulation.py               # Agent dynamics
+│   │   ├── embeddings.py               # EmbeddingGemma integration
+│   │   ├── indexing.py                 # FAISS search
+│   │   ├── pca.py                      # Dimensionality reduction
+│   │   └── visualize.py                # Snapshot generation
+│   ├── rag/                            # Enterprise RAG
+│   │   ├── chunking.py                 # AST-based chunking
+│   │   ├── search.py                   # Hybrid search
+│   │   ├── vectorstore.py              # Qdrant integration
+│   │   ├── generation.py               # Answer generation
+│   │   └── config.py                   # RAG configuration
+│   ├── ui/                             # UI component modules
+│   │   ├── corpus.py                   # Corpus management
+│   │   ├── queries.py                  # Multi-query logic
+│   │   ├── agent.py                    # Agent chat
+│   │   ├── reports.py                  # Report generation
+│   │   └── components.py               # UI utilities
+│   ├── agents/
+│   │   └── agent_fungus_rag.py         # Agent chat implementation
+│   ├── realtime/
+│   │   └── server.py                   # FastAPI WebSocket server
+│   └── mcmp_rag.py                     # Legacy MCMP facade
+├── tests/                              # Test suites
+├── docs/                               # Documentation
+├── pyproject.toml                      # Python project configuration
+├── requirements.txt                    # Python dependencies
+└── .python-version                     # Python version (3.12)
 ```
 
 ## Validation Checklist
@@ -758,157 +634,29 @@ These C4 diagrams use standard Mermaid syntax and should be renderable in:
 
 For best results, ensure your documentation platform has updated Mermaid support (version 9.0+).
 
-## Complete Setup Checklist
+## Current System Ports (As Configured)
 
-### Prerequisites
+| Service | Port | Protocol | Configuration Source |
+|---------|------|----------|---------------------|
+| React Dev Server | 5173 | HTTP/WS | vite.config.ts |
+| Streamlit UI | 8501 | HTTP | run-streamlit.ps1 |
+| FastAPI Backend | 8011 | HTTP/WS | run-realtime.ps1 |
 
-- [ ] **Python 3.10+** installed with pip
-- [ ] **Node.js 18+** installed with npm
-- [ ] **Git** for repository cloning
-- [ ] **PowerShell** (Windows) or compatible shell (Linux/Mac)
+## Current System Integration Points
 
-### External Services Setup
+### External Service Dependencies (Expected by Code)
 
-- [ ] **Ollama Server** running on port 11434
-  ```bash
-  # Install Ollama and pull model
-  ollama pull qwen2.5-coder:7b
-  ollama serve
-  ```
+| Service | Usage in Code | Configuration |
+|---------|---------------|---------------|
+| **Ollama** | generate_with_ollama() calls | OLLAMA_MODEL, OLLAMA_HOST env vars |
+| **Qdrant** | qdrant-client in rag/vectorstore.py | QDRANT_URL, QDRANT_API_KEY env vars |
+| **HuggingFace** | sentence-transformers model loading | Automatic download to models/ |
 
-- [ ] **Qdrant Vector DB** (optional for Enterprise RAG)
-  ```bash
-  # Docker setup
-  docker run -p 6333:6333 qdrant/qdrant
-  ```
+### Current Test Configuration
 
-- [ ] **HuggingFace Account** with EmbeddingGemma license accepted
-  - Register at https://huggingface.co
-  - Accept EmbeddingGemma-300M license
-  - Set HF_TOKEN if using private models
+From `.github/workflows/ci.yml`:
+- Python versions: 3.10, 3.11, 3.12
+- Test command: `pytest -q --maxfail=1 --disable-warnings`
+- Dependencies: requirements.txt + requirements-dev.txt
 
-### Python Environment Setup
-
-- [ ] Create virtual environment
-  ```bash
-  python -m venv .venv
-  .venv\Scripts\activate  # Windows
-  source .venv/bin/activate  # Linux/Mac
-  ```
-
-- [ ] Install Python dependencies
-  ```bash
-  pip install -r requirements.txt
-  # OR
-  pip install -e .
-  ```
-
-### Frontend Environment Setup
-
-- [ ] Install Node.js dependencies
-  ```bash
-  cd frontend
-  npm install
-  ```
-
-### Configuration
-
-- [ ] Set environment variables (optional)
-  ```bash
-  export OLLAMA_MODEL=qwen2.5-coder:7b
-  export OLLAMA_HOST=http://127.0.0.1:11434
-  export QDRANT_URL=http://localhost:6333
-  ```
-
-### Launch Services
-
-#### Option 1: Streamlit UI (Primary Interface)
-- [ ] Launch Streamlit application
-  ```powershell
-  ./run-streamlit.ps1
-  # OR
-  streamlit run streamlit_fungus_backup.py
-  ```
-- [ ] Access at http://localhost:8501
-
-#### Option 2: React + FastAPI (Real-time Interface)
-- [ ] Launch FastAPI backend
-  ```powershell
-  ./run-realtime.ps1
-  # OR
-  python -m uvicorn --app-dir src embeddinggemma.realtime.server:app --port 8011 --reload
-  ```
-
-- [ ] Launch React frontend
-  ```bash
-  cd frontend
-  npm run dev
-  ```
-- [ ] Access at http://localhost:5173
-
-### Verification Steps
-
-- [ ] **Backend Health**: Visit http://localhost:8011/status (FastAPI mode)
-- [ ] **Frontend Loading**: UI loads without errors
-- [ ] **WebSocket Connection**: Real-time updates work (React mode)
-- [ ] **Ollama Connection**: LLM responses in chat/reports
-- [ ] **Model Loading**: EmbeddingGemma downloads and loads successfully
-- [ ] **File Access**: Can browse and index source code files
-
-### Troubleshooting
-
-#### Common Issues
-
-**Port Conflicts**
-- Check if ports 5173, 8011, 8501, 6333, 11434 are free
-- Use `netstat -an | grep PORT` to check port usage
-
-**Model Download Failures**
-- Verify internet connection
-- Check HuggingFace license acceptance
-- Ensure adequate disk space (>2GB for models)
-
-**Memory Issues**
-- Reduce number of agents in MCMP simulation
-- Lower embedding batch sizes
-- Consider GPU acceleration for embeddings
-
-**WebSocket Connection Failures**
-- Verify FastAPI backend is running on port 8011
-- Check Vite proxy configuration in vite.config.ts
-- Ensure firewall allows local connections
-
-### Hardware Recommendations
-
-#### Minimum Requirements
-- **CPU**: 4+ cores for MCMP simulation
-- **RAM**: 8GB (16GB recommended)
-- **Storage**: 10GB free space
-- **Network**: Internet for model downloads
-
-#### Optimal Setup
-- **CPU**: 8+ cores with high clock speed
-- **RAM**: 32GB for large document sets
-- **GPU**: CUDA-compatible for embedding acceleration
-- **Storage**: SSD for faster model loading
-
-### File Structure Verification
-
-```
-EmbeddingGemma/
-├── .venv/                          # Python virtual environment
-├── frontend/                       # React application
-│   ├── node_modules/              # Node.js dependencies
-│   ├── package.json               # Frontend dependencies
-│   └── vite.config.ts             # Development server config
-├── src/embeddinggemma/            # Core Python package
-├── models/                        # Model cache (auto-created)
-├── .fungus_cache/                 # Runtime cache (auto-created)
-├── requirements.txt               # Python dependencies
-├── pyproject.toml                 # Python project config
-├── streamlit_fungus_backup.py     # Primary Streamlit interface
-├── run-streamlit.ps1              # Streamlit launcher
-└── run-realtime.ps1               # FastAPI launcher
-```
-
-This completes the comprehensive setup coverage for the TRAE system architecture!
+This represents the current state of the TRAE system as it exists in the codebase.
