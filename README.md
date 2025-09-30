@@ -23,8 +23,11 @@ Siehe auch:
 
 ### 1. Setup ausführen
 ```bash
-# Doppelklick auf setup.bat oder im Terminal:
-setup.bat
+# Install dependencies
+pip install -r requirements.txt
+
+# Optional: Editable install
+pip install -e .
 ```
 
 ### 2. Hugging Face Setup
@@ -36,16 +39,27 @@ setup.bat
 
 #### 🌐 Streamlit Interface (Empfohlen)
 ```bash
+# Direct run
 streamlit run streamlit_fungus_backup.py
+
+# Or using helper scripts
+.\run-streamlit.ps1    # PowerShell
+run-streamlit.cmd      # Windows CMD
 ```
 Dann Browser öffnen: http://localhost:8501
 
-#### 🚀 Realtime WebSocket Server
+#### 🚀 Realtime WebSocket Server + React Frontend
 ```bash
-# FastAPI server mit WebSocket Live-Updates
+# 1. Start FastAPI server
 uvicorn src.embeddinggemma.realtime.server:app --reload --port 8011
+
+# 2. Start React frontend (separate terminal)
+cd frontend
+npm install  # first time only
+npm run dev
 ```
-Dann http://localhost:8011 für Live-Simulation mit React Frontend.
+- Server: http://localhost:8011  
+- React Frontend: http://localhost:5173
 
 #### 🛠️ RAG CLI (verfügbar in `experimerntal/old/`)
 ```bash
