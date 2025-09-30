@@ -54,11 +54,11 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
   [data-theme='system'] .button.secondary { background: #2a2f3a; color: #e5e7eb; }
 }
 
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
-.section-title { font-weight: 700; margin: 4px 0 10px; }
-.log { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; height: 140px; overflow: auto; background: #fafafa; border: 1px solid var(--border); border-radius: 8px; padding: 8px; color: #111827; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; color: var(--text); }
+.section-title { font-weight: 700; margin: 4px 0 10px; color: var(--text); }
+.log { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; height: 140px; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 
-.results { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.results { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
 .result-item { padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .result-item:last-child { border-bottom: none; }
 .score { font-weight:700; margin-right: 8px; }
@@ -81,4 +81,40 @@ body { margin: 0; background: var(--bg); color: var(--text); font-family: ui-san
 .progress { width: 100%; height: 12px; background: var(--sidebar); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
 .progress-bar { height: 100%; background: linear-gradient(90deg, var(--primary), #22c55e); }
 
+
+/* Dark theme contrast fixes */
+[data-theme='dark'] .sidebar,
+[data-theme='dark'] .sidebar .title,
+[data-theme='dark'] .sidebar .label,
+[data-theme='dark'] .sidebar summary {
+  color: var(--text);
+}
+[data-theme='dark'] .sidebar .label {
+  color: var(--muted);
+}
+[data-theme='dark'] .sidebar .input,
+[data-theme='dark'] .sidebar .number,
+[data-theme='dark'] .sidebar .select {
+  background: #1f2937; /* slate-800 */
+  color: #e5e7eb;      /* gray-200 */
+  border-color: #374151; /* slate-700 */
+}
+[data-theme='dark'] .results {
+  background: #0f1115;
+}
+[data-theme='dark'] .log {
+  background: #0f1115;
+  color: #e5e7eb;
+  border-color: #23262e;
+}
+
+/* Buttons contrast in dark theme */
+[data-theme='dark'] .button { background: #1d4ed8; color: #ffffff; }
+[data-theme='dark'] .button.secondary { background: #2a2f3a; color: #e5e7eb; border: 1px solid #374151; }
+
+/* Plotly text/icons in dark theme */
+[data-theme='dark'] .js-plotly-plot text { fill: #e5e7eb !important; }
+[data-theme='dark'] .modebar-btn svg path,
+[data-theme='dark'] .modebar-btn svg rect,
+[data-theme='dark'] .modebar-btn svg circle { fill: #e5e7eb !important; stroke: #e5e7eb !important; }
 

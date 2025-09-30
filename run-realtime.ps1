@@ -10,7 +10,7 @@ if (-not (Test-Path $python)) {
     exit 1
 }
 
-& $python -m pip install -q fastapi "uvicorn[standard]" websockets wsproto plotly | Out-Null
+& $python -m pip install -q fastapi "uvicorn[standard]" websockets wsproto plotly python-dotenv | Out-Null
 
 # Ensure uvicorn can import from src/
 & $python -m uvicorn --app-dir src embeddinggemma.realtime.server:app --port $Port --reload

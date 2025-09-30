@@ -12,7 +12,7 @@ type Snapshot = {
 }
 
 export default function App() {
-  const [dims, setDims] = useState<number>(2)
+  const [dims, setDims] = useState<number>(3)
   const [minTrail, setMinTrail] = useState<number>(0.05)
   const [maxEdges, setMaxEdges] = useState<number>(600)
   const [redrawEvery, setRedrawEvery] = useState<number>(2)
@@ -27,6 +27,25 @@ export default function App() {
   const [reportEnabled, setReportEnabled] = useState<boolean>(false)
   const [reportEvery, setReportEvery] = useState<number>(5)
   const [topK, setTopK] = useState<number>(5)
+  const [mqEnabled, setMqEnabled] = useState<boolean>(false)
+  const [mqCount, setMqCount] = useState<number>(5)
+  const [judgeMode, setJudgeMode] = useState<string>('steering')
+  const [ollamaModel, setOllamaModel] = useState<string>('')
+  const [ollamaHost, setOllamaHost] = useState<string>('')
+  const [ollamaSystem, setOllamaSystem] = useState<string>('')
+  const [ollamaNumGpu, setOllamaNumGpu] = useState<number>(0)
+  const [ollamaNumThread, setOllamaNumThread] = useState<number>(0)
+  const [ollamaNumBatch, setOllamaNumBatch] = useState<number>(0)
+  const [llmProvider, setLlmProvider] = useState<string>('ollama')
+  const [openaiModel, setOpenaiModel] = useState<string>('')
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>('')
+  const [openaiTemperature, setOpenaiTemperature] = useState<number>(0)
+  const [googleModel, setGoogleModel] = useState<string>('')
+  const [googleBaseUrl, setGoogleBaseUrl] = useState<string>('')
+  const [googleTemperature, setGoogleTemperature] = useState<number>(0)
+  const [grokModel, setGrokModel] = useState<string>('')
+  const [grokBaseUrl, setGrokBaseUrl] = useState<string>('')
+  const [grokTemperature, setGrokTemperature] = useState<number>(0)
   const [useRepo, setUseRepo] = useState<boolean>(true)
   const [rootFolder, setRootFolder] = useState<string>('')
   const [maxFiles, setMaxFiles] = useState<number>(1000)
@@ -37,6 +56,12 @@ export default function App() {
   const [logs, setLogs] = useState<string[]>([])
   const [results, setResults] = useState<any[]>([])
   const [reports, setReports] = useState<Array<{step:number, data:any}>>([])
+  const [events, setEvents] = useState<Array<{ts:number, step?:number, type:string, text:string}>>([])
+  const [mSteps, setMSteps] = useState<number[]>([])
+  const [mAvg, setMAvg] = useState<number[]>([])
+  const [mMax, setMMax] = useState<number[]>([])
+  const [mTrails, setMTrails] = useState<number[]>([])
+  const [mResults, setMResults] = useState<number[]>([])
   type ThemeMode = 'light'|'dark'|'system'
   const [theme, setTheme] = useState<ThemeMode>(() => {
     try { return (localStorage.getItem('eg_theme') as ThemeMode) || 'system' } catch { return 'system' }
@@ -51,6 +76,12 @@ export default function App() {
   const [jobPct, setJobPct] = useState<number>(0)
   const [selectedDocs, setSelectedDocs] = useState<any[]>([])
   const [loadingDoc, setLoadingDoc] = useState<number | null>(null)
+  const [showPrompts, setShowPrompts] = useState(false)
+  const [promptModes, setPromptModes] = useState<string[]>([])
+  const [promptDefaults, setPromptDefaults] = useState<Record<string,string>>({})
+  const [promptOverrides, setPromptOverrides] = useState<Record<string,string>>({})
+  const [promptModeSel, setPromptModeSel] = useState<string>('deep')
+  const [summaryJson, setSummaryJson] = useState<any|null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
 
@@ -74,20 +105,45 @@ export default function App() {
               return next.slice(-50)
             })
             setLogs(prev => [...prev.slice(-300), `report: step ${obj.step} items=${Array.isArray(obj?.data?.items)? obj.data.items.length : 0}`])
+            setEvents(prev => [...prev.slice(-99), { ts: Date.now(), step: Number(obj.step||0), type: 'report', text: `items=${Array.isArray(obj?.data?.items)? obj.data.items.length : 0}` }])
           }
           else if (obj.type === 'results' || obj.type === 'results_stable') {
             if (Array.isArray(obj.data)) setResults(obj.data)
+            const step = Number(obj.step||0)
+            const rc = Array.isArray(obj.data)? obj.data.length : 0
+            setEvents(prev => [...prev.slice(-99), { ts: Date.now(), step, type: obj.type, text: `count=${rc}` }])
+            setMSteps(prev => [...prev, step].slice(-200))
+            setMResults(prev => [...prev, rc].slice(-200))
+          }
+          else if (obj.type === 'seed_queries') {
+            const added = Array.isArray(obj.added) ? obj.added : []
+            const msg = `seed: +${added.length} → pool=${Number(obj.pool_size||0)}\n` + added.map((q:string)=>`- ${q}`).join('\n')
+            setLogs(prev => [...prev.slice(-300), msg])
+            setEvents(prev => [...prev.slice(-99), { ts: Date.now(), type: 'seed', text: `added=${added.length} pool=${obj.pool_size}` }])
+            setToasts(t => [...t.slice(-3), `Seeded ${added.length} follow-up queries`])
           }
           else if (obj.type === 'log') setLogs(prev => {
             const msg = String(obj.message || '')
             const last = prev[prev.length-1]
             return last === msg ? prev : [...prev.slice(-300), msg]
           })
-          else if (obj.type === 'metrics') setLogs(prev => {
-            const msg = `metrics: ${JSON.stringify(obj.data)}`
-            const last = prev[prev.length-1]
-            return last === msg ? prev : [...prev.slice(-300), msg]
-          })
+          else if (obj.type === 'metrics') {
+            const d = obj.data || {}
+            const step = Number(d.step||0)
+            const avg = Number(d.avg_rel||0)
+            const mx = Number(d.max_rel||0)
+            const tr = Number(d.trails||0)
+            setMSteps(prev => [...prev, step].slice(-200))
+            setMAvg(prev => [...prev, avg].slice(-200))
+            setMMax(prev => [...prev, mx].slice(-200))
+            setMTrails(prev => [...prev, tr].slice(-200))
+            setEvents(prev => [...prev.slice(-99), { ts: Date.now(), step, type: 'metrics', text: `avg=${avg.toFixed(4)} trails=${tr}` }])
+            setLogs(prev => {
+              const msg = `metrics: ${JSON.stringify(obj.data)}`
+              const last = prev[prev.length-1]
+              return last === msg ? prev : [...prev.slice(-300), msg]
+            })
+          }
           else if (obj.type === 'job_progress') { setJobId(obj.job_id); setJobPct(obj.percent||0) }
         } catch {}
       }
@@ -104,8 +160,26 @@ export default function App() {
   }, [])
 
   async function apply() {
+    const extra:any = {}
+    if ((judgeMode||'').trim()) extra.judge_mode = (judgeMode||'').trim()
+    if ((ollamaModel||'').trim()) extra.ollama_model = (ollamaModel||'').trim()
+    if ((ollamaHost||'').trim()) extra.ollama_host = (ollamaHost||'').trim()
+    if ((ollamaSystem||'').trim()) extra.ollama_system = (ollamaSystem||'').trim()
+    if (Number(ollamaNumGpu) > 0) extra.ollama_num_gpu = Number(ollamaNumGpu)
+    if (Number(ollamaNumThread) > 0) extra.ollama_num_thread = Number(ollamaNumThread)
+    if (Number(ollamaNumBatch) > 0) extra.ollama_num_batch = Number(ollamaNumBatch)
+    if ((llmProvider||'').trim()) extra.llm_provider = (llmProvider||'').trim()
+    if ((openaiModel||'').trim()) extra.openai_model = (openaiModel||'').trim()
+    if ((openaiBaseUrl||'').trim()) extra.openai_base_url = (openaiBaseUrl||'').trim()
+    if (Number.isFinite(openaiTemperature)) extra.openai_temperature = Number(openaiTemperature)
+    if ((googleModel||'').trim()) extra.google_model = (googleModel||'').trim()
+    if ((googleBaseUrl||'').trim()) extra.google_base_url = (googleBaseUrl||'').trim()
+    if (Number.isFinite(googleTemperature)) extra.google_temperature = Number(googleTemperature)
+    if ((grokModel||'').trim()) extra.grok_model = (grokModel||'').trim()
+    if ((grokBaseUrl||'').trim()) extra.grok_base_url = (grokBaseUrl||'').trim()
+    if (Number.isFinite(grokTemperature)) extra.grok_temperature = Number(grokTemperature)
     await axios.post(API + '/config', {
-      viz_dims: dims,
+      viz_dims: 3,
       min_trail_strength: minTrail,
       max_edges: maxEdges,
       redraw_every: redrawEvery,
@@ -125,15 +199,36 @@ export default function App() {
       report_enabled: reportEnabled,
       report_every: reportEvery,
       report_mode: mode,
+      mq_enabled: mqEnabled,
+      mq_count: mqCount,
+      ...extra,
     })
     try { wsRef.current?.send(JSON.stringify({ type: 'config', viz_dims: dims })) } catch {}
   }
 
   async function start() {
     try {
+      const extra:any = {}
+      if ((judgeMode||'').trim()) extra.judge_mode = (judgeMode||'').trim()
+      if ((ollamaModel||'').trim()) extra.ollama_model = (ollamaModel||'').trim()
+      if ((ollamaHost||'').trim()) extra.ollama_host = (ollamaHost||'').trim()
+      if ((ollamaSystem||'').trim()) extra.ollama_system = (ollamaSystem||'').trim()
+      if (Number(ollamaNumGpu) > 0) extra.ollama_num_gpu = Number(ollamaNumGpu)
+      if (Number(ollamaNumThread) > 0) extra.ollama_num_thread = Number(ollamaNumThread)
+      if (Number(ollamaNumBatch) > 0) extra.ollama_num_batch = Number(ollamaNumBatch)
+      if ((llmProvider||'').trim()) extra.llm_provider = (llmProvider||'').trim()
+      if ((openaiModel||'').trim()) extra.openai_model = (openaiModel||'').trim()
+      if ((openaiBaseUrl||'').trim()) extra.openai_base_url = (openaiBaseUrl||'').trim()
+      if (Number.isFinite(openaiTemperature)) extra.openai_temperature = Number(openaiTemperature)
+      if ((googleModel||'').trim()) extra.google_model = (googleModel||'').trim()
+      if ((googleBaseUrl||'').trim()) extra.google_base_url = (googleBaseUrl||'').trim()
+      if (Number.isFinite(googleTemperature)) extra.google_temperature = Number(googleTemperature)
+      if ((grokModel||'').trim()) extra.grok_model = (grokModel||'').trim()
+      if ((grokBaseUrl||'').trim()) extra.grok_base_url = (grokBaseUrl||'').trim()
+      if (Number.isFinite(grokTemperature)) extra.grok_temperature = Number(grokTemperature)
       await axios.post(API + '/start', {
         query,
-        viz_dims: dims,
+        viz_dims: 3,
         use_repo: useRepo,
         root_folder: rootFolder,
         max_files: maxFiles,
@@ -153,6 +248,9 @@ export default function App() {
         report_enabled: reportEnabled,
         report_every: reportEvery,
         report_mode: mode,
+        mq_enabled: mqEnabled,
+        mq_count: mqCount,
+        ...extra,
       })
       setToasts(t => [...t, 'Simulation started'])
     } catch (e:any) {
@@ -249,10 +347,12 @@ export default function App() {
             </select>
           </div>
         </div>
-        <div className='group'>
-          <span className='label'>Query</span>
-          <input className='input' value={query} onChange={e=>setQuery(e.target.value)} />
-        </div>
+        <details open>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Simulation</summary>
+          <div className='group'>
+            <span className='label'>Query</span>
+            <input className='input' value={query} onChange={e=>setQuery(e.target.value)} />
+          </div>
         <div className='row group'>
           <div>
             <span className='label'>Mode</span>
@@ -261,6 +361,7 @@ export default function App() {
               <option value='structure'>structure</option>
               <option value='exploratory'>exploratory</option>
               <option value='summary'>summary</option>
+              <option value='steering'>steering</option>
               <option value='similar'>similar</option>
               <option value='redundancy'>redundancy</option>
               <option value='repair'>repair</option>
@@ -273,7 +374,7 @@ export default function App() {
         </div>
         <div className='row group'>
           <div>
-            <label className='label'>Per-step Report</label>
+            <label className='label'>Per-step report</label>
             <label style={{display:'flex',gap:8,alignItems:'center'}}>
               <input type='checkbox' checked={reportEnabled} onChange={e=>setReportEnabled(e.target.checked)} /> Enable
             </label>
@@ -284,82 +385,264 @@ export default function App() {
           </div>
         </div>
         <div className='group'>
-          <span className='label'>Windows (lines)</span>
-          <input className='input' value={windows} onChange={e=>setWindows(e.target.value)} />
-        </div>
-        <div className='group'>
-          <label><input type='checkbox' checked={useRepo} onChange={e=>setUseRepo(e.target.checked)} /> Use code space (src) as corpus</label>
-        </div>
-        <div className='group'>
-          <span className='label'>Root folder (used when src is off)</span>
-          <input className='input' value={rootFolder} onChange={e=>setRootFolder(e.target.value)} placeholder='C:\\Users\\User\\Desktop\\EmbeddingGemma' />
-        </div>
-        <div className='row group'>
-          <div>
-            <span className='label'>Max files to index</span>
-            <input className='number' type='number' step={50} value={maxFiles} onChange={e=>setMaxFiles(parseInt(e.target.value)||0)} />
-          </div>
-          <div>
-            <span className='label'>Chunk workers (threads)</span>
-            <input className='number' type='number' step={1} value={chunkWorkers} onChange={e=>setChunkWorkers(parseInt(e.target.value)||1)} />
-          </div>
-        </div>
-        <div className='group'>
-          <span className='label'>Exclude folders</span>
-          <input className='input' value={excludeDirs} onChange={e=>setExcludeDirs(e.target.value)} />
+          <span className='label'>Report mode</span>
+          <select className='select' value={mode} onChange={e=>setMode(e.target.value)}>
+            <option value='deep'>deep</option>
+            <option value='structure'>structure</option>
+            <option value='exploratory'>exploratory</option>
+            <option value='summary'>summary</option>
+            <option value='steering'>steering</option>
+            <option value='repair'>repair</option>
+          </select>
         </div>
         <div className='row group'>
-          <div>
-            <span className='label'>Viz dims</span>
-            <select className='select' value={dims} onChange={e=>setDims(parseInt(e.target.value))}><option value={2}>2D</option><option value={3}>3D</option></select>
-          </div>
-          <div>
-            <span className='label'>Max edges</span>
-            <input className='number' type='number' step={50} value={maxEdges} onChange={e=>setMaxEdges(parseInt(e.target.value))} />
-          </div>
+          <button className='button secondary' onClick={apply}>Apply</button>
         </div>
+        </details>
         <div className='row group'>
           <div>
-            <span className='label'>Min trail strength</span>
-            <input className='number' type='number' step={0.01} value={minTrail} onChange={e=>setMinTrail(parseFloat(e.target.value))} />
+            <span className='label'>Judge Mode</span>
+            <select className='select' value={judgeMode} onChange={e=>setJudgeMode(e.target.value)}>
+              <option value='steering'>steering</option>
+              <option value='deep'>deep</option>
+              <option value='structure'>structure</option>
+              <option value='exploratory'>exploratory</option>
+              <option value='summary'>summary</option>
+              <option value='repair'>repair</option>
+            </select>
           </div>
-          <div>
-            <span className='label'>Redraw every N steps</span>
-            <input className='number' type='number' step={1} value={redrawEvery} onChange={e=>setRedrawEvery(parseInt(e.target.value)||1)} />
-          </div>
+            <div>
+              <label className='label'>Multi-query (LLM assist)</label>
+              <label style={{display:'flex',gap:8,alignItems:'center'}}>
+                <input type='checkbox' checked={mqEnabled} onChange={e=>setMqEnabled(e.target.checked)} /> Enable
+              </label>
+            </div>
         </div>
-        <div className='row group'>
-          <div>
-            <span className='label'>Agents</span>
-            <input className='number' type='number' step={10} value={numAgents} onChange={e=>setNumAgents(parseInt(e.target.value)||1)} />
+          {mqEnabled && (
+            <div className='group'>
+              <span className='label'>Multi-query count</span>
+              <input className='number' type='number' step={1} value={mqCount} onChange={e=>setMqCount(parseInt(e.target.value)||1)} />
+            </div>
+          )}
+        <details>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Models</summary>
+          <div className='row group'>
+            <div>
+              <span className='label'>LLM Provider</span>
+              <select className='select' value={llmProvider} onChange={e=>setLlmProvider(e.target.value)}>
+                <option value='ollama'>ollama</option>
+                <option value='openai'>openai</option>
+                <option value='google'>google</option>
+                <option value='grok'>grok</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <span className='label'>Max iterations</span>
-            <input className='number' type='number' step={10} value={maxIterations} onChange={e=>setMaxIterations(parseInt(e.target.value)||1)} />
+        {llmProvider==='ollama' && (
+          <>
+            <div className='group'>
+              <span className='label'>Ollama Model</span>
+              <input className='input' list='ollama-models' value={ollamaModel} onChange={e=>setOllamaModel(e.target.value)} placeholder='e.g., qwen2.5-coder:7b' />
+              <datalist id='ollama-models'>
+                <option value='qwen2.5-coder:7b' />
+                <option value='qwen2.5:7b' />
+                <option value='llama3.1:8b' />
+                <option value='mistral:7b' />
+                <option value='codellama:7b' />
+                <option value='deepseek-coder:6.7b' />
+                <option value='phi3:mini-4k' />
+              </datalist>
+            </div>
+            <div className='group'>
+              <span className='label'>Ollama Host</span>
+              <input className='input' value={ollamaHost} onChange={e=>setOllamaHost(e.target.value)} placeholder='http://127.0.0.1:11434' />
+            </div>
+            <div className='group'>
+              <span className='label'>Ollama System Prompt</span>
+              <input className='input' value={ollamaSystem} onChange={e=>setOllamaSystem(e.target.value)} placeholder='Optional system prompt' />
+            </div>
+            <div className='row group'>
+              <div>
+                <span className='label'>Ollama GPUs</span>
+                <input className='number' type='number' step={1} value={ollamaNumGpu} onChange={e=>setOllamaNumGpu(parseInt(e.target.value)||0)} />
+              </div>
+              <div>
+                <span className='label'>Ollama Threads</span>
+                <input className='number' type='number' step={1} value={ollamaNumThread} onChange={e=>setOllamaNumThread(parseInt(e.target.value)||0)} />
+              </div>
+            </div>
+            <div className='group'>
+              <span className='label'>Ollama Batch</span>
+              <input className='number' type='number' step={1} value={ollamaNumBatch} onChange={e=>setOllamaNumBatch(parseInt(e.target.value)||0)} />
+            </div>
+          </>
+        )}
+        {llmProvider==='openai' && (
+          <>
+            <div className='group'>
+              <span className='label'>OpenAI Model</span>
+              <input className='input' list='openai-models' value={openaiModel} onChange={e=>setOpenaiModel(e.target.value)} placeholder='e.g., gpt-4o-mini' />
+              <datalist id='openai-models'>
+                <option value='gpt-4o-mini' />
+                <option value='gpt-4o' />
+                <option value='gpt-4.1-mini' />
+                <option value='gpt-4.1' />
+                <option value='o3-mini' />
+              </datalist>
+            </div>
+            <div className='group'>
+              <span className='label'>OpenAI Base URL</span>
+              <input className='input' value={openaiBaseUrl} onChange={e=>setOpenaiBaseUrl(e.target.value)} placeholder='https://api.openai.com' />
+            </div>
+            <div className='group'>
+              <span className='label'>OpenAI Temperature</span>
+              <input className='number' type='number' step={0.1} value={openaiTemperature} onChange={e=>setOpenaiTemperature(parseFloat(e.target.value)||0)} />
+            </div>
+          </>
+        )}
+        {llmProvider==='google' && (
+          <>
+            <div className='group'>
+              <span className='label'>Google Model</span>
+              <input className='input' list='google-models' value={googleModel} onChange={e=>setGoogleModel(e.target.value)} placeholder='e.g., gemini-1.5-pro' />
+              <datalist id='google-models'>
+                <option value='gemini-1.5-pro' />
+                <option value='gemini-1.5-flash' />
+                <option value='gemini-1.5-flash-8b' />
+              </datalist>
+            </div>
+            <div className='group'>
+              <span className='label'>Google Base URL</span>
+              <input className='input' value={googleBaseUrl} onChange={e=>setGoogleBaseUrl(e.target.value)} placeholder='https://generativelanguage.googleapis.com' />
+            </div>
+            <div className='group'>
+              <span className='label'>Google Temperature</span>
+              <input className='number' type='number' step={0.1} value={googleTemperature} onChange={e=>setGoogleTemperature(parseFloat(e.target.value)||0)} />
+            </div>
+          </>
+        )}
+        {llmProvider==='grok' && (
+          <>
+            <div className='group'>
+              <span className='label'>Grok Model</span>
+              <input className='input' list='grok-models' value={grokModel} onChange={e=>setGrokModel(e.target.value)} placeholder='e.g., grok-2-latest' />
+              <datalist id='grok-models'>
+                <option value='grok-2-latest' />
+                <option value='grok-2-mini' />
+              </datalist>
+            </div>
+            <div className='group'>
+              <span className='label'>Grok Base URL</span>
+              <input className='input' value={grokBaseUrl} onChange={e=>setGrokBaseUrl(e.target.value)} placeholder='https://api.x.ai' />
+            </div>
+            <div className='group'>
+              <span className='label'>Grok Temperature</span>
+              <input className='number' type='number' step={0.1} value={grokTemperature} onChange={e=>setGrokTemperature(parseFloat(e.target.value)||0)} />
+            </div>
+          </>
+        )}
+        </details>
+        <details>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Chunking</summary>
+          <div className='group'>
+            <span className='label'>Windows (lines)</span>
+            <input className='input' value={windows} onChange={e=>setWindows(e.target.value)} />
           </div>
-        </div>
-        <div className='row group'>
-          <div>
-            <span className='label'>Exploration bonus</span>
-            <input className='number' type='number' step={0.01} value={explorationBonus} onChange={e=>setExplorationBonus(parseFloat(e.target.value))} />
+          <div className='group'>
+            <label><input type='checkbox' checked={useRepo} onChange={e=>setUseRepo(e.target.checked)} /> Use code space (src) as corpus</label>
           </div>
-          <div>
-            <span className='label'>Pheromone decay</span>
-            <input className='number' type='number' step={0.01} value={pheromoneDecay} onChange={e=>setPheromoneDecay(parseFloat(e.target.value))} />
+          <div className='group'>
+            <span className='label'>Root folder (used when src is off)</span>
+            <input className='input' value={rootFolder} onChange={e=>setRootFolder(e.target.value)} placeholder='C:\\Users\\User\\Desktop\\EmbeddingGemma' />
           </div>
-        </div>
-        <div className='row group'>
-          <div>
-            <span className='label'>Embedding batch size</span>
-            <input className='number' type='number' step={16} value={embedBatchSize} onChange={e=>setEmbedBatchSize(parseInt(e.target.value)||16)} />
+          <div className='row group'>
+            <div>
+              <span className='label'>Max files to index</span>
+              <input className='number' type='number' step={50} value={maxFiles} onChange={e=>setMaxFiles(parseInt(e.target.value)||0)} />
+            </div>
+            <div>
+              <span className='label'>Chunk workers (threads)</span>
+              <input className='number' type='number' step={1} value={chunkWorkers} onChange={e=>setChunkWorkers(parseInt(e.target.value)||1)} />
+            </div>
           </div>
-          <div>
-            <span className='label'>Max chunks per shard</span>
-            <input className='number' type='number' step={100} value={maxChunksPerShard} onChange={e=>setMaxChunksPerShard(parseInt(e.target.value)||0)} />
+          <div className='group'>
+            <span className='label'>Exclude folders</span>
+            <input className='input' value={excludeDirs} onChange={e=>setExcludeDirs(e.target.value)} />
           </div>
-        </div>
+        </details>
+        <details>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Simulation parameters</summary>
+          <div className='row group'>
+            {/* Force 3D only */}
+            <div><span className='label'>Viz dims</span><div className='select' style={{padding:'8px 12px'}}>3D</div></div>
+            <div>
+              <span className='label'>Max edges</span>
+              <input className='number' type='number' step={50} value={maxEdges} onChange={e=>setMaxEdges(parseInt(e.target.value))} />
+            </div>
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Min trail strength</span>
+              <input className='number' type='number' step={0.01} value={minTrail} onChange={e=>setMinTrail(parseFloat(e.target.value))} />
+            </div>
+            <div>
+              <span className='label'>Redraw every N steps</span>
+              <input className='number' type='number' step={1} value={redrawEvery} onChange={e=>setRedrawEvery(parseInt(e.target.value)||1)} />
+            </div>
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Agents</span>
+              <input className='number' type='number' step={10} value={numAgents} onChange={e=>setNumAgents(parseInt(e.target.value)||1)} />
+            </div>
+            <div>
+              <span className='label'>Max iterations</span>
+              <input className='number' type='number' step={10} value={maxIterations} onChange={e=>setMaxIterations(parseInt(e.target.value)||1)} />
+            </div>
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Exploration bonus</span>
+              <input className='number' type='number' step={0.01} value={explorationBonus} onChange={e=>setExplorationBonus(parseFloat(e.target.value))} />
+            </div>
+            <div>
+              <span className='label'>Pheromone decay</span>
+              <input className='number' type='number' step={0.01} value={pheromoneDecay} onChange={e=>setPheromoneDecay(parseFloat(e.target.value))} />
+            </div>
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Embedding batch size</span>
+              <input className='number' type='number' step={16} value={embedBatchSize} onChange={e=>setEmbedBatchSize(parseInt(e.target.value)||16)} />
+            </div>
+            <div>
+              <span className='label'>Max chunks per shard</span>
+              <input className='number' type='number' step={100} value={maxChunksPerShard} onChange={e=>setMaxChunksPerShard(parseInt(e.target.value)||0)} />
+            </div>
+          </div>
+        </details>
         <div className='row group'>
           <button className='button' onClick={apply}>Apply</button>
+        </div>
+        <div className='row group'>
+          <button className='button secondary' onClick={async ()=>{
+            try{
+              const r = await axios.post(API + '/reports/merge', {})
+              const sum = r?.data?.summary || null
+              setSummaryJson(sum)
+              setToasts(t=>[...t, 'Summary built'])
+            }catch(e:any){ setToasts(t=>[...t,'Merge reports failed: '+(e?.message||e)]) }
+          }}>Build Summary</button>
+          <button className='button secondary' onClick={()=>{
+            try{
+              const obj = summaryJson
+              if (!obj) { alert('No summary available yet'); return }
+              const blob = new Blob([JSON.stringify(obj, null, 2)], {type:'application/json'})
+              const a = document.createElement('a')
+              a.href = URL.createObjectURL(blob)
+              a.download = 'summary.json'
+              a.click()
+            }catch(e){/* noop */}
+          }}>Download Summary</button>
         </div>
         <div className='row group'>
           <button className='button' onClick={start}>Start</button>
@@ -389,6 +672,15 @@ export default function App() {
         <div className='row group'>
           <button className='button' onClick={doSearch}>Search</button>
           <button className='button secondary' onClick={doAnswer}>Answer</button>
+          <button className='button secondary' onClick={async ()=>{
+            try{
+              const r = await axios.get(API + '/prompts')
+              setPromptModes(r.data?.modes||[])
+              setPromptDefaults(r.data?.defaults||{})
+              setPromptOverrides(r.data?.overrides||{})
+              setShowPrompts(true)
+            }catch(e:any){ setToasts(t=>[...t,'Load prompts failed: '+(e?.message||e)]) }
+          }}>Prompts</button>
         </div>
       </aside>
       <main className='main'>
@@ -414,6 +706,35 @@ export default function App() {
         <div className='card'>
           <div className='section-title'>Live log</div>
           <div className='log'>{logs.join('\n')}</div>
+        </div>
+        <div className='card'>
+          <div className='section-title'>Events</div>
+          <div className='results'>
+            <div style={{display:'grid',gridTemplateColumns:'120px 70px 120px 1fr',gap:6,padding:'6px 10px',fontWeight:600,opacity:0.8}}>
+              <div>Time</div><div>Step</div><div>Type</div><div>Text</div>
+            </div>
+            {events.slice().reverse().map((e,idx)=> (
+              <div key={'evt'+idx} style={{display:'grid',gridTemplateColumns:'120px 70px 120px 1fr',gap:6,padding:'4px 10px',borderTop:'1px solid rgba(255,255,255,0.08)'}}>
+                <div>{new Date(e.ts).toLocaleTimeString()}</div>
+                <div>{e.step ?? '-'}</div>
+                <div><span style={{padding:'2px 6px',borderRadius:6, background:'rgba(99,102,241,0.2)'}}>{e.type}</span></div>
+                <div style={{opacity:0.85}}>{e.text}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className='card'>
+          <div className='section-title'>Metrics</div>
+          <Plot
+            data={[
+              { x: mSteps, y: mAvg, type:'scatter', mode:'lines', name:'avg_rel' },
+              { x: mSteps, y: mMax, type:'scatter', mode:'lines', name:'max_rel' },
+              { x: mSteps, y: mTrails, type:'scatter', mode:'lines', name:'trails', yaxis:'y2' },
+              { x: mSteps, y: mResults, type:'scatter', mode:'lines', name:'results', yaxis:'y2' },
+            ] as any}
+            layout={{ height: 300, margin:{l:30,r:30,t:10,b:30}, yaxis:{title:'rel'}, yaxis2:{overlaying:'y', side:'right', title:'count'} } as any}
+            style={{ width:'100%', height:'300px' }}
+          />
         </div>
         {jobId && (
           <div className='card'>
@@ -512,6 +833,44 @@ export default function App() {
             <div className='modal-body'>
               <div className='filelist'>
                 {corpusFiles.map((f,i)=>(<div key={i} className='file-item'>{f}</div>))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {showPrompts && (
+        <div className='modal-backdrop' onClick={()=>setShowPrompts(false)}>
+          <div className='modal' onClick={e=>e.stopPropagation()}>
+            <div className='modal-header'>
+              <div>Prompt Editor</div>
+              <button className='button secondary' onClick={()=>setShowPrompts(false)}>Close</button>
+            </div>
+            <div className='modal-body' style={{display:'grid', gap:12}}>
+              <div>
+                <span className='label'>Mode</span>
+                <select className='select' value={promptModeSel} onChange={e=>setPromptModeSel(e.target.value)}>
+                  {(promptModes||['deep','structure','exploratory','summary','repair','steering']).map(m=> (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className='label'>Instructions (override)</div>
+                <textarea className='input' style={{minHeight:180}} value={promptOverrides[promptModeSel]||''} onChange={e=>setPromptOverrides(prev=>({...prev, [promptModeSel]: e.target.value}))} />
+              </div>
+              <div>
+                <div className='label'>Default (read-only)</div>
+                <textarea className='input' style={{minHeight:140, opacity:0.7}} value={promptDefaults[promptModeSel]||''} readOnly />
+              </div>
+              <div style={{display:'flex', gap:10}}>
+                <button className='button secondary' onClick={()=> setPromptOverrides(prev=> ({...prev, [promptModeSel]: promptDefaults[promptModeSel]||''}))}>Load default into override</button>
+                <button className='button' onClick={async ()=>{
+                  try{
+                    await axios.post(API + '/prompts/save', { overrides: promptOverrides })
+                    setToasts(t=>[...t,'Prompts saved'])
+                  }catch(e:any){ setToasts(t=>[...t,'Save prompts failed: '+(e?.message||e)]) }
+                }}>Save</button>
+                <button className='button secondary' onClick={()=> setPromptOverrides(prev=> ({...prev, [promptModeSel]: ''}))}>Clear override</button>
               </div>
             </div>
           </div>

@@ -22,27 +22,53 @@ def _token_set(text: str) -> set:
     return set(_normalize_query_text(text).split())
 
 
+def _trigram_set(text: str) -> set:
+    t = _normalize_query_text(text)
+    if not t:
+        return set()
+    tokens = t.split()
+    if len(tokens) < 3:
+        return set([" ".join(tokens)]) if tokens else set()
+    grams = set()
+    for i in range(len(tokens) - 2):
+        grams.add(" ".join(tokens[i:i+3]))
+    return grams
+
+
 def dedup_multi_queries(queries: List[str], similarity_threshold: float = 0.8) -> List[str]:
     if not queries:
         return []
     kept: List[str] = []
     kept_sets: List[set] = []
+    kept_tri: List[set] = []
     thr = max(0.0, min(float(similarity_threshold), 1.0))
     for q in queries:
         ts = _token_set(q)
+        tg = _trigram_set(q)
         if not ts:
             continue
         duplicate = False
-        for ks in kept_sets:
+        for idx, ks in enumerate(kept_sets):
+            # token Jaccard
             inter = len(ts & ks)
             union = len(ts | ks) or 1
             jacc = inter / union
             if jacc >= thr:
                 duplicate = True
                 break
+            # trigram Jaccard (slightly lower bar)
+            kt = kept_tri[idx] if idx < len(kept_tri) else set()
+            if kt:
+                inter3 = len(tg & kt)
+                union3 = len(tg | kt) or 1
+                jacc3 = inter3 / union3
+            if jacc3 >= max(0.0, thr - 0.1):
+                duplicate = True
+                break
         if not duplicate:
             kept.append(q)
             kept_sets.append(ts)
+            kept_tri.append(tg)
     if not kept and queries:
         kept = [queries[0]]
     return kept
@@ -66,6 +92,9 @@ def _ollama_generate(prompt: str, model: str = None, timeout: int = 180) -> str:
 
 
 def generate_multi_queries_from_llm(base_query: str, num_queries: int = 5, context_files: List[str] = None, keyword_hints: List[str] = None) -> List[str]:
+    print(f"Generating {num_queries} queries for {base_query}")
+    print(f"Context files: {context_files}")
+    print(f"Keyword hints: {keyword_hints}")
     try:
         n = max(1, min(int(num_queries), 10))
     except Exception:
