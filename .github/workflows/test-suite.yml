@@ -1,0 +1,320 @@
+name: Comprehensive Test Suite
+
+on:
+  push:
+    branches: [ main, develop, experimental_contextual_steering ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  # Basic unit tests for all modules
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.10, 3.11, 3.12]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install pytest pytest-cov pytest-xdist pytest-benchmark
+        pip install psutil  # For memory monitoring in performance tests
+
+    - name: Run unit tests with coverage
+      run: |
+        pytest tests/ -v --cov=src/embeddinggemma --cov-report=xml --cov-report=term-missing --tb=short
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unit-tests
+        name: codecov-unit-tests
+
+  # Integration tests
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run integration tests
+      run: |
+        pytest tests/test_integration.py -v --tb=short
+
+    - name: Run end-to-end tests
+      run: |
+        pytest tests/test_e2e.py -v --tb=short -k "not test_concurrent_user_sessions and not test_large_scale_processing"
+
+  # Performance and stress tests
+  performance-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install pytest psutil memory-profiler
+
+    - name: Run performance tests
+      run: |
+        pytest tests/test_performance.py -v --tb=short -k "not test_extreme_parameter_values"
+
+    - name: Run memory leak tests
+      run: |
+        pytest tests/test_performance.py::TestMemoryUsageAndLeaks -v --tb=short
+
+  # Comprehensive module tests
+  module-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    strategy:
+      matrix:
+        module: [mcmp, rag, ui]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install pytest
+
+    - name: Run ${{ matrix.module }} module tests
+      run: |
+        if [ "${{ matrix.module }}" = "mcmp" ]; then
+          pytest tests/mcmp/ -v --tb=short
+        elif [ "${{ matrix.module }}" = "rag" ]; then
+          pytest tests/rag/ -v --tb=short
+        elif [ "${{ matrix.module }}" = "ui" ]; then
+          pytest tests/ui/ -v --tb=short
+        fi
+
+  # Cross-platform compatibility tests
+  cross-platform:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: [3.10, 3.11]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install pytest
+
+    - name: Install dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install pytest
+
+    - name: Run basic functionality tests
+      run: |
+        pytest tests/test_integration.py::TestMCPMRetrieverIntegration::test_full_retrieval_pipeline -v
+
+  # Security and dependency vulnerability scan
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install safety for vulnerability scanning
+      run: |
+        python -m pip install --upgrade pip
+        pip install safety
+
+    - name: Run security scan
+      run: |
+        safety check
+
+  # Documentation and linting
+  lint-and-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install linting tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install black flake8 mypy
+
+    - name: Run code formatting check
+      run: |
+        black --check src/ tests/
+
+    - name: Run linting
+      run: |
+        flake8 src/ tests/ --max-line-length=100 --extend-ignore=E203,W503
+
+    - name: Run type checking
+      run: |
+        mypy src/ --ignore-missing-imports
+
+  # Test with different dependency versions
+  dependency-compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        numpy-version: ["1.21.0", "1.24.0"]
+        torch-version: ["2.0.0", "2.1.0"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install specific dependency versions
+      run: |
+        python -m pip install --upgrade pip
+        pip install numpy==${{ matrix.numpy-version }}
+        pip install torch==${{ matrix.torch-version }} --index-url https://download.pytorch.org/whl/cpu
+        pip install -e .
+        pip install pytest
+
+    - name: Run compatibility tests
+      run: |
+        pytest tests/test_integration.py::TestMCPMRetrieverIntegration::test_full_retrieval_pipeline -v
+
+  # Long-running stress tests (only on schedule)
+  stress-tests:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install pytest psutil
+
+    - name: Run stress tests
+      run: |
+        pytest tests/test_performance.py::TestStressTests -v --tb=short
+
+    - name: Run continuous load tests
+      run: |
+        timeout 300 pytest tests/test_performance.py::TestContinuousLoadTests -v --tb=short
+
+  # Test results summary
+  test-summary:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, performance-tests, module-tests, cross-platform]
+    if: always()
+
+    steps:
+    - name: Generate test summary
+      run: |
+        echo "## Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        # Check job statuses
+        if [ "${{ needs.unit-tests.result }}" = "success" ]; then
+          echo "✅ Unit Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Unit Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        if [ "${{ needs.integration-tests.result }}" = "success" ]; then
+          echo "✅ Integration Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Integration Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        if [ "${{ needs.performance-tests.result }}" = "success" ]; then
+          echo "✅ Performance Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Performance Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        if [ "${{ needs.module-tests.result }}" = "success" ]; then
+          echo "✅ Module Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Module Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        if [ "${{ needs.cross-platform.result }}" = "success" ]; then
+          echo "✅ Cross-Platform Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Cross-Platform Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Test execution completed at $(date)" >> $GITHUB_STEP_SUMMARY
