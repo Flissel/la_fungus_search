@@ -20,3 +20,5 @@ embedding_cache
 external
 models
 .env\n.env
+
+.env
