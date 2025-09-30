@@ -547,17 +547,18 @@ flowchart LR
 | **.python-version** | Python version | 3.12 |
 | **CONTRIBUTING.md** | Development guide | Setup, linting, testing |
 
-### Current Codebase File Structure
+### Verified Current Codebase File Structure
 
 ```
 EmbeddingGemma/
-├── streamlit_fungus_backup.py          # Primary Streamlit interface
-├── run-streamlit.ps1                   # Streamlit launcher script
+├── streamlit_fungus_backup.py          # Current Streamlit interface (active)
+├── run-streamlit.ps1/.cmd              # Streamlit launcher scripts
 ├── run-realtime.ps1                    # FastAPI launcher script
 ├── frontend/                           # React application
 │   ├── src/ui/App.tsx                  # Main React component
 │   ├── package.json                    # Node.js dependencies
-│   └── vite.config.ts                  # Vite dev server config
+│   ├── vite.config.ts                  # Vite dev server config
+│   └── tests/ui.spec.ts                # Playwright E2E tests
 ├── src/embeddinggemma/
 │   ├── mcmp/                           # Multi-agent simulation
 │   │   ├── simulation.py               # Agent dynamics
@@ -570,20 +571,33 @@ EmbeddingGemma/
 │   │   ├── search.py                   # Hybrid search
 │   │   ├── vectorstore.py              # Qdrant integration
 │   │   ├── generation.py               # Answer generation
-│   │   └── config.py                   # RAG configuration
+│   │   ├── config.py                   # RAG configuration
+│   │   └── errors.py                   # Error handling
 │   ├── ui/                             # UI component modules
 │   │   ├── corpus.py                   # Corpus management
+│   │   ├── mcmp_runner.py              # MCMP simulation runner
 │   │   ├── queries.py                  # Multi-query logic
 │   │   ├── agent.py                    # Agent chat
 │   │   ├── reports.py                  # Report generation
+│   │   ├── state.py                    # State management
 │   │   └── components.py               # UI utilities
 │   ├── agents/
 │   │   └── agent_fungus_rag.py         # Agent chat implementation
 │   ├── realtime/
 │   │   └── server.py                   # FastAPI WebSocket server
-│   └── mcmp_rag.py                     # Legacy MCMP facade
+│   ├── mcmp_rag.py                     # Legacy MCMP facade
+│   └── codespace_analyzer.py           # Code analysis utilities
+├── experimerntal/                      # Experimental code
+│   ├── streamlit_fungus.py             # Alternative Streamlit version
+│   └── old/                            # Legacy implementations
 ├── tests/                              # Test suites
+│   ├── mcmp/                           # MCMP tests
+│   ├── rag/                            # RAG tests
+│   └── test_*.py                       # Various test files
+├── tools/                              # Utility tools
 ├── docs/                               # Documentation
+├── models/embeddinggemma/              # Downloaded model files
+├── .github/workflows/ci.yml            # CI configuration
 ├── pyproject.toml                      # Python project configuration
 ├── requirements.txt                    # Python dependencies
 └── .python-version                     # Python version (3.12)
