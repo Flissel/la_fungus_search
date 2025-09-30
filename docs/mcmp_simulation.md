@@ -89,25 +89,154 @@ Evaluate over a sliding window of W steps (e.g., W = 20):
 Stop when convergence holds for one full window, or at `max_iterations`.
 
 ### Parameters (current defaults)
-- Simulation
-  - num_agents: 200
-  - max_iterations: 200 (backend loop)
-  - exploration_bonus: 0.1 (upper bound for agent noise std)
-  - pheromone_decay: 0.95 (API constraint: 0.5 ≤ value ≤ 0.999)
-- Relevance shaping
-  - kw_lambda: 0.0
-  - kw_terms: ∅ (empty set)
-- Visualization & cadence
-  - redraw_every: 2
-  - min_trail_strength: 0.05
-  - max_edges: 600
-  - viz_dims: 2 or 3
-- Corpus/build
-  - windows: required from frontend (e.g., [1000, 2000, 4000])
-  - max_files, exclude_dirs, chunk_workers
-  - embed_batch_size: 128
 
-### Notes
-- k for agent attraction is fixed to 3.
-- Agent positions are normalized each step to stay on the embedding hypersphere.
-- Deposit scale uses constants: E × T_s × 0.1.
+#### Core Simulation
+- **num_agents**: 200 (range: 1-10000)
+  - Number of agents exploring the embedding space
+  - More agents = better coverage, higher CPU usage
+
+- **max_iterations**: 200 (range: 1-5000)  
+  - Maximum simulation steps before auto-stop
+  - Higher values = more thorough exploration
+
+- **exploration_bonus**: 0.1 (range: 0.01-1.0)
+  - Upper bound for agent noise standard deviation
+  - Higher values = more random exploration vs exploitation
+
+- **pheromone_decay**: 0.95 (range: 0.5-0.999)
+  - Trail strength decay rate per step
+  - Higher values = longer trail persistence
+
+#### Search & Results
+- **top_k**: 10 (range: 1-200)
+  - Number of top results to return
+  - Used for both intermediate and final results
+
+- **kw_lambda**: 0.0 (keyword weighting)
+- **kw_terms**: ∅ (empty set, keyword filtering)
+
+#### Visualization & Updates  
+- **redraw_every**: 2 (range: 1-100)
+  - Steps between visualization updates (WebSocket/live UI)
+  - Higher values = less frequent updates, better performance
+
+- **min_trail_strength**: 0.05 (range: 0.0-1.0)
+  - Minimum trail strength to display in visualization
+  - Higher values = show only strong connections
+
+- **max_edges**: 600 (range: 10-5000)
+  - Maximum edges displayed in network visualization
+  - Higher values = more detail, slower rendering
+
+- **viz_dims**: 2 or 3
+  - Visualization dimensionality (2D/3D)
+  - 2D = faster, 3D = more immersive
+
+#### Corpus Building
+- **windows**: Required from frontend (e.g., [1000, 2000, 4000])
+  - Chunk window sizes in lines for multi-scale chunking
+  - Creates overlapping chunks at different granularities
+
+- **max_files**: 500 (range: 0-20000)
+  - Maximum files to process from corpus
+  - 0 = no limit
+
+- **exclude_dirs**: [".venv", "node_modules", ".git", "external"]
+  - Directories to skip during corpus building
+
+- **chunk_workers**: max(4, cpu_count) (range: 1-128)
+  - CPU threads for parallel document chunking
+
+- **embed_batch_size**: 128 (range: 1-4096)
+  - Batch size for embedding computation
+  - Adjust based on GPU memory
+
+#### Background Processing
+- **max_chunks_per_shard**: 2000 (range: 0-100000)
+  - Chunks per shard in background jobs
+  - 0 = no sharding, single job
+  - Used in `/jobs/start` endpoint
+
+#### Reporting (Realtime Server)
+- **report_enabled**: false
+  - Enable background LLM analysis reports
+
+- **report_every**: 5 (range: 1-100)
+  - Steps between background reports
+  - Higher values = less frequent reports
+
+- **report_mode**: "deep" 
+  - Values: "deep", "structure", "exploratory", "summary", "repair"
+  - Controls LLM analysis style
+
+## API Integration
+
+### Realtime Server Endpoints
+The simulation can be controlled via REST API (see `docs/API_REFERENCE.md`):
+
+#### Simulation Control
+- `POST /start`: Initialize simulation with parameters
+- `POST /stop`: Stop current simulation
+- `POST /reset`: Reset state, clear all data
+- `POST /pause`: Pause simulation, save agent state  
+- `POST /resume`: Resume with restored agent state
+
+#### Live Updates (WebSocket `/ws`)
+- `snapshot`: Visualization data every `redraw_every` steps
+- `metrics`: Step count, avg/max relevance, trail count
+- `results`: Top-K results for current step
+- `results_stable`: Results when stability detected
+- `report`: Background LLM analysis (if enabled)
+
+#### Agent Manipulation
+- `POST /agents/add`: Add N new agents during simulation
+- `POST /agents/resize`: Resize agent population to target count
+
+#### Configuration  
+- `POST /config`: Update parameters without restart
+- `GET /settings`: Get current configuration + usage info
+- `POST /settings`: Bulk settings update
+
+### Parameter Sources
+Settings can come from:
+1. **Startup defaults**: Hard-coded in server
+2. **Disk persistence**: `.fungus_cache/settings.json`
+3. **API calls**: `/start`, `/config`, `/settings` endpoints
+4. **WebSocket**: Small config updates (e.g., viz_dims)
+
+### Integration Examples
+```python
+# Start simulation with custom parameters
+config = {
+    "query": "Find database connections",
+    "num_agents": 300,
+    "max_iterations": 150, 
+    "exploration_bonus": 0.15,
+    "pheromone_decay": 0.97,
+    "top_k": 15,
+    "report_enabled": True,
+    "report_every": 10
+}
+response = await session.post("/start", json=config)
+```
+
+```javascript
+// Live visualization updates
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    if (data.type === 'snapshot') {
+        updateVisualization(data.data.agents, data.data.documents, data.data.edges);
+    }
+    if (data.type === 'metrics') {
+        updateMetrics(data.data.step, data.data.avg_rel, data.data.trails);
+    }
+};
+```
+
+## Implementation Notes
+- k for agent attraction is fixed to 3 nearest neighbors
+- Agent positions are normalized each step to stay on the embedding hypersphere
+- Pheromone deposit scale uses constants: E × T_s × 0.1
+- Background reports use async LLM calls to avoid blocking simulation loop
+- WebSocket broadcasts are non-blocking; failed clients are automatically removed
+- Settings persistence occurs automatically on API configuration changes
