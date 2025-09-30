@@ -9,20 +9,25 @@ EmbeddingGemma kombiniert lokale Embeddings mit einem Physarum-inspirierten Mult
 - **MCMP‑RAG**: Viele Agenten bewegen sich im Embedding‑Raum, hinterlassen Pheromonspuren, dämpfen Trails und aktualisieren fortlaufend Dokument‑Relevanzen; am Ende werden Top‑K Chunks mit optionaler Diversität zurückgegeben.
 - **Code‑Space Frontend**: `streamlit_fungus_backup.py` durchsucht Python‑Repos über mehrstufige Chunks (Header: `# file: … | lines: a-b | window: w`), unterstützt Multi‑Query (LLM‑generiert, grounded) und **Dedup**.
 - **Agent‑Chat & Tools**: Chat‑Agent mit Tool‑Calls (z. B. Code‑Suche, Root‑Dir setzen), Hintergrund‑Reports mit Live‑Progress und optionaler Snapshot‑GIF‑Aufzeichnung.
-- **Enterprise‑RAG**: Qdrant + LlamaIndex für persistente Indizes (Rag‑Modus im Fungus‑UI), Hybrid‑Scoring und Antwort‑Generierung.
-- **API & Coding Events**: `src/embeddinggemma/fungus_api.py` inkl. Endpoint zum Bauen von Code‑Edit‑Events aus Chunk‑Headern.
+- **RAG Integration**: Qdrant VectorStore Integration für persistente Indizes, Hybrid‑Scoring und Antwort‑Generierung über Streamlit UI.
+- **Realtime API Server**: `src/embeddinggemma/realtime/server.py` FastAPI WebSocket server für Live-MCMP-Simulation mit React Frontend.
 
 Siehe auch:
 - Architektur & C4: docs/ARCHITECTURE.md
 - Scripts overview: docs/SCRIPTS.md
-- Demo & Insights: docs/DEMO.md
+- Simulation Details: docs/mcmp_simulation.md
+- API Reference: docs/API_REFERENCE.md
+- Config Reference: docs/CONFIG_REFERENCE.md
 
 ## 🚀 Schnellstart
 
 ### 1. Setup ausführen
 ```bash
-# Doppelklick auf setup.bat oder im Terminal:
-setup.bat
+# Install dependencies
+pip install -r requirements.txt
+
+# Optional: Editable install
+pip install -e .
 ```
 
 ### 2. Hugging Face Setup
@@ -32,58 +37,92 @@ setup.bat
 
 ### 3. Anwendung starten
 
-#### 🌐 Web-Interface (Empfohlen)
+#### 🌐 Streamlit Interface (Empfohlen)
 ```bash
+# Direct run
 streamlit run streamlit_fungus_backup.py
+
+# Or using helper scripts
+.\run-streamlit.ps1    # PowerShell
+run-streamlit.cmd      # Windows CMD
 ```
 Dann Browser öffnen: http://localhost:8501
 
-#### 🔧 RagV1 CLI (Index & Suche)
+#### 🚀 Realtime WebSocket Server + React Frontend
 ```bash
-# Index aufbauen (unter src/)
-python src/embeddinggemma/rag_v1.py build --directory src
+# 1. Start FastAPI server
+uvicorn src.embeddinggemma.realtime.server:app --reload --port 8011
 
-# Query gegen vorhandenen Index
-python src/embeddinggemma/rag_v1.py query "Wie ist RagV1 implementiert?" --top-k 5 --alpha 0.7
-
-# Vergleich: Fungus vs RagV1 vs Hybrid (optional)
-python src/embeddinggemma/rag_v1.py compare "Erkläre MCPMRetriever" --top-k 5
-
-# Stats laden/anzeigen
-python src/embeddinggemma/rag_v1.py load --dir ./enterprise_index
-python src/embeddinggemma/rag_v1.py stats
+# 2. Start React frontend (separate terminal)
+cd frontend
+npm install  # first time only
+npm run dev
 ```
+- Server: http://localhost:8011  
+- React Frontend: http://localhost:5173
+
 
 ## 🔧 Features
 
-### Web-Interface (streamlit_fungus_backup.py)
+### Streamlit Interface (streamlit_fungus_backup.py)
 - Text/Code Suche über mehrstufige Chunks
 - Multi-Query (LLM generiert, grounded auf eingebetteten Dateien)
 - Dedup der Queries (Jaccard)
 - Live-Logging, GIF-Snapshots, Agent-Chat (Tool-Calls)
-- “Rag”-Sektion für Enterprise RAG (Qdrant + LlamaIndex)
+- "Rag"-Sektion für Enterprise RAG (Qdrant + LlamaIndex)
 
-### RagV1 (rag_v1.py)
+### Realtime WebSocket Server (realtime/server.py)
+- FastAPI mit WebSocket Live-Updates
+- Pause/Resume/Reset Simulation
+- Agents dynamisch hinzufügen/anpassen 
+- Live Top-K Ergebnisse und Visualisierung
+- Background Reports mit LLM Integration
+- REST API für alle Konfigurationen
+
+### RAG Components (src/embeddinggemma/rag/)
 - AST‑Chunking für Code
 - Hybrid Retrieval (semantic + keyword)
-- Qdrant VectorStore
-- Optionale Generierung via HF LLM oder Ollama
+- Qdrant VectorStore Integration
+- Generierung via HF LLM oder Ollama
+- Integration in Streamlit UI
 
 ## 📁 Struktur
 ```
 EmbeddingGemma/
-├── streamlit_fungus_backup.py         # Primary Frontend (MCMP + Rag + Agent)
-├── src/embeddinggemma/rag_v1.py
-├── src/embeddinggemma/agents/agent_fungus_rag.py
-├── docs/ARCHITECTURE.md
-├── docs/SCRIPTS.md
-├── docs/DEMO.md
+├── streamlit_fungus_backup.py         # Streamlit Frontend (MCMP + RAG + Agent Chat)
+├── src/embeddinggemma/
+│   ├── realtime/server.py             # FastAPI WebSocket Server
+│   ├── mcmp_rag.py                   # Core MCMP Retriever
+│   ├── mcmp/                         # Simulation, embeddings, PCA
+│   ├── rag/                          # RAG components (chunking, vectorstore)
+│   ├── ui/                           # UI components for Streamlit
+│   └── agents/agent_fungus_rag.py    # Agent with tool calls
+├── frontend/                         # React frontend for realtime server
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── SCRIPTS.md
+│   ├── mcmp_simulation.md
+│   ├── CONFIG_REFERENCE.md
+│   └── API_REFERENCE.md
 └── README.md
 ```
 
 ## ⚙️ Konfiguration
-- OLLAMA_MODEL und OLLAMA_HOST für LLM-Aufgaben (Multi-Query, Summaries, Chat)
-- GPU für Embeddings (HF) empfohlen; MCMP selbst ist CPU‑lastig
+
+### Umgebungsvariablen
+- `OLLAMA_MODEL`: LLM Model (default: qwen2.5-coder:7b)
+- `OLLAMA_HOST`: Ollama Server URL (default: http://127.0.0.1:11434)
+- `HF_TOKEN`: Hugging Face Token (falls benötigt)
+
+### Hardware
+- GPU für Embeddings (HF) empfohlen; MCMP Simulation läuft auf CPU
+- Minimum 8GB RAM für größere Korpora
+
+### Ports
+- Streamlit: 8501 (default)
+- Realtime Server: 8011 (empfohlen)
+- Frontend Dev: 5173 (Vite)
+- Ollama: 11434 (default)
 
 ## 🧠 MCMP-RAG: Schleimpilz-inspirierte Suche
 
