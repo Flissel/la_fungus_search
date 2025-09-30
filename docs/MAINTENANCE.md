@@ -3,33 +3,50 @@
 This guide helps maintain the FastAPI + React MCMP system, tests, and docs.
 
 ### Overview
-- Backend: `FastAPI` app at `src/embeddinggemma/realtime/server.py` (port 8011)
-- Frontend: React + Vite dev server in `frontend/` (port 5173), proxies to backend
-- Simulation: MCMP loop via `MCPMRetriever` and `mcmp.simulation.*`
-- Docs: see `docs/` (e.g., `mcmp_simulation.md`, `rag_query_prompt.md`)
+- **Backend**: FastAPI application at `src/embeddinggemma/realtime/server.py` (port 8011)
+- **Frontend**: React + TypeScript application in `frontend/` (port 5173) with Vite build system
+- **Simulation**: MCMP (Multi-agent Codebase Pattern Matching) via `MCPMRetriever` and `mcmp.simulation.*`
+- **Documentation**: Available in `docs/` directory
 
-### Environment
-- Python venv recommended: `.venv`
-- Install backend deps (includes uvicorn standard):
-  - Windows PowerShell: `./run-realtime.ps1` (installs if needed, runs server)
-- Frontend deps:
-  - `cd frontend && npm i`
-  - Install Playwright browsers: `npx playwright install --with-deps`
+### Environment Setup
+- **Python venv recommended**: Create with `python -m venv .venv` and activate
+- **Install backend dependencies**:
+  ```bash
+  pip install -r requirements.txt
+  ```
+- **Frontend dependencies**:
+  ```bash
+  cd frontend && npm install
+  ```
+- **Install Playwright browsers** (for e2e tests):
+  ```bash
+  cd frontend && npx playwright install --with-deps
+  ```
 
-### Start/Stop
-- Backend (dev, auto-reload):
-  - `./run-realtime.ps1`
-  - Equivalent: `./.venv/Scripts/python.exe -m uvicorn --app-dir src embeddinggemma.realtime.server:app --reload --port 8011`
-- Frontend (dev):
-  - `cd frontend && npm run dev`
-- Streamlit legacy (ensures correct venv/CUDA):
-  - `./run-streamlit.ps1` (or `run-streamlit.cmd`)
+### Development Servers
+- **Backend (dev, auto-reload)**:
+  ```bash
+  # Using the provided script (Windows PowerShell)
+  ./run-realtime.ps1
 
-### Health & Ports
-- Frontend: `http://localhost:5173`
-- Backend: `http://localhost:8011` (landing page) and WebSocket `/ws`
-- Snapshot stream: WebSocket to `ws://localhost:8011/ws`
-- Verify: open `http://localhost:8011/static/index.html`
+  # Or manually with uvicorn
+  python -m uvicorn --app-dir src embeddinggemma.realtime.server:app --reload --port 8011
+  ```
+- **Frontend (dev)**:
+  ```bash
+  cd frontend && npm run dev
+  ```
+- **Production build**:
+  ```bash
+  cd frontend && npm run build
+  ```
+
+### Access URLs
+- **Frontend development**: `http://localhost:5173`
+- **Backend API**: `http://localhost:8011`
+- **WebSocket endpoint**: `ws://localhost:8011/ws`
+- **API documentation**: `http://localhost:8011/docs` (FastAPI auto-generated docs)
+- **Static files**: `http://localhost:8011/static/index.html`
 
 ### Settings & Persistence
 The backend persists settings to `.fungus_cache/settings.json`.
@@ -83,27 +100,46 @@ See `docs/mcmp_simulation.md` for:
 - Convergence heuristics (trail stagnation, avg relevance band)
 
 ### Testing
-- Pytest (unit): `pytest -q` (mcmp and rag suites)
-- Playwright (e2e):
-  - Ensure backend is running, then: `cd frontend && npm run test:e2e`
+- **Unit tests (pytest)**:
+  ```bash
+  pytest -q  # Run all tests in tests/ directory
+  pytest tests/mcmp/ -v  # MCMP-specific tests
+  pytest tests/rag/ -v   # RAG-specific tests
+  ```
+- **End-to-end tests (Playwright)**:
+  ```bash
+  cd frontend && npm run test:e2e
+  ```
+  Ensure backend is running before running e2e tests.
 
 ### Troubleshooting
-- WebSocket fails (404 or closed): ensure backend is running, installed `uvicorn[standard]`, and Vite proxy is configured (see `frontend/vite.config.ts`).
-- CORS errors: backend includes permissive `CORSMiddleware`; verify origins and port alignment.
-- FAISS IVF training error on small corpora: `build_faiss_index` auto-falls back to `Flat` for N < 4096.
-- CUDA not used in Streamlit: launch via `run-streamlit.ps1` to use venv Python with the correct Torch build.
-- Simulation not starting: ensure `/start` body includes `windows` and that the backend logs "started" with docs/agents counts.
+- **WebSocket connection issues**: Ensure backend is running and Vite proxy is correctly configured in `frontend/vite.config.ts`
+- **CORS errors**: Backend includes permissive CORS middleware; verify origins and port alignment in browser dev tools
+- **FAISS index issues**: For small corpora (< 4096 docs), the system automatically falls back to Flat index
+- **CUDA not detected**: Ensure PyTorch with CUDA support is installed and CUDA_VISIBLE_DEVICES is set appropriately
+- **Simulation not starting**: Verify `/start` request includes required `windows` parameter and check backend logs for "started" message with docs/agents counts
+- **Frontend build issues**: Clear `node_modules` and reinstall if dependency issues occur: `cd frontend && rm -rf node_modules && npm install`
+- **Memory issues**: For large codebases, increase `max_files` setting gradually and monitor system resources
 
 ### Conventions
 - Do not hard-code chunk sizes; always pass via frontend `/start` or `/settings`.
 - Keep `SettingsModel` constraints aligned with UI controls.
 - Use PCA basis consistently for 2D/3D projections in snapshots.
 
+### Development Conventions
+- **Configuration**: Never hard-code chunk sizes; always pass via frontend `/start` or `/settings`
+- **Validation**: Keep `SettingsModel` constraints aligned with UI controls
+- **Visualization**: Use PCA basis consistently for 2D/3D projections in snapshots
+- **Error handling**: Implement proper error handling for WebSocket disconnections and API failures
+
 ### Release Checklist
-- Backend starts, `/ws` stable
-- Frontend UI parity (light/dark/system) and Plotly theming
-- Playwright smoke tests green (streaming, search, theme toggle)
-- Pytest suites green
-- Update docs (`mcmp_simulation.md`, `rag_query_prompt.md`, this file)
+- [ ] Backend starts successfully and WebSocket `/ws` remains stable
+- [ ] Frontend UI renders correctly with light/dark/system theme support
+- [ ] Plotly visualizations display correctly and update in real-time
+- [ ] Playwright e2e tests pass (streaming, search, theme toggle, basic interactions)
+- [ ] Pytest unit test suites pass for both MCMP and RAG modules
+- [ ] Documentation updated (`ARCHITECTURE.md`, `MAINTENANCE.md`, this file)
+- [ ] Configuration reference updated to reflect any new settings
+- [ ] README.md exists and accurately describes project setup and usage
 
 
