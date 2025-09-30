@@ -1,9 +1,30 @@
 [project]
 name = "embeddinggemma"
 version = "0.1.0"
-description = "Add your description here"
+description = "Multi-Agent Cognitive Process Model (MCMP) for Retrieval-Augmented Generation"
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+    {name = "EmbeddingGemma Team"},
+]
+maintainers = [
+    {name = "EmbeddingGemma Team"},
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["RAG", "retrieval-augmented-generation", "multi-agent", "cognitive-model", "NLP"]
 dependencies = [
     "faiss-cpu>=1.7.0",
     "numpy>=1.21.0,<2.0",
@@ -14,4 +35,154 @@ dependencies = [
     "sentence-transformers>=3.0.0",
     "streamlit>=1.28.0",
     "torch>=2.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "pydantic>=2.0.0",
+    "websockets>=10.0",
+    "psutil>=5.9.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-xdist>=3.0.0",
+    "pytest-benchmark>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+performance = [
+    "psutil>=5.9.0",
+    "memory-profiler>=0.60.0",
+    "line-profiler>=4.0.0",
+]
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+    "myst-parser>=2.0.0",
+]
+
+[project.scripts]
+embeddinggemma-demo = "embeddinggemma.demo:main"
+embeddinggemma-server = "embeddinggemma.realtime.server:create_app"
+
+[project.urls]
+Homepage = "https://github.com/your-org/embeddinggemma"
+Repository = "https://github.com/your-org/embeddinggemma.git"
+Documentation = "https://embeddinggemma.readthedocs.io/"
+Issues = "https://github.com/your-org/embeddinggemma/issues"
+Changelog = "https://github.com/your-org/embeddinggemma/blob/main/CHANGELOG.md"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "performance: marks tests as performance tests",
+    "stress: marks tests as stress tests",
+    "unit: marks tests as unit tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::UserWarning",
+]
+timeout = 300
+timeout_method = "thread"
+
+[tool.coverage.run]
+source = ["src/embeddinggemma"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/conftest.py",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\bProtocol\):",
+    "@(abc\.)?abstractmethod",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "faiss.*",
+    "sentence_transformers.*",
+    "torch.*",
+    "sklearn.*",
+    "plotly.*",
+    "streamlit.*",
+    "fastapi.*",
+    "pydantic.*",
+    "uvicorn.*",
+    "websockets.*",
+    "psutil.*",
+]
+ignore_missing_imports = true
