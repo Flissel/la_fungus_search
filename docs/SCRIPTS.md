@@ -15,9 +15,9 @@ This project contains the following entry points and utilities.
   - Run: `uvicorn src.embeddinggemma.realtime.server:app --reload --port 8011`
 
 - experimerntal/old/rag_v1.py
-  - Status: Available (legacy CLI)
-  - Purpose: RAG pipelines with Qdrant + LlamaIndex, AST chunking, and hybrid retrieval.
-  - When to use: Building/loading a persistent index; programmatic queries; CLI subcommands for build/query/compare/stats.
+  - Status: Legacy (non-functional - missing dependencies)
+  - Purpose: Previous RAG implementation, now replaced by integrated RAG components
+  - Note: Use RAG features through Streamlit UI instead
 
 - src/embeddinggemma/agents/agent_fungus_rag.py
   - Status: Active (advanced / CLI agent)

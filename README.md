@@ -9,7 +9,7 @@ EmbeddingGemma kombiniert lokale Embeddings mit einem Physarum-inspirierten Mult
 - **MCMP‑RAG**: Viele Agenten bewegen sich im Embedding‑Raum, hinterlassen Pheromonspuren, dämpfen Trails und aktualisieren fortlaufend Dokument‑Relevanzen; am Ende werden Top‑K Chunks mit optionaler Diversität zurückgegeben.
 - **Code‑Space Frontend**: `streamlit_fungus_backup.py` durchsucht Python‑Repos über mehrstufige Chunks (Header: `# file: … | lines: a-b | window: w`), unterstützt Multi‑Query (LLM‑generiert, grounded) und **Dedup**.
 - **Agent‑Chat & Tools**: Chat‑Agent mit Tool‑Calls (z. B. Code‑Suche, Root‑Dir setzen), Hintergrund‑Reports mit Live‑Progress und optionaler Snapshot‑GIF‑Aufzeichnung.
-- **Enterprise‑RAG**: Qdrant + LlamaIndex für persistente Indizes (Rag‑Modus im Fungus‑UI), Hybrid‑Scoring und Antwort‑Generierung.
+- **RAG Integration**: Qdrant VectorStore Integration für persistente Indizes, Hybrid‑Scoring und Antwort‑Generierung über Streamlit UI.
 - **Realtime API Server**: `src/embeddinggemma/realtime/server.py` FastAPI WebSocket server für Live-MCMP-Simulation mit React Frontend.
 
 Siehe auch:
@@ -61,14 +61,6 @@ npm run dev
 - Server: http://localhost:8011  
 - React Frontend: http://localhost:5173
 
-#### 🛠️ RAG CLI (verfügbar in `experimerntal/old/`)
-```bash
-# Index aufbauen 
-python experimerntal/old/rag_v1.py build --directory src
-
-# Query gegen Index
-python experimerntal/old/rag_v1.py query "RAG implementation details" --top-k 5
-```
 
 ## 🔧 Features
 
@@ -87,11 +79,12 @@ python experimerntal/old/rag_v1.py query "RAG implementation details" --top-k 5
 - Background Reports mit LLM Integration
 - REST API für alle Konfigurationen
 
-### RAG Module (rag/ directory)
+### RAG Components (src/embeddinggemma/rag/)
 - AST‑Chunking für Code
 - Hybrid Retrieval (semantic + keyword)
 - Qdrant VectorStore Integration
 - Generierung via HF LLM oder Ollama
+- Integration in Streamlit UI
 
 ## 📁 Struktur
 ```
