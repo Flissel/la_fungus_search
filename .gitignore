@@ -19,3 +19,4 @@ enterprise_index
 embedding_cache
 external
 models
+.env\n.env
