@@ -96,3 +96,189 @@ def start_background_report(settings: Dict[str, Any], query_text: str):
     write_progress(job_id, {"status": "running", "percent": 0, "message": "Queued", "started_at": datetime.utcnow().isoformat() + "Z"})
     fut = BG_EXECUTOR.submit(_job, job_id, dict(settings), str(query_text))
     return job_id, fut
+
+
+# ---- Reports merging helpers ----
+def _discover_report_paths(max_reports: int = 200) -> List[str]:
+    """Locate report.json files produced by per-step runs and background jobs.
+
+    Searches in .fungus_cache/runs/**/step_*/report.json and .fungus_cache/reports/report_*.json
+    Returns most recently modified first, up to max_reports.
+    """
+    roots: List[str] = []
+    try:
+        base = os.path.join('.fungus_cache', 'runs')
+        for root, _dirs, files in os.walk(base):
+            if 'report.json' in files:
+                roots.append(os.path.join(root, 'report.json'))
+    except Exception:
+        pass
+    try:
+        # Background report outputs created by start_background_report
+        rep_dir = os.path.join('.fungus_cache', 'reports')
+        if os.path.isdir(rep_dir):
+            for fn in os.listdir(rep_dir):
+                if fn.startswith('report_') and fn.endswith('.json'):
+                    roots.append(os.path.join(rep_dir, fn))
+    except Exception:
+        pass
+    try:
+        roots = sorted(roots, key=lambda p: os.path.getmtime(p), reverse=True)
+    except Exception:
+        pass
+    return roots[: max(1, int(max_reports))]
+
+
+def _norm_item(it: Dict[str, Any], fallback_query: str | None = None) -> Dict[str, Any]:
+    """Normalize a single report item to a common schema."""
+    out: Dict[str, Any] = {}
+    out['code_chunk'] = it.get('code_chunk') or ''
+    out['content'] = it.get('content') or ''
+    out['file_path'] = it.get('file_path') or (it.get('metadata', {}) or {}).get('file_path') or ''
+    lr = it.get('line_range')
+    if isinstance(lr, list) and len(lr) == 2 and all(isinstance(x, int) for x in lr):
+        out['line_range'] = [int(lr[0]), int(lr[1])]
+    else:
+        out['line_range'] = [1, max(1, len((out['content'] or '').splitlines()))]
+    out['code_purpose'] = it.get('code_purpose') or ''
+    out['code_dependencies'] = it.get('code_dependencies') or []
+    out['file_type'] = it.get('file_type') or ''
+    try:
+        out['embedding_score'] = float(it.get('embedding_score', 0.0))
+    except Exception:
+        out['embedding_score'] = 0.0
+    out['relevance_to_query'] = it.get('relevance_to_query') or ''
+    out['query_initial'] = it.get('query_initial') or (fallback_query or '')
+    fqs = it.get('follow_up_queries') or []
+    out['follow_up_queries'] = [q for q in fqs if isinstance(q, str) and q.strip()]
+    return out
+
+
+def _item_key(it: Dict[str, Any]) -> str:
+    """Stable key for deduplication: file_path + line_range or content hash."""
+    fp = str(it.get('file_path') or '')
+    lr = it.get('line_range') or []
+    if fp and isinstance(lr, list) and len(lr) == 2:
+        return f"{fp}:{int(lr[0])}-{int(lr[1])}"
+    # Fallback to content/code hash
+    txt = (it.get('code_chunk') or '') + '\n' + (it.get('content') or '')
+    try:
+        return 'sha1:' + hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()
+    except Exception:
+        return 'sha1:'
+
+
+def merge_reports_to_summary(paths: List[str] | None = None, out_path: str | None = None) -> Dict[str, Any]:
+    """Merge multiple report.json files into a single summary document.
+
+    - paths: optional explicit list of report file paths. If None, auto-discovers recent reports.
+    - out_path: where to write the merged summary. Defaults to .fungus_cache/reports/summary.json
+
+    Returns: { summary_path, total_reports, total_items, kept_items, deduped, sections }
+    """
+    if not paths:
+        paths = _discover_report_paths()
+    paths = [p for p in (paths or []) if isinstance(p, str) and os.path.isfile(p)]
+    items_norm: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    for p in paths:
+        try:
+            with open(p, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            step = int(data.get('step', -1)) if isinstance(data, dict) else -1
+            mode = str(data.get('mode', '') or '') if isinstance(data, dict) else ''
+            payload = data.get('data') if isinstance(data, dict) else None
+            items = (payload or {}).get('items', []) if isinstance(payload, dict) else []
+            # Try to propagate the main query if present in the file context
+            fallback_query = None
+            try:
+                # Heuristic: initial query often present in first item
+                if items:
+                    q0 = items[0].get('query_initial')
+                    if isinstance(q0, str) and q0.strip():
+                        fallback_query = q0
+            except Exception:
+                fallback_query = None
+            for it in (items or []):
+                itn = _norm_item(it, fallback_query)
+                itn['__source__'] = {
+                    'path': p,
+                    'step': step,
+                    'mode': mode,
+                }
+                items_norm.append(itn)
+        except Exception as e:
+            errors.append(f"{p}: {e}")
+
+    total_items = len(items_norm)
+    # Deduplicate, keep highest embedding_score
+    best_by_key: Dict[str, Dict[str, Any]] = {}
+    for it in items_norm:
+        k = _item_key(it)
+        prev = best_by_key.get(k)
+        if prev is None or float(it.get('embedding_score', 0.0)) > float(prev.get('embedding_score', 0.0)):
+            best_by_key[k] = it
+    merged_items = list(best_by_key.values())
+    deduped = total_items - len(merged_items)
+
+    # Aggregate follow_up_queries and basic sections
+    all_followups: List[str] = []
+    for it in merged_items:
+        all_followups.extend(it.get('follow_up_queries', []) or [])
+    # Sections by simple heuristics on file_path
+    sections: Dict[str, List[Dict[str, Any]]] = {
+        'routes': [],
+        'websocket': [],
+        'background_jobs': [],
+        'indexing': [],
+        'other': [],
+    }
+    for it in merged_items:
+        fp = (it.get('file_path') or '').lower()
+        if '/realtime/server.py' in fp or '\\realtime\\server.py' in fp:
+            if '/ws' in (it.get('content') or '') or 'websocket' in (it.get('content') or '').lower():
+                sections['websocket'].append(it)
+            elif 'jobs' in (it.get('content') or '').lower():
+                sections['background_jobs'].append(it)
+            elif 'corpus/index' in (it.get('content') or '').lower() or 'qdrant' in (it.get('content') or '').lower():
+                sections['indexing'].append(it)
+            else:
+                sections['routes'].append(it)
+        else:
+            sections['other'].append(it)
+
+    # Build summary object
+    summary = {
+        'generated_at': datetime.utcnow().isoformat() + 'Z',
+        'initial_query': next((it.get('query_initial') for it in merged_items if it.get('query_initial')), ''),
+        'total_reports': len(paths),
+        'total_items': total_items,
+        'kept_items': len(merged_items),
+        'deduped': deduped,
+        'follow_up_queries': sorted(list({q for q in all_followups if isinstance(q, str) and q.strip()})),
+        'sections': {k: [
+            {kk: vv for kk, vv in it.items() if not kk.startswith('__')}
+        for it in v] for k, v in sections.items()},
+        'items': [
+            {kk: vv for kk, vv in it.items() if not kk.startswith('__')}
+        for it in merged_items],
+        'sources': [p for p in paths],
+        'errors': errors,
+    }
+
+    # Write output
+    out = out_path or os.path.join('.fungus_cache', 'reports', 'summary.json')
+    try:
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with open(out, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return {
+        'summary_path': out,
+        'total_reports': len(paths),
+        'total_items': total_items,
+        'kept_items': len(merged_items),
+        'deduped': deduped,
+        'errors': errors,
+    }

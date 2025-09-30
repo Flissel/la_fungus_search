@@ -2,7 +2,7 @@ Environment configuration (development)
 
 Backend (FastAPI):
 - EMBEDDINGGEMMA_BACKEND_PORT: port for backend (default 8011)
-- EMBEDDING_MODEL: embeddings model id (default google/embeddinggemma-300m)
+- EMBEDDING_MODEL: embeddings model id. If not set and OPENAI_API_KEY is present, defaults to openai:text-embedding-3-large; otherwise google/embeddinggemma-300m
 - DEVICE_MODE: embeddings device selection (auto|cpu|cuda)
 - OLLAMA_MODEL: LLM model id (e.g., qwen2.5-coder:7b)
 - OLLAMA_HOST: Ollama HTTP endpoint (default http://127.0.0.1:11434)
@@ -37,23 +37,26 @@ Prompts:
   Example file: embeddinggemma/modeprompts/deep.py
 
 Artifacts:
-- All generated prompts and reports are saved under .fungus_cache/reports/
-  - prompt_step_<i>.txt
-  - judge_prompt_step_<i>.txt
-  - step_<i>.json
+- Per-run artifacts are saved under .fungus_cache/runs/<run_id>/step_<i>/
+  - report.json
   - answer_prompt.txt
 
 .env support:
 - Create a `.env` in repo root; it will be auto-loaded by the backend.
-- Example (`.env.example` provided):
+- Example (.env):
   - OLLAMA_MODEL=qwen2.5-coder:7b
   - OLLAMA_HOST=http://127.0.0.1:11434
   - OLLAMA_SYSTEM=You are a precise code analysis assistant. Output strict JSON as requested.
   - OLLAMA_NUM_GPU=1
   - OLLAMA_NUM_THREAD=12
   - OLLAMA_NUM_BATCH=128
-  - EMBEDDING_MODEL=google/embeddinggemma-300m
+  - EMBEDDING_MODEL=openai:text-embedding-3-large
   - DEVICE_MODE=cuda
+  # Qdrant (vector backend)
+  - VECTOR_BACKEND=qdrant
+  - QDRANT_URL=http://localhost:6339
+  - QDRANT_COLLECTION=codebase
+
   - EMBEDDINGGEMMA_BACKEND_PORT=8011
   - LLM_PROVIDER=openai
   - OPENAI_MODEL=gpt-4o-mini

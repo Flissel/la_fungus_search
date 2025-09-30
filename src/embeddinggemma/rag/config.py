@@ -6,7 +6,7 @@ import os
 
 @dataclass
 class RagSettings:
-    qdrant_url: str = os.environ.get("QDRANT_URL", "http://localhost:6337")
+    qdrant_url: str = os.environ.get("QDRANT_URL", "http://localhost:6339")
     qdrant_api_key: Optional[str] = os.environ.get("QDRANT_API_KEY")
     collection_name: str = os.environ.get("RAG_COLLECTION", "codebase")
     embedding_model: str = os.environ.get("EMBED_MODEL", "google/embeddinggemma-300m")

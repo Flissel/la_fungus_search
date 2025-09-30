@@ -3,23 +3,41 @@ from typing import List, Dict, Any, Set
 import os
 import asyncio
 import json
+import hashlib
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+import re
 from pydantic import BaseModel, Field, validator
 
 import numpy as np
 
 from embeddinggemma.mcmp_rag import MCPMRetriever
 from embeddinggemma.ui.corpus import collect_codebase_chunks, list_code_files  # type: ignore
-from embeddinggemma.rag.generation import generate_with_ollama, generate_text  # type: ignore
-from embeddinggemma.prompts import get_report_instructions
-from embeddinggemma.prompts import build_report_prompt as prompts_build_report_prompt
-from embeddinggemma.prompts import build_judge_prompt as prompts_build_judge_prompt
+from embeddinggemma.llm import generate_text  # type: ignore
+from embeddinggemma.llm.config import load_config  # type: ignore
+from embeddinggemma.llm.prompts import get_report_instructions
+from embeddinggemma.modeprompts import deep as _pm_deep  # type: ignore
+from embeddinggemma.modeprompts import structure as _pm_structure  # type: ignore
+from embeddinggemma.modeprompts import exploratory as _pm_exploratory  # type: ignore
+from embeddinggemma.modeprompts import summary as _pm_summary  # type: ignore
+from embeddinggemma.modeprompts import repair as _pm_repair  # type: ignore
+from embeddinggemma.modeprompts import steering as _pm_steering  # type: ignore
+from embeddinggemma.prompts import _default_instructions as _base_default_instructions  # type: ignore
+from embeddinggemma.llm.prompts import build_report_prompt as prompts_build_report_prompt
+from embeddinggemma.llm.prompts import build_judge_prompt as prompts_build_judge_prompt
 from embeddinggemma.ui.queries import dedup_multi_queries  # type: ignore
+from embeddinggemma.ui.reports import merge_reports_to_summary  # type: ignore
+
+# Load .env early so env vars are present before initializing streamer/config
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except Exception:
+    pass
 
 
 def _collect_py_documents(root_dir: str, max_files: int = 300, max_chars: int = 4000) -> List[str]:
@@ -40,6 +58,43 @@ def _collect_py_documents(root_dir: str, max_files: int = 300, max_chars: int = 
             except Exception:
                 continue
     return docs
+
+
+def _sha1_of_file(path: str) -> str:
+    try:
+        h = hashlib.sha1()
+        with open(path, 'rb') as f:
+            for block in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(block)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
+
+def _parse_chunk_header_line(first_line: str) -> tuple[str | None, int | None, int | None, int | None]:
+    try:
+        if not first_line.startswith('# file:'):
+            return None, None, None, None
+        parts = [p.strip() for p in first_line[1:].split('|')]
+        file_part = parts[0].split(':', 1)[1].strip() if len(parts) > 0 and ':' in parts[0] else None
+        lines_part = parts[1].split(':', 1)[1].strip() if len(parts) > 1 and ':' in parts[1] else None
+        win_part = parts[2].split(':', 1)[1].strip() if len(parts) > 2 and ':' in parts[2] else None
+        a, b = None, None
+        if lines_part and '-' in lines_part:
+            try:
+                a = int(lines_part.split('-')[0].strip())
+                b = int(lines_part.split('-')[1].strip())
+            except Exception:
+                a, b = None, None
+        w = None
+        try:
+            if win_part:
+                w = int(win_part)
+        except Exception:
+            w = None
+        return file_part, a, b, w
+    except Exception:
+        return None, None, None, None
 
 
 def _report_schema_hint() -> str:
@@ -83,6 +138,11 @@ class SnapshotStreamer:
         self.pheromone_decay: float = 0.95
         self.embed_batch_size: int = 128
         self.max_chunks_per_shard: int = 2000
+        # vector backend
+        self.vector_backend: str = os.environ.get('VECTOR_BACKEND', 'memory')  # 'memory' | 'qdrant'
+        self.qdrant_url: str = os.environ.get('QDRANT_URL', 'http://localhost:6339')
+        self.qdrant_api_key: str | None = os.environ.get('QDRANT_API_KEY')
+        self.qdrant_collection: str = os.environ.get('QDRANT_COLLECTION', 'codebase')
         # jobs
         self.jobs: dict[str, dict] = {}
         # hot state save for pause/resume
@@ -113,38 +173,106 @@ class SnapshotStreamer:
         self._llm_vote: dict[int, int] = {}
         self._doc_boost: dict[int, float] = {}
         self._query_pool: list[str] = []
+        self._query_pool_cap: int = 100
+        self.mq_enabled: bool = False
+        self.mq_count: int = 2
+        # run budgets
+        self.token_cap: int | None = None  # total token budget for run (approx)
+        self.cost_cap_usd: float | None = None
+        self._stagnant_steps: int = 0
+        self.stagnation_threshold: int = 8  # steps without new targets before pausing reports
         self._seeds_queue: list[int] = []
-        # LLM (Ollama) configuration (defaults from environment)
+        # corpus fingerprint to detect changes
+        self._corpus_fingerprint: str | None = None
+        # run artifacts
+        import time as _t
+        self.run_id: str = os.environ.get('RUN_ID', f"run_{int(_t.time())}")
+        # LLM configuration defaults (centralized)
         try:
-            self.ollama_model: str = os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b')
-            self.ollama_host: str = os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434')
-            self.ollama_system: str | None = os.environ.get('OLLAMA_SYSTEM')
-            self.ollama_num_gpu: int | None = int(os.environ.get('OLLAMA_NUM_GPU')) if os.environ.get('OLLAMA_NUM_GPU') else None
-            self.ollama_num_thread: int | None = int(os.environ.get('OLLAMA_NUM_THREAD')) if os.environ.get('OLLAMA_NUM_THREAD') else None
-            self.ollama_num_batch: int | None = int(os.environ.get('OLLAMA_NUM_BATCH')) if os.environ.get('OLLAMA_NUM_BATCH') else None
+            _cfg = load_config()
         except Exception:
-            self.ollama_model = 'qwen2.5-coder:7b'
-            self.ollama_host = 'http://127.0.0.1:11434'
-            self.ollama_system = None
-            self.ollama_num_gpu = None
-            self.ollama_num_thread = None
-            self.ollama_num_batch = None
-        # OpenAI configuration (optional)
-        self.llm_provider: str = os.environ.get('LLM_PROVIDER', 'ollama')
-        self.openai_model: str = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-        self.openai_api_key: str | None = os.environ.get('OPENAI_API_KEY')
-        self.openai_base_url: str | None = os.environ.get('OPENAI_BASE_URL')
-        self.openai_temperature: float = float(os.environ.get('OPENAI_TEMPERATURE', '0.0'))
-        # Google
-        self.google_model: str = os.environ.get('GOOGLE_MODEL', 'gemini-1.5-pro')
-        self.google_api_key: str | None = os.environ.get('GOOGLE_API_KEY')
-        self.google_base_url: str | None = os.environ.get('GOOGLE_BASE_URL')
-        self.google_temperature: float = float(os.environ.get('GOOGLE_TEMPERATURE', '0.0'))
-        # Grok
-        self.grok_model: str = os.environ.get('GROK_MODEL', 'grok-2-latest')
-        self.grok_api_key: str | None = os.environ.get('GROK_API_KEY')
-        self.grok_base_url: str | None = os.environ.get('GROK_BASE_URL')
-        self.grok_temperature: float = float(os.environ.get('GROK_TEMPERATURE', '0.0'))
+            _cfg = None
+        # Apply central config with env fallback
+        if _cfg is not None:
+            self.llm_provider: str = _cfg.provider
+            self.ollama_model: str = _cfg.ollama.model
+            self.ollama_host: str = _cfg.ollama.host
+            self.ollama_system: str | None = _cfg.ollama.system
+            self.ollama_num_gpu: int | None = _cfg.ollama.num_gpu
+            self.ollama_num_thread: int | None = _cfg.ollama.num_thread
+            self.ollama_num_batch: int | None = _cfg.ollama.num_batch
+            self.openai_model: str = _cfg.openai.model
+            self.openai_api_key: str | None = _cfg.openai.api_key
+            self.openai_base_url: str | None = _cfg.openai.base_url
+            self.openai_temperature: float = float(_cfg.openai.temperature)
+            self.google_model: str = _cfg.google.model
+            self.google_api_key: str | None = _cfg.google.api_key
+            self.google_base_url: str | None = _cfg.google.base_url
+            self.google_temperature: float = float(_cfg.google.temperature)
+            self.grok_model: str = _cfg.grok.model
+            self.grok_api_key: str | None = _cfg.grok.api_key
+            self.grok_base_url: str | None = _cfg.grok.base_url
+            self.grok_temperature: float = float(_cfg.grok.temperature)
+            # Ensure API keys fall back to env if missing in config
+            if not self.openai_api_key:
+                self.openai_api_key = os.environ.get('OPENAI_API_KEY')
+            if not self.google_api_key:
+                self.google_api_key = os.environ.get('GOOGLE_API_KEY')
+            if not self.grok_api_key:
+                self.grok_api_key = os.environ.get('GROK_API_KEY')
+        else:
+            # Fallback to envs directly if config fails
+            try:
+                self.ollama_model: str = os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b')
+                self.ollama_host: str = os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434')
+                self.ollama_system: str | None = os.environ.get('OLLAMA_SYSTEM')
+                self.ollama_num_gpu: int | None = int(os.environ.get('OLLAMA_NUM_GPU')) if os.environ.get('OLLAMA_NUM_GPU') else None
+                self.ollama_num_thread: int | None = int(os.environ.get('OLLAMA_NUM_THREAD')) if os.environ.get('OLLAMA_NUM_THREAD') else None
+                self.ollama_num_batch: int | None = int(os.environ.get('OLLAMA_NUM_BATCH')) if os.environ.get('OLLAMA_NUM_BATCH') else None
+            except Exception:
+                self.ollama_model = 'qwen2.5-coder:7b'
+                self.ollama_host = 'http://127.0.0.1:11434'
+                self.ollama_system = None
+                self.ollama_num_gpu = None
+                self.ollama_num_thread = None
+                self.ollama_num_batch = None
+            self.llm_provider: str = os.environ.get('LLM_PROVIDER', 'ollama')
+            self.openai_model: str = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
+            self.openai_api_key: str | None = os.environ.get('OPENAI_API_KEY')
+            self.openai_base_url: str | None = os.environ.get('OPENAI_BASE_URL')
+            self.openai_temperature: float = float(os.environ.get('OPENAI_TEMPERATURE', '0.0'))
+            self.google_model: str = os.environ.get('GOOGLE_MODEL', 'gemini-1.5-pro')
+            self.google_api_key: str | None = os.environ.get('GOOGLE_API_KEY')
+            self.google_base_url: str | None = os.environ.get('GOOGLE_BASE_URL')
+            self.google_temperature: float = float(os.environ.get('GOOGLE_TEMPERATURE', '0.0'))
+            self.grok_model: str = os.environ.get('GROK_MODEL', 'grok-2-latest')
+            self.grok_api_key: str | None = os.environ.get('GROK_API_KEY')
+            self.grok_base_url: str | None = os.environ.get('GROK_BASE_URL')
+            self.grok_temperature: float = float(os.environ.get('GROK_TEMPERATURE', '0.0'))
+
+    @staticmethod
+    def _parse_json_loose(raw: str) -> dict:
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+        try:
+            # Strip code fences
+            s = raw.strip()
+            if s.startswith('```'):
+                s = "\n".join([ln for ln in s.splitlines() if not ln.strip().startswith('```')])
+            # Find first JSON object or array
+            start_obj = s.find('{')
+            start_arr = s.find('[')
+            start = max(0, min([p for p in [start_obj, start_arr] if p != -1])) if (start_obj != -1 or start_arr != -1) else -1
+            end_obj = s.rfind('}')
+            end_arr = s.rfind(']')
+            end = max(end_obj, end_arr)
+            if start != -1 and end != -1 and end > start:
+                return json.loads(s[start:end+1])
+        except Exception:
+            pass
+        return {}
 
     def _doc_by_id(self, doc_id: int):
         try:
@@ -230,12 +358,20 @@ class SnapshotStreamer:
         # Enforce token/step budget (approximate by characters)
         if int(self._reports_sent) >= int(self.max_reports):
             return {}
+        # run-level budget checks
+        try:
+            if self.token_cap is not None and int(self._tokens_used) >= int(self.token_cap):
+                return {}
+        except Exception:
+            pass
         judged: dict[int, dict] = {}
         try:
             prompt = self._build_judge_prompt(self.query, results)
             self._tokens_used += len(prompt)
             # basic budget check
             if int(self._tokens_used) > int(self.max_report_tokens):
+                return {}
+            if self.token_cap is not None and int(self._tokens_used) > int(self.token_cap):
                 return {}
             # pre-generation clarity log for judge
             try:
@@ -265,6 +401,7 @@ class SnapshotStreamer:
             except Exception:
                 llm_opts = {}
             judge_prompt_path = os.path.join(SETTINGS_DIR, f"reports/judge_prompt_step_{int(self.step_i)}.txt")
+            judge_usage_path = os.path.join(SETTINGS_DIR, f"runs/{str(getattr(self, 'run_id', 'run'))}/step_{int(self.step_i)}/judge_usage.json")
             text = generate_text(
                 provider=(self.llm_provider or 'ollama'),
                 prompt=prompt,
@@ -289,11 +426,10 @@ class SnapshotStreamer:
                 grok_base_url=(self.grok_base_url or 'https://api.x.ai'),
                 grok_temperature=float(getattr(self, 'grok_temperature', 0.0)),
                 save_prompt_path=judge_prompt_path,
+                save_usage_path=judge_usage_path,
             )
             raw = (text or "").strip()
-            if raw.startswith("```"):
-                raw = "\n".join([ln for ln in raw.splitlines() if not ln.strip().startswith("```")])
-            obj = json.loads(raw)
+            obj = self._parse_json_loose(raw)
             arr = obj.get('items', []) if isinstance(obj, dict) else []
             for j in arr:
                 try:
@@ -472,7 +608,24 @@ class SnapshotStreamer:
         if self.running:
             return
         # Build retriever and corpus
+        # Ensure LLM API keys are present from env if not set
+        try:
+            if not getattr(self, 'openai_api_key', None):
+                self.openai_api_key = os.environ.get('OPENAI_API_KEY')
+            if not getattr(self, 'google_api_key', None):
+                self.google_api_key = os.environ.get('GOOGLE_API_KEY')
+            if not getattr(self, 'grok_api_key', None):
+                self.grok_api_key = os.environ.get('GROK_API_KEY')
+        except Exception:
+            pass
         embedding_model_name = os.environ.get('EMBEDDING_MODEL', 'google/embeddinggemma-300m')
+        # Prefer OpenAI embeddings by default if API key present
+        try:
+            if not embedding_model_name or embedding_model_name.strip() == 'google/embeddinggemma-300m':
+                if os.environ.get('OPENAI_API_KEY'):
+                    embedding_model_name = 'openai:text-embedding-3-large'
+        except Exception:
+            pass
         device_mode = os.environ.get('DEVICE_MODE', 'auto')
         retr = MCPMRetriever(
             embedding_model_name=embedding_model_name,
@@ -484,12 +637,55 @@ class SnapshotStreamer:
             device_mode=device_mode,
         )
         if not self.windows:
-            raise RuntimeError("windows (chunk sizes) must be provided by frontend")
-        if self.use_repo:
-            docs = collect_codebase_chunks('src', self.windows, int(self.max_files), self.exclude_dirs, self.chunk_workers)
+            # Fallback default windows if none provided
+            self.windows = [1000, 2000, 4000]
+            try:
+                await self._broadcast({"type": "log", "message": "windows: defaulted to [1000,2000,4000]"})
+            except Exception:
+                pass
+        # Corpus loading: either from codebase (memory backend) or from Qdrant as text chunks
+        if (self.vector_backend or 'memory').lower() == 'qdrant':
+            try:
+                from qdrant_client import QdrantClient  # type: ignore
+                client = QdrantClient(url=self.qdrant_url, api_key=self.qdrant_api_key)
+                # Pull recent points; assume payload.text contains content; fallback to 'text'/'snippet'
+                res = client.scroll(collection_name=self.qdrant_collection, limit=int(self.max_files) or 10000, with_payload=True, with_vectors=False)
+                points = (res[0] or []) if isinstance(res, tuple) else (res or [])
+                docs = []
+                for p in points:
+                    try:
+                        pl = getattr(p, 'payload', {}) or {}
+                        txt = pl.get('text') or pl.get('snippet') or ''
+                        if txt:
+                            # prepend header if path/lines exist for neighbor finding
+                            path = pl.get('path') or pl.get('file_path') or 'chunk'
+                            start = pl.get('start') or 1
+                            end = pl.get('end') or (start + len(str(txt).splitlines()))
+                            header = f"# file: {path} | lines: {start}-{end} | window: {max(self.windows)}\n"
+                            docs.append(header + str(txt))
+                    except Exception:
+                        continue
+            except Exception as e:
+                raise RuntimeError(f"Qdrant fetch failed: {e}")
         else:
-            rf = (self.root_folder or os.getcwd())
+            if self.use_repo:
+                rf = 'src'
+            else:
+                rf = (self.root_folder or os.getcwd())
             docs = collect_codebase_chunks(rf, self.windows, int(self.max_files), self.exclude_dirs, self.chunk_workers)
+            # compute simple fingerprint of file list + sizes
+            try:
+                files = list_code_files(rf, int(self.max_files), self.exclude_dirs)
+                h = hashlib.sha1()
+                for p in sorted(files):
+                    try:
+                        h.update(p.encode('utf-8', errors='ignore'))
+                        h.update(str(os.path.getsize(p)).encode('utf-8'))
+                    except Exception:
+                        continue
+                self._corpus_fingerprint = h.hexdigest()
+            except Exception:
+                self._corpus_fingerprint = None
         retr.add_documents(docs)
         retr.initialize_simulation(self.query)
         self.retr = retr
@@ -546,7 +742,59 @@ class SnapshotStreamer:
                         try:
                             if self.retr is not None:
                                 res_now = self.retr.search(self.query, top_k=int(self.top_k))
-                                await self._broadcast({"type": "results", "step": int(self.step_i), "data": res_now.get("results", [])})
+                                # If we have seeded follow-up queries and MQ is enabled, aggregate
+                                if bool(getattr(self, 'mq_enabled', False)) and getattr(self, '_query_pool', []):
+                                    try:
+                                        pool = list(getattr(self, '_query_pool', []))
+                                        try:
+                                            await self._broadcast({"type": "log", "message": f"mq: pool_size={len(pool)} mq_count={min(int(getattr(self, 'mq_count', 5)), 3)}"})
+                                        except Exception:
+                                            pass
+                                        extra = dedup_multi_queries(pool, similarity_threshold=0.8)[: min(int(getattr(self, 'mq_count', 5)), 3)]
+                                        # Log a compact preview of selected extras to avoid overly long messages
+                                        try:
+                                            preview = extra[:3]
+                                            more = max(0, len(extra) - len(preview))
+                                            msg = f"mq: selected_extras={preview}" + (f" (+{more} more)" if more else "")
+                                            await self._broadcast({"type": "log", "message": msg})
+                                        except Exception:
+                                            pass
+                                        queries = [self.query] + extra
+                                        agg: dict[str, dict] = {}
+                                        per_counts = {}
+                                        for q in queries:
+                                            r = self.retr.search(q, top_k=int(self.top_k))
+                                            try:
+                                                per_counts[q] = len(r.get('results', []) or [])
+                                            except Exception:
+                                                per_counts[q] = 0
+                                            for it in (r.get('results', []) or []):
+                                                c = str(it.get('content', ''))
+                                                if not c:
+                                                    continue
+                                                prev = agg.get(c)
+                                                if prev is None or float(it.get('relevance_score', 0.0)) > float(prev.get('relevance_score', 0.0)):
+                                                    agg[c] = it
+                                        merged = sorted(agg.values(), key=lambda x: x.get('relevance_score', 0.0), reverse=True)[: int(self.top_k)]
+                                        # Summarize aggregation in logs
+                                        try:
+                                            q_preview = queries[:3]
+                                            more_q = max(0, len(queries) - len(q_preview))
+                                            await self._broadcast({
+                                                "type": "log",
+                                                "message": (
+                                                    f"mq: aggregated queries={q_preview}" + (f" (+{more_q} more)" if more_q else "") +
+                                                    f" per_counts={per_counts} merged_results={len(merged)}"
+                                                )
+                                            })
+                                        except Exception:
+                                            pass
+                                        await self._broadcast({"type": "results", "step": int(self.step_i), "data": merged})
+                                        res_now = {"results": merged}
+                                    except Exception as _e_mq:
+                                        await self._broadcast({"type": "log", "message": f"mq: aggregate failed: {_e_mq}"})
+                                else:
+                                    await self._broadcast({"type": "results", "step": int(self.step_i), "data": res_now.get("results", [])})
                                 # blended Top-K with contextual steering weights
                                 try:
                                     blended = self._compute_blended_topk(res_now.get("results", []))
@@ -592,6 +840,7 @@ class SnapshotStreamer:
                                     except Exception:
                                         llm_opts = {}
                                     prompt_path = os.path.join(SETTINGS_DIR, f"reports/prompt_step_{int(self.step_i)}.txt")
+                                    usage_path = os.path.join(SETTINGS_DIR, f"runs/{str(getattr(self, 'run_id', 'run'))}/step_{int(self.step_i)}/usage.json")
                                     text = generate_text(
                                         provider=(self.llm_provider or 'ollama'),
                                         prompt=prompt,
@@ -612,23 +861,37 @@ class SnapshotStreamer:
                                         grok_base_url=(self.grok_base_url or 'https://api.x.ai'),
                                         grok_temperature=float(getattr(self, 'grok_temperature', 0.0)),
                                         save_prompt_path=prompt_path,
+                                        save_usage_path=usage_path,
                                     )
                                 except Exception as e:
                                     await self._broadcast({"type": "log", "message": f"report: LLM error: {e}"})
                                     text = "{}"
                                 # Parse JSON best-effort
                                 try:
-                                    raw = (text or "").strip()
-                                    if raw.startswith("```"):
-                                        raw = "\n".join([ln for ln in raw.splitlines() if not ln.strip().startswith("```")])
-                                    report_obj = json.loads(raw)
+                                    report_obj = self._parse_json_loose(text or "")
+                                    if not isinstance(report_obj, dict):
+                                        report_obj = {"items": []}
                                 except Exception:
                                     report_obj = {"items": []}
                                 # Save and broadcast
                                 try:
-                                    reports_dir = os.path.join(SETTINGS_DIR, "reports")
+                                    reports_dir = os.path.join(SETTINGS_DIR, "runs", str(getattr(self, 'run_id', 'run')))  # per-run directory
                                     os.makedirs(reports_dir, exist_ok=True)
-                                    pth = os.path.join(reports_dir, f"step_{int(self.step_i)}.json")
+                                    step_dir = os.path.join(reports_dir, f"step_{int(self.step_i)}")
+                                    os.makedirs(step_dir, exist_ok=True)
+                                    # Save exact prompt and raw response for debugging
+                                    try:
+                                        with open(os.path.join(step_dir, "prompt.txt"), "w", encoding="utf-8") as f_pr:
+                                            f_pr.write(prompt)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        with open(os.path.join(step_dir, "response_raw.txt"), "w", encoding="utf-8") as f_raw:
+                                            f_raw.write(text or "")
+                                    except Exception:
+                                        pass
+                                    # Save parsed JSON
+                                    pth = os.path.join(step_dir, "report.json")
                                     with open(pth, "w", encoding="utf-8") as f:
                                         json.dump({"step": int(self.step_i), "mode": mode, "data": report_obj}, f, ensure_ascii=False, indent=2)
                                     await self._broadcast({"type": "log", "message": f"report: saved {pth}"})
@@ -639,15 +902,63 @@ class SnapshotStreamer:
                                     await self._broadcast({"type": "log", "message": f"report: items={len(report_obj.get('items', [])) if isinstance(report_obj, dict) else 0}"})
                                 except Exception:
                                     pass
+                                # Seed follow-up queries from report into query pool (dedup)
+                                try:
+                                    items = report_obj.get('items', []) if isinstance(report_obj, dict) else []
+                                    new_qs: list[str] = []
+                                    for it in items:
+                                        for q in (it.get('follow_up_queries', []) or []):
+                                            if isinstance(q, str) and q.strip():
+                                                new_qs.append(q.strip())
+                                    # filter: require concrete target (file path, function/class, endpoint, or line range)
+                                    def _is_concrete(q: str) -> bool:
+                                        s = (q or "").strip()
+                                        if not s:
+                                            return False
+                                        if re.search(r"\b(lines?\s*[:#-]?\s*\d+(-\d+)?)\b", s):
+                                            return True
+                                        if ("/" in s) or ("\\" in s):
+                                            return True
+                                        if re.search(r"\b(def|class)\s+[A-Za-z_][A-Za-z0-9_]*", s):
+                                            return True
+                                        if re.search(r"@app\.(get|post|put|patch|delete)\(\s*['\"]", s):
+                                            return True
+                                        return False
+                                    if new_qs:
+                                        concrete = [q for q in new_qs if _is_concrete(q)]
+                                        if concrete:
+                                            qs = dedup_multi_queries(concrete + list(getattr(self, '_query_pool', [])), similarity_threshold=0.8)
+                                            before = set(getattr(self, '_query_pool', []))
+                                            added: list[str] = []
+                                            for q in qs:
+                                                if q not in before:
+                                                    self._query_pool.append(q)
+                                                    added.append(q)
+                                                    if len(self._query_pool) > int(getattr(self, '_query_pool_cap', 100)):
+                                                        self._query_pool = self._query_pool[-int(getattr(self, '_query_pool_cap', 100)) :]
+                                            await self._broadcast({"type": "seed_queries", "added": added, "pool_size": len(self._query_pool)})
+                                            await self._broadcast({"type": "log", "message": f"seed: added_follow_ups={len(added)} pool_size={len(self._query_pool)}"})
+                                            # stagnation reset if we added concrete targets
+                                            if added:
+                                                self._stagnant_steps = 0
+                                        else:
+                                            await self._broadcast({"type": "log", "message": "seed: skipped non-concrete follow-ups"})
+                                except Exception as _e_seed:
+                                    await self._broadcast({"type": "log", "message": f"seed: follow_up_queries failed: {_e_seed}"})
                                 # Contextual steering: judge + actions (budgeted)
                                 try:
-                                    if self.judge_enabled and (self._reports_sent < int(self.max_reports)):
+                                    # stagnation detection: if no new targets for N report windows, pause judge
+                                    if hasattr(self, '_stagnant_steps') and hasattr(self, 'stagnation_threshold'):
+                                        self._stagnant_steps += 1
+                                    if self.judge_enabled and (self._reports_sent < int(self.max_reports)) and (self._stagnant_steps < int(getattr(self, 'stagnation_threshold', 8))):
                                         judgements = self._llm_judge(docs)
                                         self._apply_judgements(judgements)
                                         self._reports_sent += 1
                                         # targeted neighborhood boosts and pruning
                                         self._apply_targeted_fetch(max_neighbors_per_seed=10)
                                         self._apply_pruning()
+                                    elif self._stagnant_steps >= int(getattr(self, 'stagnation_threshold', 8)):
+                                        await self._broadcast({"type": "log", "message": f"judge: paused due to stagnation (_stagnant_steps={self._stagnant_steps})"})
                                 except Exception as _e_judge:
                                     await self._broadcast({"type": "log", "message": f"judge: failed: {_e_judge}"})
                         except Exception as e:
@@ -701,12 +1012,6 @@ streamer = SnapshotStreamer()
 app = FastAPI()
 
 # CORS for dev (Vite, direct origins) and dynamic port from env
-# Load .env if present
-try:
-    from dotenv import load_dotenv  # type: ignore
-    load_dotenv()
-except Exception:
-    pass
 PORT = int(os.environ.get('EMBEDDINGGEMMA_BACKEND_PORT', '8011'))
 app.add_middleware(
     CORSMiddleware,
@@ -726,6 +1031,54 @@ app.add_middleware(
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/introspect/api")
+async def http_introspect_api() -> JSONResponse:
+    """Introspect server to list HTTP routes and WebSocket event types."""
+    try:
+        import inspect as _inspect
+        import re as _re
+        routes: list[dict] = []
+        ws_events: set[str] = set()
+        # Extract routes from FastAPI app
+        for r in getattr(app, 'routes', []):
+            try:
+                path = getattr(r, 'path', None)
+                methods = sorted(list(getattr(r, 'methods', []) or []))
+                name = getattr(r, 'name', None)
+                if not path or path.startswith('/openapi'):
+                    continue
+                if path in ['/', '/docs', '/redoc']:
+                    continue
+                routes.append({"path": path, "methods": methods, "name": name})
+            except Exception:
+                continue
+        # Parse this module's source to find _broadcast({"type": "..."}) usages
+        try:
+            mod = _inspect.getmodule(http_introspect_api)  # type: ignore
+            src = _inspect.getsource(mod) if mod else ""
+        except Exception:
+            src = ""
+        if src:
+            for m in _re.finditer(r"_broadcast\(\{[^\}]*\"type\"\s*:\s*\"([^\"]+)\"", src):
+                try:
+                    ev = m.group(1)
+                    if ev:
+                        ws_events.add(ev)
+                except Exception:
+                    continue
+        return JSONResponse({"routes": routes, "ws_events": sorted(list(ws_events))})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+@app.post("/run/new")
+async def http_run_new() -> JSONResponse:
+    try:
+        import time as _t
+        streamer.run_id = f"run_{int(_t.time())}"
+        return JSONResponse({"status": "ok", "run_id": streamer.run_id})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 # Settings persistence
 SETTINGS_DIR = os.path.join(os.getcwd(), ".fungus_cache")
@@ -765,6 +1118,10 @@ def settings_dict() -> dict:
         "pheromone_decay": streamer.pheromone_decay,
         "embed_batch_size": streamer.embed_batch_size,
         "max_chunks_per_shard": streamer.max_chunks_per_shard,
+        # Vector backend
+        "vector_backend": getattr(streamer, 'vector_backend', 'memory'),
+        "qdrant_url": getattr(streamer, 'qdrant_url', ''),
+        "qdrant_collection": getattr(streamer, 'qdrant_collection', ''),
         # LLM settings
         "ollama_model": streamer.ollama_model,
         "ollama_host": streamer.ollama_host,
@@ -783,7 +1140,13 @@ def settings_dict() -> dict:
         "grok_base_url": streamer.grok_base_url,
         "grok_temperature": streamer.grok_temperature,
         "mq_enabled": bool(getattr(streamer, 'mq_enabled', False)),
-        "mq_count": int(getattr(streamer, 'mq_count', 5)),
+        "mq_count": min(int(getattr(streamer, 'mq_count', 5)), 3),
+        "query_pool_cap": int(getattr(streamer, '_query_pool_cap', 100)),
+        "token_cap": getattr(streamer, 'token_cap', None),
+        "cost_cap_usd": getattr(streamer, 'cost_cap_usd', None),
+        "stagnation_threshold": int(getattr(streamer, 'stagnation_threshold', 8)),
+        # run
+        "run_id": getattr(streamer, 'run_id', ''),
     }
 
 def apply_settings(d: dict) -> None:
@@ -829,6 +1192,12 @@ def apply_settings(d: dict) -> None:
         if getattr(sm, 'ollama_num_batch', None) is not None: streamer.ollama_num_batch = int(getattr(sm, 'ollama_num_batch'))
         if getattr(sm, 'mq_enabled', None) is not None: streamer.mq_enabled = bool(getattr(sm, 'mq_enabled'))
         if getattr(sm, 'mq_count', None) is not None: streamer.mq_count = int(getattr(sm, 'mq_count'))
+        # vector backend
+        if getattr(sm, 'vector_backend', None) is not None: streamer.vector_backend = str(getattr(sm, 'vector_backend'))
+        if getattr(sm, 'qdrant_url', None) is not None: streamer.qdrant_url = str(getattr(sm, 'qdrant_url'))
+        if getattr(sm, 'qdrant_collection', None) is not None: streamer.qdrant_collection = str(getattr(sm, 'qdrant_collection'))
+        # run id
+        if getattr(sm, 'run_id', None) is not None: streamer.run_id = str(getattr(sm, 'run_id'))
         if getattr(sm, 'llm_provider', None) is not None: streamer.llm_provider = str(getattr(sm, 'llm_provider'))
         if getattr(sm, 'openai_model', None) is not None: streamer.openai_model = str(getattr(sm, 'openai_model'))
         if getattr(sm, 'openai_base_url', None) is not None: streamer.openai_base_url = str(getattr(sm, 'openai_base_url'))
@@ -857,6 +1226,70 @@ def save_settings_to_disk() -> None:
             json.dump(settings_dict(), f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+def _prompt_default_for_mode(mode: str) -> str:
+    m = (mode or "deep").lower()
+    try:
+        if m == 'deep':
+            return _pm_deep.instructions()  # type: ignore
+        if m == 'structure':
+            return _pm_structure.instructions()  # type: ignore
+        if m == 'exploratory':
+            return _pm_exploratory.instructions()  # type: ignore
+        if m == 'summary':
+            return _pm_summary.instructions()  # type: ignore
+        if m == 'repair':
+            return _pm_repair.instructions()  # type: ignore
+        if m == 'steering':
+            return _pm_steering.instructions()  # type: ignore
+    except Exception:
+        pass
+    try:
+        return _base_default_instructions(m)
+    except Exception:
+        return ""
+
+
+@app.post("/prompts/save")
+async def http_prompts_save(req: Request) -> JSONResponse:
+    """Persist mode prompt overrides to .fungus_cache/prompts_overrides.json.
+
+    Body: { overrides: { mode: instructions_text } }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    overrides = body.get("overrides", {}) or {}
+    if not isinstance(overrides, dict):
+        return JSONResponse({"status": "error", "message": "overrides must be an object"}, status_code=400)
+    try:
+        prompts_dir = os.path.join(SETTINGS_DIR)
+        os.makedirs(prompts_dir, exist_ok=True)
+        path = os.path.join(prompts_dir, "prompts_overrides.json")
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump({ str(k): str(v) for k,v in overrides.items() }, f, ensure_ascii=False, indent=2)
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/prompts")
+async def http_prompts_get() -> JSONResponse:
+    try:
+        path = os.path.join(SETTINGS_DIR, "prompts_overrides.json")
+        overrides = {}
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                obj = json.load(f)
+                if isinstance(obj, dict):
+                    overrides = {str(k): str(v) for k, v in obj.items() if isinstance(v, str)}
+        modes = ['deep','structure','exploratory','summary','repair','steering']
+        defaults = { m: _prompt_default_for_mode(m) for m in modes }
+        return JSONResponse({"status":"ok", "overrides": overrides, "defaults": defaults, "modes": modes})
+    except Exception as e:
+        return JSONResponse({"status":"error", "message": str(e)}, status_code=500)
 
 
 def settings_usage_lines(d: dict) -> list[str]:
@@ -942,6 +1375,12 @@ class SettingsModel(BaseModel):
     pheromone_decay: float | None = Field(default=None, ge=0.5, le=0.999)
     embed_batch_size: int | None = Field(default=None, ge=1, le=4096)
     max_chunks_per_shard: int | None = Field(default=None, ge=0, le=100000)
+    # Vector backend
+    vector_backend: str | None = None  # 'memory' | 'qdrant'
+    qdrant_url: str | None = None
+    qdrant_collection: str | None = None
+    # run
+    run_id: str | None = None
     # LLM (Ollama) configuration
     ollama_model: str | None = None
     ollama_host: str | None = None
@@ -968,14 +1407,14 @@ class SettingsModel(BaseModel):
     # Multi-query
     mq_enabled: bool | None = None
     mq_count: int | None = Field(default=None, ge=1, le=10)
+    # Prompt overrides
+    prompts_overrides: Dict[str, str] | None = None
 
     @validator('viz_dims')
     def _dims(cls, v):  # type: ignore
         if v is None:
-            return v
-        if int(v) not in (2, 3):
-            raise ValueError('viz_dims must be 2 or 3')
-        return int(v)
+            return 3
+        return 3
 
 
 @app.get("/")
@@ -1060,7 +1499,22 @@ async def http_start(req: Request) -> JSONResponse:
     if getattr(body, 'mq_enabled', None) is not None:
         streamer.mq_enabled = bool(getattr(body, 'mq_enabled'))
     if getattr(body, 'mq_count', None) is not None:
-        streamer.mq_count = int(getattr(body, 'mq_count'))
+        streamer.mq_count = max(1, min(int(getattr(body, 'mq_count')), 3))
+    # follow-up and budget controls
+    if getattr(body, 'token_cap', None) is not None:
+        try:
+            streamer.token_cap = int(getattr(body, 'token_cap'))
+        except Exception:
+            streamer.token_cap = None
+    if getattr(body, 'cost_cap_usd', None) is not None:
+        try:
+            streamer.cost_cap_usd = float(getattr(body, 'cost_cap_usd'))
+        except Exception:
+            streamer.cost_cap_usd = None
+    if getattr(body, 'stagnation_threshold', None) is not None:
+        streamer.stagnation_threshold = max(3, int(getattr(body, 'stagnation_threshold')))
+    if getattr(body, 'query_pool_cap', None) is not None:
+        streamer._query_pool_cap = max(10, int(getattr(body, 'query_pool_cap')))
     # contextual steering settings
     for k in ["alpha","beta","gamma","delta","epsilon","min_content_chars","import_only_penalty","max_reports","max_report_tokens","judge_enabled"]:
         if getattr(body, k, None) is not None:
@@ -1162,6 +1616,62 @@ async def http_config(req: Request) -> JSONResponse:
 
 @app.post("/stop")
 async def http_stop() -> JSONResponse:
+    # Aggregate per-step usage files into a run summary on stop
+    try:
+        run_id = str(getattr(streamer, 'run_id', 'run'))
+        base_dir = os.path.join(SETTINGS_DIR, "runs", run_id)
+        total = {"by_provider": {}, "by_model": {}, "totals": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+        import glob as _glob, json as _json
+        for step_dir in sorted(_glob.glob(os.path.join(base_dir, "step_*"))):
+            for name in ("usage.json", "judge_usage.json"):
+                p = os.path.join(step_dir, name)
+                try:
+                    if os.path.exists(p):
+                        with open(p, 'r', encoding='utf-8') as f:
+                            u = _json.load(f)
+                        prov = str(u.get('provider', 'unknown'))
+                        model = str(u.get('model', 'unknown'))
+                        # favor exact tokens; fall back to *_est
+                        pt = int(u.get('prompt_tokens', u.get('prompt_tokens_est', 0)) or 0)
+                        ct = int(u.get('completion_tokens', u.get('completion_tokens_est', 0)) or 0)
+                        tt = int(u.get('total_tokens', u.get('total_tokens_est', pt + ct)) or (pt + ct))
+                        total['totals']['prompt_tokens'] += pt
+                        total['totals']['completion_tokens'] += ct
+                        total['totals']['total_tokens'] += tt
+                        total['by_provider'].setdefault(prov, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+                        total['by_provider'][prov]['prompt_tokens'] += pt
+                        total['by_provider'][prov]['completion_tokens'] += ct
+                        total['by_provider'][prov]['total_tokens'] += tt
+                        total['by_model'].setdefault(model, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0})
+                        total['by_model'][model]['prompt_tokens'] += pt
+                        total['by_model'][model]['completion_tokens'] += ct
+                        total['by_model'][model]['total_tokens'] += tt
+                except Exception:
+                    continue
+        # Rough cost estimation (USD per 1K tokens); configurable via env
+        PRICES = {
+            'openai:gpt-4o': {"prompt": float(os.environ.get('PRICE_OPENAI_GPT4O_PROMPT', '0.005')), "completion": float(os.environ.get('PRICE_OPENAI_GPT4O_COMPLETION', '0.015'))},
+            'openai:gpt-4o-mini': {"prompt": float(os.environ.get('PRICE_OPENAI_GPT4OM_PROMPT', '0.0005')), "completion": float(os.environ.get('PRICE_OPENAI_GPT4OM_COMPLETION', '0.0015'))},
+        }
+        costs = {"by_model": {}, "total_usd": 0.0}
+        for model, v in total['by_model'].items():
+            key = 'openai:' + model if not model.startswith('openai:') else model
+            price = PRICES.get(key)
+            if price:
+                usd = (v['prompt_tokens'] / 1000.0) * price['prompt'] + (v['completion_tokens'] / 1000.0) * price['completion']
+                costs['by_model'][model] = round(usd, 6)
+                costs['total_usd'] += usd
+        costs['total_usd'] = round(costs['total_usd'], 6)
+        out = {"usage": total, "costs": costs}
+        os.makedirs(base_dir, exist_ok=True)
+        with open(os.path.join(base_dir, "run_costs.json"), 'w', encoding='utf-8') as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+        try:
+            await streamer._broadcast({"type": "log", "message": f"run_costs: total_tokens={total['totals']['total_tokens']} total_usd={costs['total_usd']}"})
+        except Exception:
+            pass
+    except Exception:
+        pass
     await streamer.stop()
     return JSONResponse({"status": "stopped"})
 
@@ -1180,6 +1690,17 @@ async def http_reset() -> JSONResponse:
         streamer._paused = False
         streamer._saved_state = None
         streamer._avg_rel_history = []
+        # Clear LLM/reporting related state and caches
+        streamer._reports_sent = 0
+        streamer._tokens_used = 0
+        streamer._judge_cache = {}
+        streamer._llm_vote = {}
+        streamer._doc_boost = {}
+        streamer._query_pool = []
+        streamer._seeds_queue = []
+        # Clear background jobs and force corpus rebuild detection
+        streamer.jobs = {}
+        streamer._corpus_fingerprint = None
         # Keep configuration (query, windows, etc.) so the next /start can reuse or override
         await streamer._broadcast({"type": "log", "message": "simulation reset"})
     except Exception:
@@ -1399,6 +1920,13 @@ async def http_answer(req: Request) -> JSONResponse:
     except Exception:
         llm_opts = {}
     answer_prompt_path = os.path.join(SETTINGS_DIR, "reports/answer_prompt.txt")
+    try:
+        # also write under run folder
+        run_dir = os.path.join(SETTINGS_DIR, "runs", str(getattr(streamer, 'run_id', 'run')), f"step_{int(getattr(streamer, 'step_i', 0))}")
+        os.makedirs(run_dir, exist_ok=True)
+        answer_prompt_path = os.path.join(run_dir, "answer_prompt.txt")
+    except Exception:
+        pass
     text = generate_text(
         provider=(streamer.llm_provider or 'ollama'),
         prompt=prompt,
@@ -1467,6 +1995,257 @@ async def http_corpus_list(root: str | None = None, page: int = 1, page_size: in
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@app.get("/corpus/summary")
+async def http_corpus_summary() -> JSONResponse:
+    try:
+        q_count = None
+        try:
+            if (streamer.vector_backend or 'memory').lower() == 'qdrant':
+                from qdrant_client import QdrantClient  # type: ignore
+                client = QdrantClient(url=streamer.qdrant_url, api_key=streamer.qdrant_api_key)
+                cnt = client.count(collection_name=streamer.qdrant_collection, exact=True)
+                q_count = int(getattr(cnt, 'count', None) or 0)
+        except Exception:
+            q_count = None
+        sim_docs = len(getattr(streamer.retr, 'documents', [])) if streamer.retr else 0
+        return JSONResponse({
+            "vector_backend": streamer.vector_backend,
+            "qdrant_url": streamer.qdrant_url,
+            "qdrant_collection": streamer.qdrant_collection,
+            "qdrant_points": q_count,
+            "simulation_docs": sim_docs,
+            "run_id": getattr(streamer, 'run_id', ''),
+        })
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+def _load_embed_client():
+    from embeddinggemma.mcmp.embeddings import load_sentence_model  # lazy import
+    model_name = os.environ.get('EMBEDDING_MODEL', 'google/embeddinggemma-300m')
+    try:
+        if not model_name or model_name.strip() == 'google/embeddinggemma-300m':
+            if os.environ.get('OPENAI_API_KEY'):
+                model_name = 'openai:text-embedding-3-large'
+    except Exception:
+        pass
+    device_mode = os.environ.get('DEVICE_MODE', 'auto')
+    return load_sentence_model(model_name, device_mode)
+
+
+def _encode_texts(embedder, texts: list[str]) -> list[list[float]]:
+    try:
+        # OpenAI adapter returns list[list[float]] directly
+        vecs = embedder.encode(texts)
+        if isinstance(vecs, list):
+            return [list(map(float, v)) for v in vecs]
+        # SentenceTransformers -> numpy array
+        import numpy as _np
+        if hasattr(vecs, 'tolist'):
+            return [list(map(float, v)) for v in _np.asarray(vecs).tolist()]
+        return [list(map(float, v)) for v in vecs]
+    except Exception as e:
+        raise RuntimeError(f"embedding failed: {e}")
+
+
+@app.post("/corpus/add_file")
+async def http_corpus_add_file(req: Request) -> JSONResponse:
+    """Chunk a file, embed chunks, upsert to Qdrant, and reload simulation.
+
+    Body: { path: string }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    path = str(body.get('path', '')).strip()
+    if not path:
+        return JSONResponse({"status": "error", "message": "path is required"}, status_code=400)
+    if (streamer.vector_backend or 'memory').lower() != 'qdrant':
+        return JSONResponse({"status": "error", "message": "vector_backend must be qdrant"}, status_code=400)
+    try:
+        # Chunk
+        from embeddinggemma.ui.corpus import chunk_python_file
+        chunks = chunk_python_file(path, streamer.windows or [max(1, 1000)])
+        if not chunks:
+            return JSONResponse({"status": "error", "message": "no chunks produced"}, status_code=400)
+        # Prepare payloads and texts
+        payloads: list[dict] = []
+        texts: list[str] = []
+        for ch in chunks:
+            first = (ch.splitlines() or [""])[0]
+            p, a, b, _w = _parse_chunk_header_line(first)
+            body_txt = "\n".join(ch.splitlines()[1:])
+            payloads.append({"path": p or os.path.relpath(path), "start": a or 1, "end": b or 1 + len(body_txt.splitlines()), "text": body_txt})
+            texts.append(body_txt)
+        # Embed
+        embedder = _load_embed_client()
+        vectors = _encode_texts(embedder, texts)
+        # Upsert
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import PointStruct
+        client = QdrantClient(url=streamer.qdrant_url, api_key=streamer.qdrant_api_key)
+        pts = []
+        import uuid as _uuid
+        for vec, pl in zip(vectors, payloads):
+            pts.append(PointStruct(id=str(_uuid.uuid4()), vector=vec, payload=pl))
+        client.upsert(collection_name=streamer.qdrant_collection, points=pts)
+        try:
+            await streamer._broadcast({"type": "log", "message": f"qdrant: upserted chunks={len(pts)} for {path}"})
+        except Exception:
+            pass
+        # Reload simulation
+        await streamer.stop()
+        await streamer.start()
+        return JSONResponse({"status": "ok", "chunks": len(pts)})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.post("/corpus/update_file")
+async def http_corpus_update_file(req: Request) -> JSONResponse:
+    """Delete existing chunks for a path in Qdrant, then add_file flow, and reload."""
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    path = str(body.get('path', '')).strip()
+    if not path:
+        return JSONResponse({"status": "error", "message": "path is required"}, status_code=400)
+    if (streamer.vector_backend or 'memory').lower() != 'qdrant':
+        return JSONResponse({"status": "error", "message": "vector_backend must be qdrant"}, status_code=400)
+    try:
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+        client = QdrantClient(url=streamer.qdrant_url, api_key=streamer.qdrant_api_key)
+        flt = Filter(must=[FieldCondition(key="path", match=MatchValue(value=os.path.relpath(path)))])
+        client.delete(collection_name=streamer.qdrant_collection, points_selector=flt)
+        # reuse add_file logic by faking request
+        fake = Request({'type': 'http'})  # type: ignore
+        fake._body = json.dumps({"path": path}).encode('utf-8')  # type: ignore
+        return await http_corpus_add_file(fake)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+@app.post("/corpus/reindex")
+async def http_corpus_reindex(req: Request) -> JSONResponse:
+    """Rebuild corpus and reinitialize retriever if files changed (or force).
+
+    Body: { force: bool }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    force = bool(body.get("force", False))
+    try:
+        if streamer.use_repo:
+            rf = 'src'
+        else:
+            rf = (streamer.root_folder or os.getcwd())
+        files = list_code_files(rf, int(streamer.max_files), streamer.exclude_dirs)
+        h = hashlib.sha1()
+        for p in sorted(files):
+            try:
+                h.update(p.encode('utf-8', errors='ignore'))
+                h.update(str(os.path.getsize(p)).encode('utf-8'))
+            except Exception:
+                continue
+        new_fp = h.hexdigest()
+        changed = (new_fp != streamer._corpus_fingerprint)
+        if not changed and not force:
+            return JSONResponse({"status": "ok", "changed": False, "message": "No file changes detected"})
+        # stop if running
+        try:
+            await streamer._broadcast({"type": "log", "message": "reindex: starting"})
+        except Exception:
+            pass
+        await streamer.stop()
+        # rebuild docs and retriever
+        docs = collect_codebase_chunks(rf, streamer.windows, int(streamer.max_files), streamer.exclude_dirs, streamer.chunk_workers)
+        retr = MCPMRetriever(
+            embedding_model_name=os.environ.get('EMBEDDING_MODEL', 'google/embeddinggemma-300m'),
+            num_agents=streamer.num_agents,
+            max_iterations=streamer.max_iterations,
+            exploration_bonus=streamer.exploration_bonus,
+            pheromone_decay=streamer.pheromone_decay,
+            embed_batch_size=streamer.embed_batch_size,
+            device_mode=os.environ.get('DEVICE_MODE', 'auto'),
+        )
+        retr.add_documents(docs)
+        retr.initialize_simulation(streamer.query)
+        streamer.retr = retr
+        streamer._corpus_fingerprint = new_fp
+        try:
+            await streamer._broadcast({"type": "log", "message": f"reindex: complete docs={len(docs)}"})
+        except Exception:
+            pass
+        return JSONResponse({"status": "ok", "changed": True, "docs": len(docs)})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+# Bulk index repository into Qdrant and reload simulation
+@app.post("/corpus/index_repo")
+async def http_corpus_index_repo(req: Request) -> JSONResponse:
+    """Chunk and embed all repo files to Qdrant, then restart simulation.
+
+    Body: { root?: string, exclude_dirs?: string[] }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    if (streamer.vector_backend or 'memory').lower() != 'qdrant':
+        return JSONResponse({"status": "error", "message": "vector_backend must be qdrant"}, status_code=400)
+    root = str(body.get('root') or ('src' if streamer.use_repo else (streamer.root_folder or os.getcwd())))
+    exclude = body.get('exclude_dirs') or streamer.exclude_dirs
+    try:
+        from embeddinggemma.ui.corpus import list_code_files, chunk_python_file  # type: ignore
+        files = list_code_files(root, int(streamer.max_files), exclude)
+        if not files:
+            return JSONResponse({"status": "error", "message": "no files found to index"}, status_code=400)
+        # Embedder and Qdrant client
+        embedder = _load_embed_client()
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import PointStruct
+        client = QdrantClient(url=streamer.qdrant_url, api_key=streamer.qdrant_api_key)
+        total_pts = 0
+        for i, path in enumerate(files):
+            try:
+                chunks = chunk_python_file(path, streamer.windows or [max(1, 1000)])
+                if not chunks:
+                    continue
+                payloads: list[dict] = []
+                texts: list[str] = []
+                for ch in chunks:
+                    first = (ch.splitlines() or [""])[0]
+                    p, a, b, _w = _parse_chunk_header_line(first)
+                    body_txt = "\n".join(ch.splitlines()[1:])
+                    payloads.append({"path": p or os.path.relpath(path), "start": a or 1, "end": b or 1 + len(body_txt.splitlines()), "text": body_txt})
+                    texts.append(body_txt)
+                vectors = _encode_texts(embedder, texts)
+                import uuid as _uuid
+                pts = [PointStruct(id=str(_uuid.uuid4()), vector=v, payload=pl) for v, pl in zip(vectors, payloads)]
+                if pts:
+                    client.upsert(collection_name=streamer.qdrant_collection, points=pts)
+                    total_pts += len(pts)
+                if i % 10 == 0:
+                    try:
+                        await streamer._broadcast({"type": "log", "message": f"qdrant: indexed files={i+1}/{len(files)} points={total_pts}"})
+                    except Exception:
+                        pass
+            except Exception as e:
+                try:
+                    await streamer._broadcast({"type": "log", "message": f"index_repo: skipped {path}: {e}"})
+                except Exception:
+                    pass
+                continue
+        # Reload simulation
+        await streamer.stop()
+        await streamer.start()
+        return JSONResponse({"status": "ok", "files": len(files), "points": total_pts})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
 # Background shard job
 @app.post("/jobs/start")
 async def http_jobs_start(req: Request) -> JSONResponse:
@@ -1514,5 +2293,32 @@ async def http_jobs_status(job_id: str):
     if not j:
         return JSONResponse({"status": "error", "message": "unknown job"}, status_code=404)
     return JSONResponse({"status": "ok", "job": j})
+
+
+@app.post("/reports/merge")
+async def http_reports_merge(req: Request) -> JSONResponse:
+    """Merge multiple per-step or background reports into a single summary.json.
+
+    Body (optional): {
+      paths?: string[]  // explicit report.json paths; if omitted, auto-discover recent ones
+      out_path?: string // output path for the summary (default: .fungus_cache/reports/summary.json)
+      max_reports?: number // cap auto-discovery
+    }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+    paths = body.get('paths') if isinstance(body.get('paths'), list) else None
+    out_path = body.get('out_path') if isinstance(body.get('out_path'), str) else None
+    res = merge_reports_to_summary(paths=paths, out_path=out_path)
+    # Best-effort: include the merged summary content for UI download
+    summary_obj = None
+    try:
+        with open(res.get('summary_path') or '', 'r', encoding='utf-8') as f:
+            summary_obj = json.load(f)
+    except Exception:
+        summary_obj = None
+    return JSONResponse({"status": "ok", "data": res, "summary": summary_obj})
 
 
