@@ -4,15 +4,18 @@
 
 ```mermaid
 graph LR
-  user[User] --> FE[React/Vite Frontend]
-  FE -->|HTTP start/config/reset/search/answer| BE[FastAPI Backend]
-  FE <-->|WebSocket snapshot/metrics/results/report| BE
-  BE -->|LLM prompts| LLM[Ollama Server]
-  BE --> FS[(.fungus_cache)]
-  BE --> EMB[(Embeddings / FAISS)]
+  user[User] --> FE[React Frontend<br/>localhost:5173]
+  FE -->|HTTP API calls| BE[FastAPI Backend<br/>localhost:8011]
+  FE <-->|WebSocket| BE
+  BE -->|MCMP simulation| MCMP[MCPMRetriever<br/>Multi-agent exploration]
+  BE -->|LLM queries| LLM[Multi-provider<br/>Ollama, OpenAI, Google, Grok]
+  BE -->|Corpus indexing| CORPUS[Code chunking<br/>AST parsing, caching]
+  BE -->|Vector storage| QDRANT[Qdrant database<br/>Optional vector backend]
+  BE -->|Persistence| CACHE[.fungus_cache<br/>Settings, reports, artifacts]
 
   subgraph Simulation
-    BE --> RET[MCPMRetriever<br/>mcmp.simulation]
+    MCMP --> AGENTS[Agents<br/>Position, velocity, exploration]
+    MCMP --> PHEROMONES[Pheromone trails<br/>Visit tracking, decay]
   end
 ```
 
@@ -20,12 +23,14 @@ graph LR
 
 ```mermaid
 graph TB
-  subgraph Frontend [Frontend 5173]
-    UI[Sidebar Controls<br/>TopK, Mode, Windows]
-    Plot[Plotly 2D/3D]
-    StepReport[Step Report Panel]
-    UI --> Plot
-    UI --> StepReport
+  subgraph Frontend [React Frontend]
+    Settings[Configuration Sidebar<br/>Query, mode, corpus settings]
+    Visualization[Plotly Network View<br/>Real-time 2D/3D rendering]
+    Reports[Step Reports Panel<br/>LLM analysis results]
+    Metrics[Performance Dashboard<br/>Simulation metrics, charts]
+    Settings --> Visualization
+    Settings --> Reports
+    Settings --> Metrics
   end
 
   subgraph Backend [Backend 8011]
