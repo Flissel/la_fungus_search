@@ -183,7 +183,14 @@ class MCPMRetriever:
             self.step(min(5, self.max_iterations))
         ranked = sorted(self.documents, key=lambda d: d.relevance_score, reverse=True)[:int(top_k)]
         return {"results": [
-            {"content": d.content, "metadata": d.metadata, "relevance_score": float(d.relevance_score)}
+            {
+                "id": int(d.id),
+                "doc_id": int(d.id),  # Alias for compatibility
+                "content": d.content,
+                "metadata": d.metadata,
+                "relevance_score": float(d.relevance_score),
+                "score": float(d.relevance_score)  # Alias for compatibility
+            }
             for d in ranked
         ]}
 

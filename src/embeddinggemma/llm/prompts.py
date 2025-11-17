@@ -14,29 +14,39 @@ except Exception:  # pragma: no cover
 
 _OVERRIDE_PATH = os.path.join(os.getcwd(), ".fungus_cache", "prompts_overrides.json")
 _OVERRIDES: Dict[str, str] = {}
+_OVERRIDE_MTIME: float = 0
 
 
 def _load_overrides() -> None:
-    global _OVERRIDES
+    global _OVERRIDES, _OVERRIDE_MTIME
     try:
         if os.path.exists(_OVERRIDE_PATH):
-            with open(_OVERRIDE_PATH, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    _OVERRIDES = {str(k): str(v) for k, v in data.items() if isinstance(v, str)}
-                else:
-                    _OVERRIDES = {}
+            # Check file modification time - only reload if changed
+            mtime = os.path.getmtime(_OVERRIDE_PATH)
+            if mtime != _OVERRIDE_MTIME:
+                _OVERRIDE_MTIME = mtime
+                with open(_OVERRIDE_PATH, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        _OVERRIDES.clear()
+                        _OVERRIDES.update({str(k): str(v) for k, v in data.items() if isinstance(v, str)})
+                    else:
+                        _OVERRIDES.clear()
         else:
-            _OVERRIDES = {}
+            # File doesn't exist - clear overrides
+            if _OVERRIDES:
+                _OVERRIDES.clear()
+                _OVERRIDE_MTIME = 0
     except Exception:
-        _OVERRIDES = {}
+        # On error, don't clear existing overrides
+        pass
 
 
 def get_report_instructions(mode: str) -> str:
     m = (mode or "deep").lower()
     try:
-        if not _OVERRIDES:
-            _load_overrides()
+        # Always check for overrides (will only reload if file changed)
+        _load_overrides()
         if m in _OVERRIDES and _OVERRIDES[m].strip():
             return _OVERRIDES[m]
     except Exception:
@@ -66,9 +76,9 @@ def build_report_prompt(mode: str, query: str, top_k: int, docs: list[dict]) -> 
     return _base_prompts.build_report_prompt(mode, query, top_k, docs)
 
 
-def build_judge_prompt(mode: str, query: str, results: list[dict]) -> str:
+def build_judge_prompt(mode: str, query: str, results: list[dict], task_mode: str | None = None, query_history: list[str] | None = None, memory_context: str | None = None) -> str:
     # Delegate to base; it will call our patched get_report_instructions
-    return _base_prompts.build_judge_prompt(mode, query, results)
+    return _base_prompts.build_judge_prompt(mode, query, results, task_mode=task_mode, query_history=query_history, memory_context=memory_context)
 
 
 __all__ = [

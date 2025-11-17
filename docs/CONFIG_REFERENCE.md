@@ -1,92 +1,114 @@
-# MCMP Realtime – Konfigurationsreferenz
+# MCMP Realtime – Configuration Reference
 
-Diese Referenz dokumentiert alle im Frontend und Backend verfügbaren Einstellungen. Jede Einstellung nennt den technischen Schlüssel (Backend-Name), Typ, Default (falls bekannt) und Zweck. Werte können via API (/start, /config), per .env, oder über das UI gesetzt werden. Backend-Quelle: src/embeddinggemma/realtime/server.py (SettingsModel, settings_dict, apply_settings).
+This reference documents all settings available in the frontend and backend. Each setting lists the technical key (backend name), type, default (if known), and purpose. Values can be set via API (/start, /config), through .env, or via the UI. Backend source: src/embeddinggemma/realtime/server.py (SettingsModel, settings_dict, apply_settings).
 
-## Allgemein
+## General
 - query (string, default: "Classify the code into modules.")
-  - Zweck: Such-/Steuer-Query für Simulation, Ranking und Berichte.
+  - Purpose: Search/control query for simulation, ranking, and reports.
 - top_k (int, default: 10)
-  - Zweck: Anzahl der Top-Ergebnisse pro Schritt/Antwort.
-- mode/report_mode (string, default: "deep")
-  - Werte: deep, structure, exploratory, summary, repair, steering. Prompt-Stil für Berichte (LLM).
+  - Purpose: Number of top results per step/response.
+- mode (string, default: "deep")
+  - Also known as: Task Mode
+  - Purpose: Overall objective for the analysis - defines what kind of insights you want from the code
+  - Task-Specific Values (New - January 2025):
+    - **architecture**: Map system components, layers, dependencies, data flow, design patterns
+    - **bugs**: Detect security vulnerabilities, null checks, race conditions, resource leaks with severity ratings (CRITICAL/HIGH/MEDIUM/LOW)
+    - **quality**: Assess code complexity, SOLID principles, code smells, maintainability, test coverage
+    - **documentation**: Extract comprehensive API documentation with parameters, return values, usage examples
+    - **features**: Trace feature implementation end-to-end through all system layers
+  - Generic Values (Existing):
+    - **deep**: General deep analysis with comprehensive context
+    - **structure**: Focus on structural organization and module relationships
+    - **exploratory**: Broad exploration for discovering patterns and connections
+    - **summary**: Concise summaries of code functionality
+    - **repair**: Identify issues and suggest fixes
+  - Note: Previously called "report_mode" in backend, but UI now uses "Task Mode" for clarity
 - judge_mode (string, default: "steering")
-  - Zweck: Prompt-Stil für LLM-Judge (Kontextsteuerung).
+  - Purpose: Steering strategy for the MCMP simulation algorithm - controls how the judge guides agent exploration
+  - Values:
+    - **steering**: Balanced exploration with adaptive context control (default)
+    - **focused**: Deep-first exploration - follows call chains and helper functions to build complete mental model of one area before moving on
+    - **exploratory**: Breadth-first exploration - discovers new areas and connections
+  - Note: Judge analyzes current findings, interprets them in context of the Task Mode, and produces follow-up queries to fulfill the main task
 - mq_enabled (bool, default: false)
-  - Zweck: Multi-Query Modus aktivieren (LLM-unterstützte Zusatzabfragen).
+  - Purpose: Enable multi-query mode (LLM-assisted additional queries).
 - mq_count (int, default: 5)
-  - Zweck: Anzahl generierter Zusatz-Queries im Multi-Query Modus.
+  - Purpose: Number of generated additional queries in multi-query mode.
 
-## Visualisierung
+## Visualization
 - viz_dims (int, default: 3)
-  - Werte: 2 oder 3; 2D/3D Projektion (PCA) im Snapshot.
+  - Values: 2 or 3; 2D/3D projection (PCA) in snapshot.
 - min_trail_strength (float, default: 0.05)
-  - Zweck: Schwellenwert zum Anzeigen von Pheromon-Kanten.
+  - Purpose: Threshold for displaying pheromone edges.
 - max_edges (int, default: 1500)
-  - Zweck: Kantenlimit im Snapshot.
+  - Purpose: Edge limit in snapshot.
 - redraw_every (int, default: 2)
-  - Zweck: Schrittintervall für Snapshot-/Metrics-Broadcast via WebSocket.
+  - Purpose: Step interval for snapshot/metrics broadcast via WebSocket.
 
 ## Corpus & Chunking
 - use_repo (bool, default: true)
-  - Zweck: src als Wurzel nutzen; sonst root_folder.
-- root_folder (string, default: Arbeitsverzeichnis)
-  - Zweck: Projektwurzel, wenn use_repo=false.
+  - Purpose: Use src as root; otherwise root_folder.
+- root_folder (string, default: working directory)
+  - Purpose: Project root when use_repo=false.
 - max_files (int, default: 500)
-  - Zweck: Obergrenze eingelesener Dateien.
+  - Purpose: Upper limit of loaded files.
 - exclude_dirs (string[], default: [".venv","node_modules",".git","external"])
-  - Zweck: Verzeichnisse ausschließen.
-- windows (int[], default: none – Pflichtfeld im UI)
-  - Zweck: Zeilenfenster für Chunking (z. B. 20, 50, 100).
-- chunk_workers (int, default: CPU-basiert)
-  - Zweck: Thread-Anzahl beim Chunking.
+  - Purpose: Directories to exclude.
+- windows (int[], default: [2000, 4000, 8000] - auto-set if not provided)
+  - Purpose: Line windows for chunking - defines the size of code chunks analyzed by LLM
+  - Note: Increased from [1000, 2000, 4000] in January 2025 to provide more context
+  - Larger windows = more meaningful context for LLM analysis = better insights
+  - No truncation applied - LLM receives full chunk content
+- chunk_workers (int, default: CPU-based)
+  - Purpose: Number of threads for chunking.
 - embed_batch_size (int, default: 128)
-  - Zweck: Batchgröße beim Embedding von Chunks (SentenceTransformers).
+  - Purpose: Batch size when embedding chunks (SentenceTransformers).
 - max_chunks_per_shard (int, default: 2000)
-  - Zweck: Shardgröße für Batch-Läufe (Jobs).
+  - Purpose: Shard size for batch runs (jobs).
 
 ## Simulation
 - num_agents (int, default: 200)
-  - Zweck: Anzahl Agenten in der Simulation.
+  - Purpose: Number of agents in the simulation.
 - max_iterations (int, default: 200)
-  - Zweck: Maximale Schrittzahl (Läufe, Jobs).
+  - Purpose: Maximum number of steps (runs, jobs).
 - exploration_bonus (float, default: 0.1)
-  - Zweck: Gewichtung explorativer Agentenbewegung.
+  - Purpose: Weight for exploratory agent movement.
 - pheromone_decay (float, default: 0.95)
-  - Zweck: Zerfallfaktor der Pheromon-Trails pro Schritt.
+  - Purpose: Decay factor of pheromone trails per step.
 
-## Reporting & Judge (LLM‑gesteuerte Kontextsteuerung)
+## Reporting & Judge (LLM-driven Context Control)
 - report_enabled (bool, default: false)
-  - Zweck: Periodische Schrittberichte aktivieren.
+  - Purpose: Enable periodic step reports.
 - report_every (int, default: 5)
-  - Zweck: Intervall (in Schritten) für Berichte.
-- report_mode (string, s. oben)
-  - Zweck: Berichtsprompt-Modus.
+  - Purpose: Interval (in steps) for reports.
+- report_mode (string, see above)
+  - Purpose: Report prompt mode.
 - judge_enabled (bool, default: true)
-  - Zweck: LLM-Judge aktivieren (Kontextsteuerung).
+  - Purpose: Enable LLM judge (context control).
 - max_reports (int, default: 20)
-  - Zweck: Budgetlimit Berichts-/Judge-Schritte.
-- max_report_tokens (int, default: 20000; Zeichen approximiert)
-  - Zweck: Grobes Token-/Zeichenbudget für Berichte/Judge.
+  - Purpose: Budget limit for report/judge steps.
+- max_report_tokens (int, default: 20000; characters approximated)
+  - Purpose: Rough token/character budget for reports/judge.
 
 ### Blended Scoring / Pruning
 - alpha (float, default: 0.7)
-  - Zweck: Gewicht Kosinus-Similarität.
+  - Purpose: Weight for cosine similarity.
 - beta (float, default: 0.1)
-  - Zweck: Gewicht Besuchsnorm (visit_norm).
+  - Purpose: Weight for visit norm (visit_norm).
 - gamma (float, default: 0.1)
-  - Zweck: Gewicht Trail-Degree.
+  - Purpose: Weight for trail degree.
 - delta (float, default: 0.1)
-  - Zweck: Gewicht LLM-Vote (−1/0/1).
+  - Purpose: Weight for LLM vote (−1/0/1).
 - epsilon (float, default: 0.0)
-  - Zweck: Länge-/Prior-Gewicht (bm25-ähnlich).
+  - Purpose: Length/prior weight (bm25-like).
 - min_content_chars (int, default: 80)
-  - Zweck: Minimum Zeichenlänge für Chunk-Bewertung/Pruning.
+  - Purpose: Minimum character length for chunk evaluation/pruning.
 - import_only_penalty (float, default: 0.4)
-  - Zweck: Strafgewicht für reine Import-Chunks.
+  - Purpose: Penalty weight for import-only chunks.
 
-## LLM Provider (zentrale Defaults unter src/embeddinggemma/llm/config.py)
+## LLM Provider (central defaults in src/embeddinggemma/llm/config.py)
 - llm_provider (string, default: ollama)
-  - Werte: ollama, openai, google, grok.
+  - Values: ollama, openai, google, grok.
 
 ### Ollama
 - ollama_model (string, default: qwen2.5-coder:7b)
@@ -114,26 +136,26 @@ Diese Referenz dokumentiert alle im Frontend und Backend verfügbaren Einstellun
 - grok_base_url (string, default: https://api.x.ai)
 - grok_temperature (float, default: 0.0)
 
-## Aktionen (UI)
-Diese ändern keinen Dauerzustand, sind aber Workflow-relevant:
+## Actions (UI)
+These don't change persistent state but are workflow-relevant:
 - Apply (POST /config)
-- Start (POST /start – initialisiert Corpus/Simulation)
+- Start (POST /start – initializes corpus/simulation)
 - Stop (POST /stop)
-- Reset (POST /reset – setzt Simulation komplett zurück, Konfiguration bleibt)
+- Reset (POST /reset – fully resets simulation, configuration remains)
 - Pause/Resume (POST /pause, /resume)
 - Add Agents/Resize Agents (POST /agents/add, /agents/resize)
 - Corpus Listing (GET /corpus/list)
 - Shard Run (POST /jobs/start)
 - Search/Answer (POST /search, /answer)
 
-## Mapping & Verwendung
-Die wichtigsten Verwendungen pro Einstellung sind in settings_usage_lines im Backend hinterlegt. Beispiele:
-- viz_dims → Projektion & UI (PCA 2D/3D)
+## Mapping & Usage
+The most important uses per setting are stored in settings_usage_lines in the backend. Examples:
+- viz_dims → Projection & UI (PCA 2D/3D)
 - num_agents, pheromone_decay, exploration_bonus → mcmp/simulation.py
-- report_*, judge_*, alpha..epsilon, min_content_chars, import_only_penalty → LLM-Steuerung/Blended-Score in realtime/server.py
-- Provider-spezifische Felder → LLM‑Dispatcher src/embeddinggemma/llm/dispatcher.py und Aufrufe in realtime/server.py
+- report_*, judge_*, alpha..epsilon, min_content_chars, import_only_penalty → LLM control/blended score in realtime/server.py
+- Provider-specific fields → LLM dispatcher src/embeddinggemma/llm/dispatcher.py and calls in realtime/server.py
 
-Hinweis: Um Defaults zentral zu pflegen, kann src/embeddinggemma/llm/config.py angepasst werden. .env Werte überschreiben diese Defaults. Das Frontend sendet nur gesetzte/abweichende Werte.
+Note: To maintain defaults centrally, src/embeddinggemma/llm/config.py can be modified. .env values override these defaults. The frontend only sends set/modified values.
 
 
 

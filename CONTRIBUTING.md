@@ -10,7 +10,7 @@
 - Tests: `pytest -q`
 
 ## Guidelines
-- Kleine, fokussierte PRs mit Tests
-- Kein Geheimnis/Key einchecken
-- CI muss grün sein
+- Small, focused PRs with tests
+- No secrets/keys should be committed
+- CI must be green
 

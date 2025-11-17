@@ -39,14 +39,13 @@ def ensure_collection(
 
 
 def _create_collection(client: QdrantClient, name: str, dim: int) -> None:
-    from qdrant_client.http.models import HnswConfigDiff, OptimizersConfigDiff, ScalarQuantizationConfig
+    from qdrant_client.http.models import HnswConfigDiff, OptimizersConfigDiff
     _logger.info("create_collection: name=%s dim=%d", name, dim)
     client.create_collection(
         collection_name=name,
         vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
         hnsw_config=HnswConfigDiff(m=32, ef_construct=128),
         optimizers_config=OptimizersConfigDiff(indexing_threshold=20000, memmap_threshold=200000),
-        quantization_config=ScalarQuantizationConfig(scalar=ScalarQuantizationConfig.Scalar(bits=8), always_ram=False),
     )
 
 

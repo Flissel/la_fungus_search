@@ -4,6 +4,14 @@ import hashlib
 from typing import List, Dict, Any
 import ast
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+
+_logger = logging.getLogger("Corpus")
+if not _logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter('[%(levelname)s] %(message)s'))
+    _logger.addHandler(_h)
+_logger.setLevel(logging.INFO)
 
 CACHE_DIR = os.path.join(".fungus_cache", "chunks")
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -58,15 +66,17 @@ def _chunk_line_windows(path: str, windows: List[int]) -> List[str]:
     chunks: List[str] = []
     total = len(lines)
     rel = os.path.relpath(path)
-    for w in windows:
-        step = max(1, int(w))
-        for i in range(0, total, step):
-            start = i + 1
-            end = min(i + step, total)
-            body = ''.join(lines[i:end])
-            if body.strip():
-                header = f"# file: {rel} | lines: {start}-{end} | window: {step}\n"
-                chunks.append(header + body)
+    # Use only the maximum window size to avoid creating duplicate chunks
+    # This matches the behavior of AST-based chunking
+    max_window = max(int(w) for w in windows) if windows else 1000
+    step = max(1, max_window)
+    for i in range(0, total, step):
+        start = i + 1
+        end = min(i + step, total)
+        body = ''.join(lines[i:end])
+        if body.strip():
+            header = f"# file: {rel} | lines: {start}-{end} | window: {step}\n"
+            chunks.append(header + body)
     return chunks
 
 
@@ -172,8 +182,21 @@ def list_code_files(root_dir: str, max_files: int, exclude_dirs: List[str] = Non
     return files
 
 
-def collect_codebase_chunks(root_dir: str, windows: List[int], max_files: int, exclude_dirs: List[str] = None, workers: int | None = None) -> List[str]:
+def collect_codebase_chunks(root_dir: str, windows: List[int], max_files: int, exclude_dirs: List[str] = None, workers: int | None = None) -> tuple[List[str], int]:
+    # Defensive check for empty windows list
+    if not windows or len(windows) == 0:
+        windows = [1000]
+        _logger.warning(f"Empty windows list received, using fallback: [1000]")
+
+    _logger.info(f"Chunking config: root_dir={root_dir}, windows={windows}, max_files={max_files}, exclude_dirs={exclude_dirs}")
+
     files_to_process = list_code_files(root_dir, max_files, exclude_dirs)
+    if not files_to_process:
+        _logger.warning(f"No Python files found in {root_dir}. Check root_folder setting and exclude_dirs.")
+        return ([], 0)
+    _logger.info(f"Found {len(files_to_process)} Python files to process in {root_dir}")
+    if len(files_to_process) > 0:
+        _logger.info(f"Sample files: {[os.path.basename(f) for f in files_to_process[:3]]}")
     docs: List[str] = []
     max_workers = workers if (workers and workers > 0) else max(4, min(32, (os.cpu_count() or 8) * 2))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
@@ -193,4 +216,5 @@ def collect_codebase_chunks(root_dir: str, windows: List[int], max_files: int, e
             if chunks:
                 docs.extend(chunks)
                 _save_cached_chunks(p, windows, chunks)
-    return docs
+    _logger.info(f"Collected {len(docs)} chunks from {len(files_to_process)} files")
+    return (docs, len(files_to_process))

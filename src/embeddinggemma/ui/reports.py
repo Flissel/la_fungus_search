@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import hashlib
 from datetime import datetime
 from typing import Dict, Any, List
 from concurrent.futures import ThreadPoolExecutor
@@ -282,3 +283,93 @@ def merge_reports_to_summary(paths: List[str] | None = None, out_path: str | Non
         'deduped': deduped,
         'errors': errors,
     }
+
+
+def create_run_summary(run_id: str, query: str, result_items: List[Dict[str, Any]]) -> str:
+    """Create a per-run summary that references corpus metadata instead of embedding content.
+
+    Args:
+        run_id: Unique run identifier
+        query: The query for this run
+        result_items: List of result items from retrieval (with doc_id references)
+
+    Returns:
+        Path to the created summary.json file
+
+    This function creates a lightweight summary that:
+    - Saves to .fungus_cache/runs/{run_id}/summary.json
+    - References documents by ID instead of embedding full content
+    - Links to corpus metadata for document details
+    - Includes run-specific metrics and results
+    """
+    run_dir = os.path.join('.fungus_cache', 'runs', str(run_id))
+    summary_path = os.path.join(run_dir, 'summary.json')
+    corpus_metadata_path = os.path.join('.fungus_cache', 'corpus', 'metadata.json')
+
+    # Load corpus metadata reference
+    corpus_ref = {'path': corpus_metadata_path, 'exists': os.path.isfile(corpus_metadata_path)}
+    if corpus_ref['exists']:
+        try:
+            with open(corpus_metadata_path, 'r', encoding='utf-8') as f:
+                corpus_data = json.load(f)
+                corpus_ref['total_documents'] = corpus_data.get('total_documents', 0)
+                corpus_ref['fingerprint'] = corpus_data.get('fingerprint')
+        except Exception:
+            pass
+
+    # Transform result items to reference-only format (no full content embedding)
+    result_refs = []
+    for item in result_items:
+        # Extract doc_id if available
+        doc_id = item.get('id') or item.get('doc_id')
+        if doc_id is None:
+            # Skip items without doc IDs
+            continue
+
+        ref_item = {
+            'doc_id': int(doc_id),
+            'score': float(item.get('score', 0.0)),
+            'embedding_score': float(item.get('embedding_score', 0.0)),
+            'relevance_score': float(item.get('relevance_score', 0.0)),
+        }
+
+        # Include lightweight metadata but NOT full content
+        if 'file_path' in item:
+            ref_item['file_path'] = item['file_path']
+        if 'line_range' in item:
+            ref_item['line_range'] = item['line_range']
+        if 'code_purpose' in item:
+            ref_item['code_purpose'] = item['code_purpose']
+
+        result_refs.append(ref_item)
+
+    # Load manifest for run metrics
+    manifest_path = os.path.join(run_dir, 'manifest.json')
+    run_metrics = {}
+    if os.path.isfile(manifest_path):
+        try:
+            with open(manifest_path, 'r', encoding='utf-8') as f:
+                run_metrics = json.load(f)
+        except Exception:
+            pass
+
+    # Build per-run summary
+    summary = {
+        'run_id': run_id,
+        'generated_at': datetime.utcnow().isoformat() + 'Z',
+        'query': query,
+        'corpus_metadata_ref': corpus_ref,
+        'results_count': len(result_refs),
+        'results': result_refs,
+        'run_metrics': run_metrics,
+    }
+
+    # Write summary
+    try:
+        os.makedirs(run_dir, exist_ok=True)
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        raise RuntimeError(f"Failed to write run summary: {e}")
+
+    return summary_path

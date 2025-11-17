@@ -22,3 +22,7 @@ models
 .env\n.env
 
 .env
+
+# Node.js dependencies
+node_modules/
+frontend/node_modules/

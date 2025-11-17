@@ -1,0 +1,1037 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import axios from 'axios'
+import Plot from 'react-plotly.js'
+import './App.css'
+
+const API = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8011'
+
+type Snapshot = {
+  documents: { xy: number[][], relevance: number[], meta?: any[] },
+  agents: { xy: number[][] },
+  edges: Array<any>
+}
+
+export default function App() {
+  const [dims, setDims] = useState<number>(3)
+  const [minTrail, setMinTrail] = useState<number>(0.05)
+  const [maxEdges, setMaxEdges] = useState<number>(600)
+  const [redrawEvery, setRedrawEvery] = useState<number>(2)
+  const [numAgents, setNumAgents] = useState<number>(200)
+  const [maxIterations, setMaxIterations] = useState<number>(60)
+  const [explorationBonus, setExplorationBonus] = useState<number>(0.10)
+  const [pheromoneDecay, setPheromoneDecay] = useState<number>(0.95)
+  const [embedBatchSize, setEmbedBatchSize] = useState<number>(64)
+  const [maxChunksPerShard, setMaxChunksPerShard] = useState<number>(0)
+  const [query, setQuery] = useState<string>('Explain the architecture.')
+  const [mode, setMode] = useState<string>('deep')
+  const [reportEnabled, setReportEnabled] = useState<boolean>(false)
+  const [reportEvery, setReportEvery] = useState<number>(5)
+  const [topK, setTopK] = useState<number>(5)
+  const [mqEnabled, setMqEnabled] = useState<boolean>(false)
+  const [mqCount, setMqCount] = useState<number>(5)
+  const [judgeMode, setJudgeMode] = useState<string>('steering')
+  const [ollamaModel, setOllamaModel] = useState<string>('')
+  const [ollamaHost, setOllamaHost] = useState<string>('')
+  const [ollamaSystem, setOllamaSystem] = useState<string>('')
+  const [ollamaNumGpu, setOllamaNumGpu] = useState<number>(0)
+  const [ollamaNumThread, setOllamaNumThread] = useState<number>(0)
+  const [ollamaNumBatch, setOllamaNumBatch] = useState<number>(0)
+  const [llmProvider, setLlmProvider] = useState<string>('ollama')
+  const [openaiModel, setOpenaiModel] = useState<string>('')
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState<string>('')
+  const [openaiTemperature, setOpenaiTemperature] = useState<number>(0)
+  const [googleModel, setGoogleModel] = useState<string>('')
+  const [googleBaseUrl, setGoogleBaseUrl] = useState<string>('')
+  const [googleTemperature, setGoogleTemperature] = useState<number>(0)
+  const [grokModel, setGrokModel] = useState<string>('')
+  const [grokBaseUrl, setGrokBaseUrl] = useState<string>('')
+  const [grokTemperature, setGrokTemperature] = useState<number>(0)
+  const [useRepo, setUseRepo] = useState<boolean>(true)
+  const [rootFolder, setRootFolder] = useState<string>('')
+  const [maxFiles, setMaxFiles] = useState<number>(1000)
+  const [excludeDirs, setExcludeDirs] = useState<string>('.venv,node_modules,.git,external')
+  const [windows, setWindows] = useState<string>('1000,2000,4000')
+  const [chunkWorkers, setChunkWorkers] = useState<number>(32)
+  const [snap, setSnap] = useState<Snapshot | null>(null)
+  const [logs, setLogs] = useState<string[]>([])
+  const [results, setResults] = useState<any[]>([])
+  const [reports, setReports] = useState<Array<{step:number, data:any}>>([])
+  const [events, setEvents] = useState<Array<{ts:number, step?:number, type:string, text:string}>>([])
+  const [mSteps, setMSteps] = useState<number[]>([])
+  const [mAvg, setMAvg] = useState<number[]>([])
+  const [mMax, setMMax] = useState<number[]>([])
+  const [mTrails, setMTrails] = useState<number[]>([])
+  const [mResults, setMResults] = useState<number[]>([])
+  type ThemeMode = 'light'|'dark'|'system'
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    try { return (localStorage.getItem('eg_theme') as ThemeMode) || 'system' } catch { return 'system' }
+  })
+  const [showCorpus, setShowCorpus] = useState(false)
+  const [corpusFiles, setCorpusFiles] = useState<string[]>([])
+  const [corpusPage, setCorpusPage] = useState(1)
+  const [corpusTotal, setCorpusTotal] = useState(0)
+  const [toasts, setToasts] = useState<string[]>([])
+  const [autoScrollReport, setAutoScrollReport] = useState<boolean>(true)
+  const [jobId, setJobId] = useState<string|undefined>()
+  const [jobPct, setJobPct] = useState<number>(0)
+  const [selectedDocs, setSelectedDocs] = useState<any[]>([])
+  const [loadingDoc, setLoadingDoc] = useState<number | null>(null)
+  const [showPrompts, setShowPrompts] = useState(false)
+  const [promptModes, setPromptModes] = useState<string[]>([])
+  const [promptDefaults, setPromptDefaults] = useState<Record<string,string>>({})
+  const [promptOverrides, setPromptOverrides] = useState<Record<string,string>>({})
+  const [promptModeSel, setPromptModeSel] = useState<string>('deep')
+  const [summaryJson, setSummaryJson] = useState<any|null>(null)
+  const [collections, setCollections] = useState<Array<{name:string, point_count:number, dimension:number, is_active:boolean}>>([])
+  const [activeCollection, setActiveCollection] = useState<string>('codebase')
+  const [corpusStatus, setCorpusStatus] = useState<{docs: number, files: number, agents: number} | null>(null)
+  const [rootFolderValid, setRootFolderValid] = useState<boolean>(true)
+
+  const wsRef = useRef<WebSocket | null>(null)
+
+  useEffect(() => {
+    let stopped = false
+    function connect() {
+      if (stopped) return
+      // Prefer relative /ws so Vite proxy can upgrade; fallback to backend URL
+      const wsUrl = (window.location.origin.replace('http', 'ws') + '/ws')
+      const altUrl = API.replace('http', 'ws') + '/ws'
+      const ws = new WebSocket(wsRef.current ? altUrl : wsUrl)
+      wsRef.current = ws
+      ws.onopen = () => {/* connected */}
+      ws.onmessage = (ev) => {
+        try {
+          const obj = JSON.parse(ev.data)
+          if (obj.type === 'snapshot') setSnap(obj.data)
+          else if (obj.type === 'report') {
+            setReports(prev => {
+              const next = [...prev, { step: Number(obj.step||0), data: obj.data }]
+              return next.slice(-50)
+            })
+            setLogs(prev => [...prev.slice(-300), `report: step ${obj.step} items=${Array.isArray(obj?.data?.items)? obj.data.items.length : 0}`])
+            setEvents(prev => [...prev.slice(-99), { ts: Date.now(), step: Number(obj.step||0), type: 'report', text: `items=${Array.isArray(obj?.data?.items)? obj.data.items.length : 0}` }])
+          }
+          else if (obj.type === 'results' || obj.type === 'results_stable') {
+            if (Array.isArray(obj.data)) setResults(obj.data)
+            const step = Number(obj.step||0)
+            const rc = Array.isArray(obj.data)? obj.data.length : 0
+            setEvents(prev => [...prev.slice(-99), { ts: Date.now(), step, type: obj.type, text: `count=${rc}` }])
+            setMSteps(prev => [...prev, step].slice(-200))
+            setMResults(prev => [...prev, rc].slice(-200))
+          }
+          else if (obj.type === 'seed_queries') {
+            const added = Array.isArray(obj.added) ? obj.added : []
+            const msg = `seed: +${added.length} → pool=${Number(obj.pool_size||0)}\n` + added.map((q:string)=>`- ${q}`).join('\n')
+            setLogs(prev => [...prev.slice(-300), msg])
+            setEvents(prev => [...prev.slice(-99), { ts: Date.now(), type: 'seed', text: `added=${added.length} pool=${obj.pool_size}` }])
+            setToasts(t => [...t.slice(-3), `Seeded ${added.length} follow-up queries`])
+          }
+          else if (obj.type === 'log') setLogs(prev => {
+            const msg = String(obj.message || '')
+            const last = prev[prev.length-1]
+            return last === msg ? prev : [...prev.slice(-300), msg]
+          })
+          else if (obj.type === 'metrics') {
+            const d = obj.data || {}
+            const step = Number(d.step||0)
+            const avg = Number(d.avg_rel||0)
+            const mx = Number(d.max_rel||0)
+            const tr = Number(d.trails||0)
+            const docs = Number(d.docs||0)
+            const files = Number(d.files||0)
+            const agents = Number(d.agents||0)
+            setMSteps(prev => [...prev, step].slice(-200))
+            setMAvg(prev => [...prev, avg].slice(-200))
+            setMMax(prev => [...prev, mx].slice(-200))
+            setMTrails(prev => [...prev, tr].slice(-200))
+            if (docs > 0 || agents > 0) {
+              setCorpusStatus({docs, files, agents})
+            }
+            setEvents(prev => [...prev.slice(-99), { ts: Date.now(), step, type: 'metrics', text: `avg=${avg.toFixed(4)} trails=${tr}` }])
+            setLogs(prev => {
+              const msg = `metrics: ${JSON.stringify(obj.data)}`
+              const last = prev[prev.length-1]
+              return last === msg ? prev : [...prev.slice(-300), msg]
+            })
+          }
+          else if (obj.type === 'job_progress') { setJobId(obj.job_id); setJobPct(obj.percent||0) }
+        } catch {}
+      }
+      ws.onclose = () => {
+        if (stopped) return
+        setTimeout(connect, 1000) // retry
+      }
+      ws.onerror = () => {
+        try { ws.close() } catch {}
+      }
+    }
+    connect()
+    return () => { stopped = true; try { wsRef.current?.close() } catch {} }
+  }, [])
+
+  useEffect(() => {
+    async function fetchCollections() {
+      try {
+        const res = await axios.get(API + '/collections/list')
+        if (res.data.status === 'ok') {
+          setCollections(res.data.collections || [])
+          setActiveCollection(res.data.active_collection || 'codebase')
+        }
+      } catch (e) {
+        // silently fail on initial load
+      }
+    }
+    fetchCollections()
+  }, [])
+
+  // Load persisted settings from backend on mount
+  useEffect(() => {
+    async function fetchSettings() {
+      try {
+        const res = await axios.get(API + '/settings')
+        if (res.data) {
+          const s = res.data
+          // Load corpus settings
+          if (s.root_folder !== undefined) setRootFolder(s.root_folder)
+          if (s.use_repo !== undefined) setUseRepo(s.use_repo)
+          if (s.max_files !== undefined) setMaxFiles(s.max_files)
+          if (s.exclude_dirs !== undefined) setExcludeDirs(s.exclude_dirs)
+          if (s.windows !== undefined) setWindows(s.windows)
+          // Load simulation settings
+          if (s.query !== undefined) setQuery(s.query)
+          if (s.num_agents !== undefined) setNumAgents(s.num_agents)
+          if (s.max_steps !== undefined) setMaxSteps(s.max_steps)
+          if (s.top_k !== undefined) setTopK(s.top_k)
+          if (s.report_mode !== undefined) setReportMode(s.report_mode)
+          if (s.judge_mode !== undefined) setJudgeMode(s.judge_mode)
+          // Load LLM settings
+          if (s.ollama_model !== undefined) setOllamaModel(s.ollama_model)
+          if (s.ollama_host !== undefined) setOllamaHost(s.ollama_host)
+          if (s.ollama_system !== undefined) setOllamaSystem(s.ollama_system)
+          if (s.ollama_num_gpu !== undefined) setOllamaNumGpu(s.ollama_num_gpu)
+          if (s.ollama_num_thread !== undefined) setOllamaNumThread(s.ollama_num_thread)
+        }
+      } catch (e) {
+        // silently fail - use default values
+      }
+    }
+    fetchSettings()
+  }, [])
+
+  // Force reset modal states on mount to prevent blocking UI
+  useEffect(() => {
+    setShowCorpus(false)
+    setShowPrompts(false)
+  }, [])
+
+  // Escape key handler to close stuck modals
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowCorpus(false)
+        setShowPrompts(false)
+      }
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [])
+
+  async function apply() {
+    const extra:any = {}
+    if ((judgeMode||'').trim()) extra.judge_mode = (judgeMode||'').trim()
+    if ((ollamaModel||'').trim()) extra.ollama_model = (ollamaModel||'').trim()
+    if ((ollamaHost||'').trim()) extra.ollama_host = (ollamaHost||'').trim()
+    if ((ollamaSystem||'').trim()) extra.ollama_system = (ollamaSystem||'').trim()
+    if (Number(ollamaNumGpu) > 0) extra.ollama_num_gpu = Number(ollamaNumGpu)
+    if (Number(ollamaNumThread) > 0) extra.ollama_num_thread = Number(ollamaNumThread)
+    if (Number(ollamaNumBatch) > 0) extra.ollama_num_batch = Number(ollamaNumBatch)
+    if ((llmProvider||'').trim()) extra.llm_provider = (llmProvider||'').trim()
+    if ((openaiModel||'').trim()) extra.openai_model = (openaiModel||'').trim()
+    if ((openaiBaseUrl||'').trim()) extra.openai_base_url = (openaiBaseUrl||'').trim()
+    if (Number.isFinite(openaiTemperature)) extra.openai_temperature = Number(openaiTemperature)
+    if ((googleModel||'').trim()) extra.google_model = (googleModel||'').trim()
+    if ((googleBaseUrl||'').trim()) extra.google_base_url = (googleBaseUrl||'').trim()
+    if (Number.isFinite(googleTemperature)) extra.google_temperature = Number(googleTemperature)
+    if ((grokModel||'').trim()) extra.grok_model = (grokModel||'').trim()
+    if ((grokBaseUrl||'').trim()) extra.grok_base_url = (grokBaseUrl||'').trim()
+    if (Number.isFinite(grokTemperature)) extra.grok_temperature = Number(grokTemperature)
+    await axios.post(API + '/config', {
+      viz_dims: 3,
+      min_trail_strength: minTrail,
+      max_edges: maxEdges,
+      redraw_every: redrawEvery,
+      num_agents: numAgents,
+      max_iterations: maxIterations,
+      exploration_bonus: explorationBonus,
+      pheromone_decay: pheromoneDecay,
+      embed_batch_size: embedBatchSize,
+      max_chunks_per_shard: maxChunksPerShard,
+      use_repo: useRepo,
+      root_folder: rootFolder,
+      max_files: maxFiles,
+      exclude_dirs: excludeDirs.split(',').map(s=>s.trim()).filter(Boolean),
+      windows: windows.split(',').map(s=>parseInt(s.trim())).filter(n=>!isNaN(n)),
+      chunk_workers: chunkWorkers,
+      top_k: topK,
+      report_enabled: reportEnabled,
+      report_every: reportEvery,
+      report_mode: mode,
+      mq_enabled: mqEnabled,
+      mq_count: mqCount,
+      ...extra,
+    })
+    try { wsRef.current?.send(JSON.stringify({ type: 'config', viz_dims: dims })) } catch {}
+  }
+
+  async function start() {
+    try {
+      const extra:any = {}
+      if ((judgeMode||'').trim()) extra.judge_mode = (judgeMode||'').trim()
+      if ((ollamaModel||'').trim()) extra.ollama_model = (ollamaModel||'').trim()
+      if ((ollamaHost||'').trim()) extra.ollama_host = (ollamaHost||'').trim()
+      if ((ollamaSystem||'').trim()) extra.ollama_system = (ollamaSystem||'').trim()
+      if (Number(ollamaNumGpu) > 0) extra.ollama_num_gpu = Number(ollamaNumGpu)
+      if (Number(ollamaNumThread) > 0) extra.ollama_num_thread = Number(ollamaNumThread)
+      if (Number(ollamaNumBatch) > 0) extra.ollama_num_batch = Number(ollamaNumBatch)
+      if ((llmProvider||'').trim()) extra.llm_provider = (llmProvider||'').trim()
+      if ((openaiModel||'').trim()) extra.openai_model = (openaiModel||'').trim()
+      if ((openaiBaseUrl||'').trim()) extra.openai_base_url = (openaiBaseUrl||'').trim()
+      if (Number.isFinite(openaiTemperature)) extra.openai_temperature = Number(openaiTemperature)
+      if ((googleModel||'').trim()) extra.google_model = (googleModel||'').trim()
+      if ((googleBaseUrl||'').trim()) extra.google_base_url = (googleBaseUrl||'').trim()
+      if (Number.isFinite(googleTemperature)) extra.google_temperature = Number(googleTemperature)
+      if ((grokModel||'').trim()) extra.grok_model = (grokModel||'').trim()
+      if ((grokBaseUrl||'').trim()) extra.grok_base_url = (grokBaseUrl||'').trim()
+      if (Number.isFinite(grokTemperature)) extra.grok_temperature = Number(grokTemperature)
+      await axios.post(API + '/start', {
+        query,
+        viz_dims: 3,
+        use_repo: useRepo,
+        root_folder: rootFolder,
+        max_files: maxFiles,
+        exclude_dirs: excludeDirs.split(',').map(s=>s.trim()).filter(Boolean),
+        windows: windows.split(',').map(s=>parseInt(s.trim())).filter(n=>!isNaN(n)),
+        chunk_workers: chunkWorkers,
+        min_trail_strength: minTrail,
+        max_edges: maxEdges,
+        redraw_every: redrawEvery,
+        num_agents: numAgents,
+        max_iterations: maxIterations,
+        exploration_bonus: explorationBonus,
+        pheromone_decay: pheromoneDecay,
+        embed_batch_size: embedBatchSize,
+        max_chunks_per_shard: maxChunksPerShard,
+        top_k: topK,
+        report_enabled: reportEnabled,
+        report_every: reportEvery,
+        report_mode: mode,
+        mq_enabled: mqEnabled,
+        mq_count: mqCount,
+        ...extra,
+      })
+      setToasts(t => [...t, 'Simulation started'])
+    } catch (e:any) {
+      setToasts(t => [...t, 'Start failed: ' + (e?.message||e)])
+    }
+  }
+
+  async function doSearch() {
+    try {
+      const r = await axios.post(API + '/search', { query, top_k: topK })
+      setResults(r.data.results || [])
+    } catch (e:any) {
+      setToasts(t => [...t, 'Search failed: ' + (e?.message||e)])
+    }
+  }
+
+  async function doAnswer() {
+    try {
+      const r = await axios.post(API + '/answer', { query, top_k: topK })
+      alert(r.data.answer || '')
+    } catch (e:any) {
+      setToasts(t => [...t, 'Answer failed: ' + (e?.message||e)])
+    }
+  }
+
+  async function openCorpus(page=1) {
+    try {
+      const r = await axios.get(API + `/corpus/list?page=${page}&page_size=500`)
+      setCorpusFiles(r.data.files || [])
+      setCorpusPage(r.data.page || 1)
+      setCorpusTotal(r.data.total || 0)
+      setShowCorpus(true)
+    } catch (e:any) {
+      setToasts(t => [...t, 'Corpus list failed: ' + (e?.message||e)])
+    }
+  }
+
+  const fig = useMemo(() => {
+    if (!snap) return { data: [], layout: { title: 'Waiting for data...' } }
+    const data: any[] = []
+    const edges = snap.edges || []
+    const docs = snap.documents || { xy: [], relevance: [], meta: [] as any[] }
+    const agents = snap.agents || { xy: [] }
+    const prefersDark = (theme === 'dark') || (theme === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    const paper = prefersDark ? '#0f1115' : '#f8f9fb'
+    const plot = prefersDark ? '#11141a' : '#ffffff'
+    const grid = prefersDark ? '#2a2f3a' : '#e5e7eb'
+    const edgeColor = prefersDark ? 'rgba(59,130,246,0.35)' : 'rgba(0,150,0,0.25)'
+    const docColor2D = prefersDark ? '#93c5fd' : 'rgba(0,0,200,0.7)'
+    const agentColor2D = prefersDark ? 'rgba(248,113,113,0.85)' : 'rgba(200,0,0,0.7)'
+    if (dims === 3) {
+      for (const e of edges) {
+        const z0 = ('z0' in e) ? e.z0 : 0, z1 = ('z1' in e) ? e.z1 : 0
+        data.push({ x:[e.x0,e.x1], y:[e.y0,e.y1], z:[z0,z1], mode:'lines', type:'scatter3d', line:{width:Math.max(1, (e.s||0)*3), color: edgeColor} })
+      }
+      if (docs.xy.length) {
+        const xs = docs.xy.map(p=>p[0]), ys = docs.xy.map(p=>p[1]), zs = docs.xy.map(p=>p[2]||0)
+        const sizes = (docs.relevance||[]).map(r=>4+10*r)
+        const text = (docs.meta||[]).map((m:any,i:number)=>`id=${m?.id ?? i}<br>score=${(m?.score??0).toFixed(3)}<br>visits=${m?.visits ?? 0}<br>${String(m?.snippet||'').replace(/</g,'&lt;')}`)
+        data.push({ x:xs, y:ys, z:zs, mode:'markers', type:'scatter3d', marker:{ size:sizes, color:docs.relevance||[], colorscale: prefersDark ? 'Cividis' : 'Viridis', opacity:0.9 }, name:'docs', text, hovertemplate: '%{text}<extra></extra>', customdata: docs.meta })
+      }
+      if (agents.xy.length) {
+        const xa = agents.xy.map(p=>p[0]), ya = agents.xy.map(p=>p[1]), za = agents.xy.map(p=>p[2]||0)
+        data.push({ x:xa, y:ya, z:za, mode:'markers', type:'scatter3d', marker:{ size:3.5, color: agentColor2D }, name:'agents' })
+      }
+      return { data, layout: { height: 640, scene: { xaxis:{title:'x', gridcolor:grid}, yaxis:{title:'y', gridcolor:grid}, zaxis:{title:'z', gridcolor:grid} }, paper_bgcolor: paper, font:{color: prefersDark ? '#e5e7eb' : '#111827'}, margin:{l:0,r:0,t:30,b:0} } }
+    } else {
+      for (const e of edges) data.push({ x:[e.x0,e.x1], y:[e.y0,e.y1], mode:'lines', type:'scatter', line:{width:Math.max(1,(e.s||0)*3), color: edgeColor}, hoverinfo:'skip' })
+      if (docs.xy.length) {
+        const xs = docs.xy.map(p=>p[0]), ys = docs.xy.map(p=>p[1])
+        const sizes = (docs.relevance||[]).map(r=>8+12*r)
+        const text = (docs.meta||[]).map((m:any,i:number)=>`id=${m?.id ?? i}<br>score=${(m?.score??0).toFixed(3)}<br>visits=${m?.visits ?? 0}<br>${String(m?.snippet||'').replace(/</g,'&lt;')}`)
+        data.push({ x:xs, y:ys, mode:'markers', type:'scatter', marker:{ size:sizes, color: docColor2D }, name:'docs', text, hovertemplate: '%{text}<extra></extra>', customdata: (docs as any).meta })
+      }
+      if (agents.xy.length) {
+        const xa = agents.xy.map(p=>p[0]), ya = agents.xy.map(p=>p[1])
+        data.push({ x:xa, y:ya, mode:'markers', type:'scatter', marker:{ size:3.5, color: agentColor2D }, name:'agents' })
+      }
+      return { data, layout: { height: 600, xaxis:{title:'x', gridcolor:grid}, yaxis:{title:'y', gridcolor:grid}, paper_bgcolor: paper, plot_bgcolor: plot, font:{color: prefersDark ? '#e5e7eb' : '#111827'}, margin:{l:10,r:10,t:30,b:10} } }
+    }
+  }, [snap, dims, theme])
+
+  return (
+    <div className='layout' data-theme={theme}>
+      <aside className='sidebar'>
+        <div className='title'>Fungus (MCMP) Frontend</div>
+        <div className='row group'>
+          <div>
+            <span className='label'>Theme</span>
+            <select className='select' value={theme} onChange={e=>{ const v=e.target.value as ThemeMode; setTheme(v); try{localStorage.setItem('eg_theme', v)}catch{} }}>
+              <option value='system'>System</option>
+              <option value='light'>Light</option>
+              <option value='dark'>Dark</option>
+            </select>
+          </div>
+        </div>
+        {corpusStatus && (
+          <div className='group' style={{padding:'12px', background:'var(--panel)', border:'1px solid var(--border)', borderRadius:8, marginBottom:12}}>
+            <div style={{fontWeight:700, marginBottom:8, fontSize:14, color:'var(--text)'}}>Codebase Index</div>
+            <div style={{display:'flex', justifyContent:'space-between', marginBottom:4}}>
+              <span style={{fontSize:13, color:'var(--muted)'}}>Files:</span>
+              <span style={{fontSize:13, fontWeight:600, color:'var(--text)'}}>{corpusStatus.files.toLocaleString()}</span>
+            </div>
+            <div style={{display:'flex', justifyContent:'space-between', marginBottom:4}}>
+              <span style={{fontSize:13, color:'var(--muted)'}}>Chunks:</span>
+              <span style={{fontSize:13, fontWeight:600, color:'var(--text)'}}>{corpusStatus.docs.toLocaleString()}</span>
+            </div>
+            <div style={{display:'flex', justifyContent:'space-between'}}>
+              <span style={{fontSize:13, color:'var(--muted)'}}>Agents:</span>
+              <span style={{fontSize:13, fontWeight:600, color:'var(--text)'}}>{corpusStatus.agents.toLocaleString()}</span>
+            </div>
+          </div>
+        )}
+        <details open>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Simulation</summary>
+          <div className='group'>
+            <span className='label'>Query</span>
+            <input className='input' value={query} onChange={e=>setQuery(e.target.value)} />
+          </div>
+        <div className='row group'>
+          <div>
+            <span className='label'>Mode</span>
+            <select className='select' value={mode} onChange={e=>setMode(e.target.value)}>
+              <option value='deep'>deep</option>
+              <option value='structure'>structure</option>
+              <option value='exploratory'>exploratory</option>
+              <option value='summary'>summary</option>
+              <option value='steering'>steering</option>
+              <option value='similar'>similar</option>
+              <option value='redundancy'>redundancy</option>
+              <option value='repair'>repair</option>
+            </select>
+          </div>
+          <div>
+            <span className='label'>Top K</span>
+            <input className='number' type='number' step={1} value={topK} onChange={e=>setTopK(parseInt(e.target.value)||1)} />
+          </div>
+        </div>
+        <div className='row group'>
+          <div>
+            <label className='label'>Per-step report</label>
+            <label style={{display:'flex',gap:8,alignItems:'center'}}>
+              <input type='checkbox' checked={reportEnabled} onChange={e=>setReportEnabled(e.target.checked)} /> Enable
+            </label>
+          </div>
+          <div>
+            <span className='label'>Report every N steps</span>
+            <input className='number' type='number' step={1} value={reportEvery} onChange={e=>setReportEvery(parseInt(e.target.value)||1)} />
+          </div>
+        </div>
+        <div className='group'>
+          <span className='label'>Report mode</span>
+          <select className='select' value={mode} onChange={e=>setMode(e.target.value)}>
+            <option value='deep'>deep</option>
+            <option value='structure'>structure</option>
+            <option value='exploratory'>exploratory</option>
+            <option value='summary'>summary</option>
+            <option value='steering'>steering</option>
+            <option value='repair'>repair</option>
+          </select>
+        </div>
+        <div className='row group'>
+          <button className='button secondary' onClick={apply}>Apply</button>
+        </div>
+        </details>
+        <div className='row group'>
+          <div>
+            <span className='label'>Judge Mode</span>
+            <select className='select' value={judgeMode} onChange={e=>setJudgeMode(e.target.value)}>
+              <option value='steering'>steering</option>
+              <option value='deep'>deep</option>
+              <option value='structure'>structure</option>
+              <option value='exploratory'>exploratory</option>
+              <option value='summary'>summary</option>
+              <option value='repair'>repair</option>
+            </select>
+          </div>
+            <div>
+              <label className='label'>Multi-query (LLM assist)</label>
+              <label style={{display:'flex',gap:8,alignItems:'center'}}>
+                <input type='checkbox' checked={mqEnabled} onChange={e=>setMqEnabled(e.target.checked)} /> Enable
+              </label>
+            </div>
+        </div>
+          {mqEnabled && (
+            <div className='group'>
+              <span className='label'>Multi-query count</span>
+              <input className='number' type='number' step={1} value={mqCount} onChange={e=>setMqCount(parseInt(e.target.value)||1)} />
+            </div>
+          )}
+        <details>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Models</summary>
+          <div className='row group'>
+            <div>
+              <span className='label'>LLM Provider</span>
+              <select className='select' value={llmProvider} onChange={e=>setLlmProvider(e.target.value)}>
+                <option value='ollama'>ollama</option>
+                <option value='openai'>openai</option>
+                <option value='google'>google</option>
+                <option value='grok'>grok</option>
+              </select>
+            </div>
+          </div>
+        {llmProvider==='ollama' && (
+          <>
+            <div className='group'>
+              <span className='label'>Ollama Model</span>
+              <input className='input' list='ollama-models' value={ollamaModel} onChange={e=>setOllamaModel(e.target.value)} placeholder='e.g., qwen2.5-coder:7b' />
+              <datalist id='ollama-models'>
+                <option value='qwen2.5-coder:7b' />
+                <option value='qwen2.5:7b' />
+                <option value='llama3.1:8b' />
+                <option value='mistral:7b' />
+                <option value='codellama:7b' />
+                <option value='deepseek-coder:6.7b' />
+                <option value='phi3:mini-4k' />
+              </datalist>
+            </div>
+            <div className='group'>
+              <span className='label'>Ollama Host</span>
+              <input className='input' value={ollamaHost} onChange={e=>setOllamaHost(e.target.value)} placeholder='http://127.0.0.1:11434' />
+            </div>
+            <div className='group'>
+              <span className='label'>Ollama System Prompt</span>
+              <input className='input' value={ollamaSystem} onChange={e=>setOllamaSystem(e.target.value)} placeholder='Optional system prompt' />
+            </div>
+            <div className='row group'>
+              <div>
+                <span className='label'>Ollama GPUs</span>
+                <input className='number' type='number' step={1} value={ollamaNumGpu} onChange={e=>setOllamaNumGpu(parseInt(e.target.value)||0)} />
+              </div>
+              <div>
+                <span className='label'>Ollama Threads</span>
+                <input className='number' type='number' step={1} value={ollamaNumThread} onChange={e=>setOllamaNumThread(parseInt(e.target.value)||0)} />
+              </div>
+            </div>
+            <div className='group'>
+              <span className='label'>Ollama Batch</span>
+              <input className='number' type='number' step={1} value={ollamaNumBatch} onChange={e=>setOllamaNumBatch(parseInt(e.target.value)||0)} />
+            </div>
+          </>
+        )}
+        {llmProvider==='openai' && (
+          <>
+            <div className='group'>
+              <span className='label'>OpenAI Model</span>
+              <input className='input' list='openai-models' value={openaiModel} onChange={e=>setOpenaiModel(e.target.value)} placeholder='e.g., gpt-4o-mini' />
+              <datalist id='openai-models'>
+                <option value='gpt-4o-mini' />
+                <option value='gpt-4o' />
+                <option value='gpt-4.1-mini' />
+                <option value='gpt-4.1' />
+                <option value='o3-mini' />
+              </datalist>
+            </div>
+            <div className='group'>
+              <span className='label'>OpenAI Base URL</span>
+              <input className='input' value={openaiBaseUrl} onChange={e=>setOpenaiBaseUrl(e.target.value)} placeholder='https://api.openai.com' />
+            </div>
+            <div className='group'>
+              <span className='label'>OpenAI Temperature</span>
+              <input className='number' type='number' step={0.1} value={openaiTemperature} onChange={e=>setOpenaiTemperature(parseFloat(e.target.value)||0)} />
+            </div>
+          </>
+        )}
+        {llmProvider==='google' && (
+          <>
+            <div className='group'>
+              <span className='label'>Google Model</span>
+              <input className='input' list='google-models' value={googleModel} onChange={e=>setGoogleModel(e.target.value)} placeholder='e.g., gemini-1.5-pro' />
+              <datalist id='google-models'>
+                <option value='gemini-1.5-pro' />
+                <option value='gemini-1.5-flash' />
+                <option value='gemini-1.5-flash-8b' />
+              </datalist>
+            </div>
+            <div className='group'>
+              <span className='label'>Google Base URL</span>
+              <input className='input' value={googleBaseUrl} onChange={e=>setGoogleBaseUrl(e.target.value)} placeholder='https://generativelanguage.googleapis.com' />
+            </div>
+            <div className='group'>
+              <span className='label'>Google Temperature</span>
+              <input className='number' type='number' step={0.1} value={googleTemperature} onChange={e=>setGoogleTemperature(parseFloat(e.target.value)||0)} />
+            </div>
+          </>
+        )}
+        {llmProvider==='grok' && (
+          <>
+            <div className='group'>
+              <span className='label'>Grok Model</span>
+              <input className='input' list='grok-models' value={grokModel} onChange={e=>setGrokModel(e.target.value)} placeholder='e.g., grok-2-latest' />
+              <datalist id='grok-models'>
+                <option value='grok-2-latest' />
+                <option value='grok-2-mini' />
+              </datalist>
+            </div>
+            <div className='group'>
+              <span className='label'>Grok Base URL</span>
+              <input className='input' value={grokBaseUrl} onChange={e=>setGrokBaseUrl(e.target.value)} placeholder='https://api.x.ai' />
+            </div>
+            <div className='group'>
+              <span className='label'>Grok Temperature</span>
+              <input className='number' type='number' step={0.1} value={grokTemperature} onChange={e=>setGrokTemperature(parseFloat(e.target.value)||0)} />
+            </div>
+          </>
+        )}
+        </details>
+        <details>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Chunking</summary>
+          <div className='group'>
+            <span className='label'>Windows (lines)</span>
+            <input className='input' value={windows} onChange={e=>setWindows(e.target.value)} />
+          </div>
+          <div className='group'>
+            <label><input type='checkbox' checked={useRepo} onChange={e=>setUseRepo(e.target.checked)} /> Use project src/ folder as codebase</label>
+          </div>
+          <div className='group'>
+            <span className='label'>Root folder (used when src is off)</span>
+            <input
+              className='input'
+              value={rootFolder}
+              onChange={e=>{
+                const val = e.target.value
+                setRootFolder(val)
+                // Basic path validation - check if looks like a valid path
+                // Windows: C:\path or \\network\path
+                // Unix: /path or ./path or ../path
+                const isValid = !val ||
+                  /^[a-zA-Z]:\\/.test(val) || // Windows absolute
+                  /^\\\\/.test(val) || // UNC path
+                  /^\//.test(val) || // Unix absolute
+                  /^\.\.?\//.test(val) // Relative path
+                setRootFolderValid(isValid)
+              }}
+              placeholder='C:\\Users\\User\\Desktop\\EmbeddingGemma'
+              style={!rootFolderValid ? {borderColor: '#ef4444', outline: '1px solid #ef4444'} : undefined}
+            />
+            {!rootFolderValid && (
+              <div style={{fontSize:12, color:'#ef4444', marginTop:4}}>
+                Invalid path format. Expected absolute path (e.g., C:\path or /path)
+              </div>
+            )}
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Max files to index</span>
+              <input className='number' type='number' step={50} value={maxFiles} onChange={e=>setMaxFiles(parseInt(e.target.value)||0)} />
+            </div>
+            <div>
+              <span className='label'>Chunk workers (threads)</span>
+              <input className='number' type='number' step={1} value={chunkWorkers} onChange={e=>setChunkWorkers(parseInt(e.target.value)||1)} />
+            </div>
+          </div>
+          <div className='group'>
+            <span className='label'>Exclude folders</span>
+            <input className='input' value={excludeDirs} onChange={e=>setExcludeDirs(e.target.value)} />
+          </div>
+        </details>
+        <details>
+          <summary style={{cursor:'pointer', fontWeight:700}}>Simulation parameters</summary>
+          <div className='row group'>
+            {/* Force 3D only */}
+            <div><span className='label'>Viz dims</span><div className='select' style={{padding:'8px 12px'}}>3D</div></div>
+            <div>
+              <span className='label'>Max edges</span>
+              <input className='number' type='number' step={50} value={maxEdges} onChange={e=>setMaxEdges(parseInt(e.target.value))} />
+            </div>
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Min trail strength</span>
+              <input className='number' type='number' step={0.01} value={minTrail} onChange={e=>setMinTrail(parseFloat(e.target.value))} />
+            </div>
+            <div>
+              <span className='label'>Redraw every N steps</span>
+              <input className='number' type='number' step={1} value={redrawEvery} onChange={e=>setRedrawEvery(parseInt(e.target.value)||1)} />
+            </div>
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Agents</span>
+              <input className='number' type='number' step={10} value={numAgents} onChange={e=>setNumAgents(parseInt(e.target.value)||1)} />
+            </div>
+            <div>
+              <span className='label'>Max iterations</span>
+              <input className='number' type='number' step={10} value={maxIterations} onChange={e=>setMaxIterations(parseInt(e.target.value)||1)} />
+            </div>
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Exploration bonus</span>
+              <input className='number' type='number' step={0.01} value={explorationBonus} onChange={e=>setExplorationBonus(parseFloat(e.target.value))} />
+            </div>
+            <div>
+              <span className='label'>Pheromone decay</span>
+              <input className='number' type='number' step={0.01} value={pheromoneDecay} onChange={e=>setPheromoneDecay(parseFloat(e.target.value))} />
+            </div>
+          </div>
+          <div className='row group'>
+            <div>
+              <span className='label'>Embedding batch size</span>
+              <input className='number' type='number' step={16} value={embedBatchSize} onChange={e=>setEmbedBatchSize(parseInt(e.target.value)||16)} />
+            </div>
+            <div>
+              <span className='label'>Max chunks per shard</span>
+              <input className='number' type='number' step={100} value={maxChunksPerShard} onChange={e=>setMaxChunksPerShard(parseInt(e.target.value)||0)} />
+            </div>
+          </div>
+        </details>
+        <div className='row group'>
+          <button className='button' onClick={apply}>Apply</button>
+        </div>
+        <div className='row group'>
+          <button className='button secondary' onClick={async ()=>{
+            try{
+              const r = await axios.post(API + '/reports/merge', {})
+              const sum = r?.data?.summary || null
+              setSummaryJson(sum)
+              setToasts(t=>[...t, 'Summary built'])
+            }catch(e:any){ setToasts(t=>[...t,'Merge reports failed: '+(e?.message||e)]) }
+          }}>Build Summary</button>
+          <button className='button secondary' onClick={()=>{
+            try{
+              const obj = summaryJson
+              if (!obj) { alert('No summary available yet'); return }
+              const blob = new Blob([JSON.stringify(obj, null, 2)], {type:'application/json'})
+              const a = document.createElement('a')
+              a.href = URL.createObjectURL(blob)
+              a.download = 'summary.json'
+              a.click()
+            }catch(e){/* noop */}
+          }}>Download Summary</button>
+        </div>
+        <div className='group'>
+          <span className='label'>Collection</span>
+          <select className='select' value={activeCollection} onChange={async (e) => {
+            const newCollection = e.target.value
+            try {
+              await axios.post(API + '/collections/switch', { collection: newCollection })
+              setActiveCollection(newCollection)
+              setToasts(t => [...t.slice(-3), `Switched to collection '${newCollection}'`])
+              // Refresh collections list to update point counts
+              const res = await axios.get(API + '/collections/list')
+              if (res.data.status === 'ok') {
+                setCollections(res.data.collections || [])
+              }
+            } catch (err: any) {
+              setToasts(t => [...t.slice(-3), `Switch failed: ${err?.response?.data?.message || err.message}`])
+            }
+          }}>
+            {collections.length === 0 ? (
+              <option value={activeCollection}>{activeCollection} (no collections loaded)</option>
+            ) : (
+              collections.map(c => (
+                <option key={c.name} value={c.name}>
+                  {c.name} ({c.point_count} points, {c.dimension}d) {c.is_active ? '✓' : ''}
+                </option>
+              ))
+            )}
+          </select>
+        </div>
+        <div className='row group'>
+          <button className='button' onClick={start}>Start</button>
+          <button className='button secondary' onClick={async ()=>{ await axios.post(API+'/stop'); }}>Stop</button>
+          <button className='button secondary' onClick={async ()=>{ try{ await axios.post(API+'/reset'); setSnap(null); setResults([]); setReports([]); setLogs([]); setSelectedDocs([]); setJobId(undefined); setJobPct(0); setToasts(t=>[...t,'Reset complete']) } catch(e:any){ setToasts(t=>[...t,'Reset failed: '+(e?.message||e)]) } }}>Reset</button>
+        </div>
+        <div className='row group'>
+          <button className='button secondary' onClick={async ()=>{ try{ await axios.post(API+'/pause'); setToasts(t=>[...t,'Paused']) } catch(e:any){ setToasts(t=>[...t,'Pause failed: '+(e?.message||e)]) } }}>Pause</button>
+          <button className='button secondary' onClick={async ()=>{ try{ await axios.post(API+'/resume'); setToasts(t=>[...t,'Resumed']) } catch(e:any){ setToasts(t=>[...t,'Resume failed: '+(e?.message||e)]) } }}>Resume</button>
+        </div>
+        <div className='row group'>
+          <button className='button secondary' onClick={async ()=>{
+            const n = Number(prompt('Add how many agents?', '50')||'0');
+            if (!n || n<=0) return;
+            try{ const r = await axios.post(API+'/agents/add', { n }); setToasts(t=>[...t, `Added ${r.data?.added||n} agents (total=${r.data?.agents})`]) }catch(e:any){ setToasts(t=>[...t,'Add agents failed: '+(e?.message||e)]) }
+          }}>Add Agents</button>
+          <button className='button secondary' onClick={async ()=>{
+            const c = Number(prompt('Resize to how many agents?', String(numAgents))||String(numAgents));
+            if (isNaN(c) || c<0) return;
+            try{ const r = await axios.post(API+'/agents/resize', { count: c }); setNumAgents(c); setToasts(t=>[...t, `Agents resized (total=${r.data?.agents})`]) }catch(e:any){ setToasts(t=>[...t,'Resize agents failed: '+(e?.message||e)]) }
+          }}>Resize Agents</button>
+        </div>
+        <div className='row group'>
+          <button className='button secondary' onClick={()=>openCorpus(1)}>Corpus</button>
+          <button className='button secondary' onClick={async ()=>{ try{const r=await axios.post(API+'/jobs/start',{query}); setJobId(r.data.job_id); setJobPct(0); setToasts(t=>[...t, 'Job '+r.data.job_id+' started'])}catch(e:any){setToasts(t=>[...t, 'Job start failed: '+(e?.message||e)])}}}>Shard Run</button>
+        </div>
+        <div className='row group'>
+          <button className='button' onClick={doSearch}>Search</button>
+          <button className='button secondary' onClick={doAnswer}>Answer</button>
+          <button className='button secondary' onClick={async ()=>{
+            try{
+              const r = await axios.get(API + '/prompts')
+              setPromptModes(r.data?.modes||[])
+              setPromptDefaults(r.data?.defaults||{})
+              setPromptOverrides(r.data?.overrides||{})
+              setShowPrompts(true)
+            }catch(e:any){ setToasts(t=>[...t,'Load prompts failed: '+(e?.message||e)]) }
+          }}>Prompts</button>
+        </div>
+      </aside>
+      <main className='main'>
+        <div className='card'>
+          <div className='section-title'>Live pheromone network</div>
+          <Plot
+            data={fig.data as any}
+            layout={fig.layout as any}
+            style={{ width:'100%', height:'600px' }}
+            onClick={(e:any)=>{
+              try{
+                // get point index and pick meta
+                const p = e?.points?.[0];
+                if (!p) return;
+                if (p.data?.name !== 'docs') return; // only respond to doc points
+                const idx = p.pointIndex;
+                const m = Array.isArray(p.data?.customdata) ? p.data.customdata[idx] : undefined;
+                if (m){ setSelectedDocs(prev=>[{...m}, ...prev].slice(0,20)); }
+              }catch{}
+            }}
+          />
+        </div>
+        <div className='card'>
+          <div className='section-title'>Live log</div>
+          <div className='log'>{logs.join('\n')}</div>
+        </div>
+        <div className='card'>
+          <div className='section-title'>Events</div>
+          <div className='results'>
+            <div style={{display:'grid',gridTemplateColumns:'120px 70px 120px 1fr',gap:6,padding:'6px 10px',fontWeight:600,opacity:0.8}}>
+              <div>Time</div><div>Step</div><div>Type</div><div>Text</div>
+            </div>
+            {events.slice().reverse().map((e,idx)=> (
+              <div key={'evt'+idx} style={{display:'grid',gridTemplateColumns:'120px 70px 120px 1fr',gap:6,padding:'4px 10px',borderTop:'1px solid rgba(255,255,255,0.08)'}}>
+                <div>{new Date(e.ts).toLocaleTimeString()}</div>
+                <div>{e.step ?? '-'}</div>
+                <div><span style={{padding:'2px 6px',borderRadius:6, background:'rgba(99,102,241,0.2)'}}>{e.type}</span></div>
+                <div style={{opacity:0.85}}>{e.text}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className='card'>
+          <div className='section-title'>Metrics</div>
+          <Plot
+            data={[
+              { x: mSteps, y: mAvg, type:'scatter', mode:'lines', name:'avg_rel' },
+              { x: mSteps, y: mMax, type:'scatter', mode:'lines', name:'max_rel' },
+              { x: mSteps, y: mTrails, type:'scatter', mode:'lines', name:'trails', yaxis:'y2' },
+              { x: mSteps, y: mResults, type:'scatter', mode:'lines', name:'results', yaxis:'y2' },
+            ] as any}
+            layout={{ height: 300, margin:{l:30,r:30,t:10,b:30}, yaxis:{title:'rel'}, yaxis2:{overlaying:'y', side:'right', title:'count'} } as any}
+            style={{ width:'100%', height:'300px' }}
+          />
+        </div>
+        {jobId && (
+          <div className='card'>
+            <div className='section-title'>Shard progress (job {jobId})</div>
+            <div className='progress'><div className='progress-bar' style={{ width: `${jobPct}%` }} /></div>
+          </div>
+        )}
+        <div className='card'>
+          <div className='section-title'>Results</div>
+          <div className='results'>
+            {selectedDocs.map((m, idx) => (
+              <div key={'sel'+idx} className='result-item'>
+                <div style={{display:'flex',gap:'8px',alignItems:'baseline'}}>
+                  <span className='score'>{Number(m?.score||0).toFixed(3)}</span>
+                  <span>doc #{m?.id}</span>
+                  <button className='button secondary' style={{marginLeft:'auto'}} onClick={async()=>{
+                    if (m?.id == null) return
+                    try { setLoadingDoc(m.id); const r = await axios.get(API+`/doc/${m.id}`); const d = r.data?.doc; setSelectedDocs(prev=> prev.map((x:any)=> x.id===m.id ? {...x, full:d?.content||'', embedding:d?.embedding||[]} : x)) } catch(e:any){ setToasts(t=>[...t,'Fetch doc failed: '+(e?.message||e)]) } finally { setLoadingDoc(null) }
+                  }}>Load content & embedding</button>
+                </div>
+                <span className='snippet'>{String(m?.snippet||'')}</span>
+                {loadingDoc===m?.id && (<div style={{opacity:0.7, fontStyle:'italic'}}>loading…</div>)}
+                {m?.full && (
+                  <pre style={{whiteSpace:'pre-wrap', background:'rgba(0,0,0,0.04)', padding:'8px', borderRadius:4, marginTop:6, maxHeight:200, overflow:'auto'}}>{String(m.full)}</pre>
+                )}
+                {Array.isArray(m?.embedding) && m.embedding.length>0 && (
+                  <div style={{marginTop:6}}>
+                    <div style={{fontWeight:600, opacity:0.85}}>Embedding ({m.embedding.length} dims)</div>
+                    <div style={{fontFamily:'monospace', fontSize:12, maxHeight:120, overflow:'auto'}}>{String(m.embedding.slice(0,64).map((v:number)=>Number(v).toFixed(3))).replace(/,/g, ', ') }{m.embedding.length>64?' …':''}</div>
+                  </div>
+                )}
+              </div>
+            ))}
+            {results.map((it, idx) => (
+              <div key={idx} className='result-item'>
+                <span className='score'>{Number(it.relevance_score||0).toFixed(3)}</span>
+                <span>{(it.metadata?.file_path) || 'chunk'}</span>
+                <span className='snippet'>{String((it.content||'')).slice(0,180)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className='card'>
+          <div className='section-title'>Step Report</div>
+          {reports.length === 0 ? (
+            <div className='results' style={{padding:10}}>No report yet.</div>
+          ) : (
+            <div className='results'>
+              <div style={{display:'flex',gap:10,alignItems:'center', padding:'8px 12px'}}>
+                <label style={{display:'flex',gap:6,alignItems:'center'}}>
+                  <input type='checkbox' checked={autoScrollReport} onChange={e=>setAutoScrollReport(e.target.checked)} /> Auto-scroll latest
+                </label>
+              </div>
+              {(() => {
+                const latest = reports[reports.length-1]
+                const items = Array.isArray(latest?.data?.items) ? latest.data.items : []
+                return (
+                  <div>
+                    <div style={{padding:'8px 12px', fontWeight:700}}>Step {latest.step} • Items {items.length}</div>
+                    {items.slice(0,20).map((it:any, idx:number) => (
+                      <div key={'rep'+idx} className='result-item'>
+                        <div style={{display:'flex',gap:8,alignItems:'baseline'}}>
+                          <span className='score'>{Number(it?.embedding_score||0).toFixed(3)}</span>
+                          <span style={{opacity:0.85}}>{String(it?.file_path||'file')}</span>
+                          <span style={{opacity:0.6}}>lines {Array.isArray(it?.line_range)? it.line_range.join('-') : ''}</span>
+                        </div>
+                        <div className='snippet'>{String(it?.code_purpose||'')}</div>
+                        {it?.relevance_to_query && (<div className='snippet'>why: {String(it.relevance_to_query)}</div>)}
+                      </div>
+                    ))}
+                    <div style={{padding:10}}>
+                      <button className='button secondary' onClick={()=>{
+                        try{
+                          const blob = new Blob([JSON.stringify(latest.data, null, 2)], {type:'application/json'})
+                          const a = document.createElement('a')
+                          a.href = URL.createObjectURL(blob)
+                          a.download = `report_step_${latest.step}.json`
+                          a.click()
+                        }catch(e){/* noop */}
+                      }}>Save latest JSON</button>
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+          )}
+        </div>
+      </main>
+      {showCorpus && (
+        <div className='modal-backdrop' onClick={()=>setShowCorpus(false)}>
+          <div className='modal' onClick={e=>e.stopPropagation()}>
+            <div className='modal-header'>
+              <div>Corpus Explorer (page {corpusPage}, total {corpusTotal})</div>
+              <button className='button secondary' onClick={()=>setShowCorpus(false)}>Close</button>
+            </div>
+            <div className='modal-body'>
+              <div className='filelist'>
+                {corpusFiles.map((f,i)=>(<div key={i} className='file-item'>{f}</div>))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {showPrompts && (
+        <div className='modal-backdrop' onClick={()=>setShowPrompts(false)}>
+          <div className='modal' onClick={e=>e.stopPropagation()}>
+            <div className='modal-header'>
+              <div>Prompt Editor</div>
+              <button className='button secondary' onClick={()=>setShowPrompts(false)}>Close</button>
+            </div>
+            <div className='modal-body' style={{display:'grid', gap:12}}>
+              <div>
+                <span className='label'>Mode</span>
+                <select className='select' value={promptModeSel} onChange={e=>setPromptModeSel(e.target.value)}>
+                  {(promptModes||['deep','structure','exploratory','summary','repair','steering']).map(m=> (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className='label'>Instructions (override)</div>
+                <textarea className='input' style={{minHeight:180}} value={promptOverrides[promptModeSel]||''} onChange={e=>setPromptOverrides(prev=>({...prev, [promptModeSel]: e.target.value}))} />
+              </div>
+              <div>
+                <div className='label'>Default (read-only)</div>
+                <textarea className='input' style={{minHeight:140, opacity:0.7}} value={promptDefaults[promptModeSel]||''} readOnly />
+              </div>
+              <div style={{display:'flex', gap:10}}>
+                <button className='button secondary' onClick={()=> setPromptOverrides(prev=> ({...prev, [promptModeSel]: promptDefaults[promptModeSel]||''}))}>Load default into override</button>
+                <button className='button' onClick={async ()=>{
+                  try{
+                    await axios.post(API + '/prompts/save', { overrides: promptOverrides })
+                    setToasts(t=>[...t,'Prompts saved'])
+                  }catch(e:any){ setToasts(t=>[...t,'Save prompts failed: '+(e?.message||e)]) }
+                }}>Save</button>
+                <button className='button secondary' onClick={()=> setPromptOverrides(prev=> ({...prev, [promptModeSel]: ''}))}>Clear override</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Debug indicator for stuck modals */}
+      {(showCorpus || showPrompts) && (
+        <div style={{position:'fixed', top:10, right:10, background:'#ef4444', color:'white', padding:'8px 12px', borderRadius:6, zIndex:99999, fontWeight:700, fontSize:14, boxShadow:'0 4px 6px rgba(0,0,0,0.3)'}}>
+          MODAL OPEN: {showCorpus ? 'Corpus' : 'Prompts'} (Press ESC to close)
+        </div>
+      )}
+      <div className='toasts'>
+        {toasts.slice(-4).map((m,i)=>(<div key={i} className='toast'>{m}</div>))}
+      </div>
+    </div>
+  )
+}
+
+

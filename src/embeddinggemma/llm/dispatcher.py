@@ -34,6 +34,7 @@ def generate_text(
     grok_temperature: Optional[float] = None,
     timeout: int = 500,
     save_prompt_path: Optional[str] = None,
+    save_usage_path: Optional[str] = None,
 ) -> str:
     # Delegate to existing implementation to avoid code duplication
     return _generate_text(
@@ -57,6 +58,7 @@ def generate_text(
         grok_temperature=grok_temperature,
         timeout=timeout,
         save_prompt_path=save_prompt_path,
+        save_usage_path=save_usage_path,
     )
 
 

@@ -1,7 +1,7 @@
 [project]
 name = "embeddinggemma"
 version = "0.1.0"
-description = "Add your description here"
+description = "Multi-Agent Codebase Analysis using RAG and Mycelial Search"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

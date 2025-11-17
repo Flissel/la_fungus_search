@@ -19,12 +19,15 @@ def _default_instructions(mode: str) -> str:
         )
     if m == "exploratory":
         return (
-            "Surface diverse areas of the codebase relevant to the query. "
-            "Prefer coverage across files over depth. "
+            "Explore broadly to map the codebase. "
+            "Surface key modules, responsibilities, and cross-cutting concerns. "
+            "Prefer breadth first; highlight surprising or high-impact areas to inspect next."
         )
     if m == "summary":
         return (
-            "Produce concise high-level summaries for each chunk and reduce redundancy. "
+            "Produce a concise summary of the most relevant code. "
+            "Capture purpose, main entrypoints, and how to use it. "
+            "Prefer clarity and brevity; avoid minor details."
         )
     if m == "repair":
         return (
@@ -69,20 +72,59 @@ def judge_schema_hint() -> str:
     return (
         "Return ONLY JSON with key 'items' (array). Each item must include: "
         "doc_id (int), is_relevant (bool), why (str), entry_point (bool), "
-        "missing_context (str[]), follow_up_queries (str[]), keywords (str[]), inspect (str[])."
+        "missing_context (str[]), follow_up_queries (str[]), keywords (str[]), inspect (str[]).\n\n"
+        "OPTIONAL: You may also include at the top level:\n"
+        "- 'suggested_top_k' (int, 5-50): Adjust retrieval depth for next cycle\n"
+        "  * Use 5-15 for focused analysis (found specific target, narrowing down)\n"
+        "  * Use 15-25 for normal exploration (current default)\n"
+        "  * Use 25-50 for broad context (exploring new area, need more examples)\n\n"
+        "USING ACCUMULATED KNOWLEDGE:\n"
+        "If 'ACCUMULATED KNOWLEDGE' is provided above, use it to inform your decisions:\n"
+        "- Recognize already-explored areas (avoid redundant follow-up queries)\n"
+        "- Build on previous discoveries (reference known entry points, patterns)\n"
+        "- Identify gaps in knowledge (what's missing from accumulated memories?)\n"
+        "- Make connections between current chunks and accumulated knowledge\n"
+        "- Generate follow-up queries that fill knowledge gaps, not repeat past exploration\n\n"
+        "Focus on evaluating code relevance and generating effective follow-up queries. "
+        "A separate Memory Manager Agent handles knowledge ingestion decisions.\n\n"
+        "Example:\n"
+        "{\"items\": [\n"
+        "  {\"doc_id\": 42, \"is_relevant\": true, \"why\": \"Contains FastAPI server initialization\",\n"
+        "   \"entry_point\": true, \"missing_context\": [\"Route handlers\", \"Middleware setup\"],\n"
+        "   \"follow_up_queries\": [\"Find FastAPI route definitions\", \"Explore WebSocket handlers\"],\n"
+        "   \"keywords\": [\"FastAPI\", \"async\", \"server\"], \"inspect\": [\"src/server.py\"]}\n"
+        "], \"suggested_top_k\": 25}"
     )
 
 
 def build_report_prompt(mode: str, query: str, top_k: int, docs: list[dict]) -> str:
     m = (mode or "deep").lower()
-    ctx = "\n\n".join([(it.get("content") or "")[:1200] for it in (docs or [])])
+    # No truncation - keep full chunk context for better LLM analysis
+    ctx = "\n\n".join([(it.get("content") or "") for it in (docs or [])])
     base = f"Mode: {m}\nQuery: {query}\nTopK: {int(top_k)}\n\nContext begins:\n{ctx}\n\nContext ends.\n\n"
     schema = report_schema_hint()
     instr = get_report_instructions(m)
     return base + instr + "\n" + schema + " Answer with JSON only."
 
 
-def build_judge_prompt(mode: str, query: str, results: list[dict]) -> str:
+def build_judge_prompt(
+    mode: str,
+    query: str,
+    results: list[dict],
+    task_mode: str | None = None,
+    query_history: list[str] | None = None,
+    memory_context: str | None = None
+) -> str:
+    """Build judge prompt with optional task_mode awareness and memory context.
+
+    Args:
+        mode: Judge mode (steering, focused, exploratory)
+        query: Current search query
+        results: List of code chunks to evaluate
+        task_mode: Optional main task mode (architecture, bugs, quality, etc.) for context
+        query_history: Optional list of previous queries to avoid repetition
+        memory_context: Optional context from past insights stored in Supermemory
+    """
     m = (mode or "steering").lower()
     items = []
     for it in (results or []):
@@ -90,15 +132,50 @@ def build_judge_prompt(mode: str, query: str, results: list[dict]) -> str:
             items.append({
                 'doc_id': int(it.get('id', it.get('doc_id', -1))),
                 'score': float(it.get('score', 0.0)),
-                'content': (it.get('content') or '')[:1200],
+                # No truncation - judge needs full context to make informed decisions
+                'content': (it.get('content') or ''),
             })
         except Exception:
             continue
     instr = get_report_instructions(m)
     schema = judge_schema_hint()
+
+    # Build task context if task_mode is provided and different from judge mode
+    task_context = ""
+    if task_mode and task_mode.lower() not in ('steering', 'focused', 'exploratory'):
+        task_instr = get_report_instructions(task_mode)
+        task_context = (
+            f"\n\n**MAIN TASK OBJECTIVE** (Task Mode: {task_mode}):\n"
+            f"{task_instr}\n\n"
+            f"Your role as judge is to evaluate code chunks and generate follow-up queries "
+            f"that help fulfill this MAIN TASK OBJECTIVE. Your follow_up_queries should be "
+            f"specifically designed to gather information needed to complete the {task_mode} analysis.\n"
+        )
+
+    # Add query history to prevent repetition
+    history_context = ""
+    if query_history and len(query_history) > 0:
+        # Show last 20 queries to avoid overwhelming the prompt
+        recent_queries = query_history[-20:]
+        history_list = "\n".join([f"  - {q}" for q in recent_queries])
+        history_context = (
+            f"\n\n**PREVIOUS QUERIES EXPLORED** (avoid repeating these):\n"
+            f"{history_list}\n\n"
+            f"Generate NEW follow-up queries that explore DIFFERENT aspects not covered above. "
+            f"Look for gaps in understanding and unexplored areas of the codebase.\n"
+        )
+
+    # Add memory context from past insights
+    memory_section = ""
+    if memory_context:
+        memory_section = f"\n\n{memory_context}\n"
+
     return (
-        f"Mode: {m}\nQuery: {query}\n\n" +
-        instr + "\n" +
+        f"Judge Mode: {m}\nQuery: {query}\n" +
+        task_context +
+        memory_section +
+        history_context +
+        "\n" + instr + "\n" +
         "Evaluate the following code chunks for relevance to the query. "
         "Mark entry_point for main functions, API routes, or top-level orchestrators.\n\n" +
         __import__('json').dumps({'chunks': items}, ensure_ascii=False) + "\n\n" +
