@@ -1,3 +1,8 @@
+# Web Framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+
+# ML/AI packages
 sentence-transformers>=3.0.0
 torch>=2.0.0
 numpy>=1.21.0
@@ -24,7 +29,8 @@ supermemory>=3.4.0
 python-dotenv>=1.0.0
 
 # LangChain for Memory Agent
-langchain>=0.1.0
-langchain-core>=0.1.0
-langchain-openai>=0.1.0
+# NOTE: Requires Python 3.13 or earlier (Python 3.14 has Pydantic V1 compatibility issues)
+langchain<1.0,>=0.3.0
+langchain-core<1.0,>=0.3.0
+langchain-openai<1.0,>=0.3.0
 langchain-ollama>=0.1.0

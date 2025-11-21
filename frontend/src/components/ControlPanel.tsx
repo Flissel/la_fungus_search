@@ -52,6 +52,15 @@ export function ControlPanel({
     }
   }
 
+  const handleForceStop = async () => {
+    try {
+      await api.stopSimulation(true)
+      addToast('Force stopped')
+    } catch (e: any) {
+      addToast('Force stop failed: ' + (e?.message || e))
+    }
+  }
+
   const handlePause = async () => {
     try {
       await api.pauseSimulation()
@@ -146,6 +155,11 @@ export function ControlPanel({
         <button className="button secondary" onClick={handleStop}>
           Stop
         </button>
+        <button className="button secondary" onClick={handleForceStop} title="Force stop - skip cleanup">
+          Force Stop
+        </button>
+      </div>
+      <div className="row group">
         <button className="button secondary" onClick={handleReset}>
           Reset
         </button>

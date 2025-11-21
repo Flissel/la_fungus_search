@@ -29,8 +29,8 @@ export async function startSimulation(settings: Settings): Promise<void> {
   await axios.post(`${API}/start`, settings)
 }
 
-export async function stopSimulation(): Promise<void> {
-  await axios.post(`${API}/stop`)
+export async function stopSimulation(force: boolean = false): Promise<void> {
+  await axios.post(`${API}/stop?force=${force}`)
 }
 
 export async function pauseSimulation(): Promise<void> {
