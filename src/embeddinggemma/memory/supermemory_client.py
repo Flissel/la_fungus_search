@@ -43,6 +43,7 @@ class SupermemoryManager:
             enabled: Whether memory features are enabled (default: True)
         """
         self.api_key = api_key or os.getenv("SUPERMEMORY_API_KEY")
+        self.base_url = os.getenv("SUPERMEMORY_BASE_URL", "https://api.supermemory.ai")
         self.enabled = enabled and bool(self.api_key)
         self.client = None
 
@@ -54,8 +55,8 @@ class SupermemoryManager:
         if self.enabled:
             try:
                 from supermemory import AsyncSupermemory
-                self.client = AsyncSupermemory(api_key=self.api_key)
-                _logger.info("[MEMORY] Supermemory initialized successfully")
+                self.client = AsyncSupermemory(api_key=self.api_key, base_url=self.base_url)
+                _logger.info(f"[MEMORY] Supermemory initialized successfully (base_url={self.base_url})")
             except ImportError:
                 _logger.warning(
                     "[MEMORY] supermemory package not installed. "
@@ -101,7 +102,7 @@ class SupermemoryManager:
 
             await self.client.memories.add(
                 content=content,
-                container_tag=container_tag,
+                container_tags=[container_tag],
                 metadata=meta
             )
 
@@ -142,7 +143,9 @@ class SupermemoryManager:
             results = await self.client.search.memories(
                 q=query,
                 container_tag=container_tag,
-                limit=limit
+                limit=limit,
+                threshold=0.6,
+                rerank=True
             )
 
             if not results or not hasattr(results, 'results'):
@@ -723,6 +726,11 @@ class SupermemoryManager:
             }
 
             # Add memory using Supermemory v3 API
+            _logger.info(
+                f"[MEMORY] API call: memories.add() | "
+                f"container_tags={[container_tag]}, custom_id={custom_id[:50]}..."
+            )
+
             await self.client.memories.add(
                 content=content,
                 container_tags=[container_tag],
@@ -731,8 +739,9 @@ class SupermemoryManager:
             )
 
             self.insights_stored += 1
-            _logger.debug(
-                f"[MEMORY] Added memory: type={type}, custom_id={custom_id[:50]}"
+            _logger.info(
+                f"[MEMORY] API response: Success | "
+                f"type={type}, custom_id={custom_id[:50]}"
             )
             return True
 
@@ -791,6 +800,11 @@ class SupermemoryManager:
             }
 
             # Update using the SAME custom_id - Supermemory will replace the old memory
+            _logger.info(
+                f"[MEMORY] API call: memories.add() (UPDATE) | "
+                f"container_tags={[container_tag]}, custom_id={custom_id[:50]}..."
+            )
+
             await self.client.memories.add(
                 content=content,
                 container_tags=[container_tag],
@@ -798,8 +812,9 @@ class SupermemoryManager:
                 custom_id=custom_id  # Same ID = UPDATE
             )
 
-            _logger.debug(
-                f"[MEMORY] Updated memory: custom_id={custom_id[:50]}, version={current_version + 1}"
+            _logger.info(
+                f"[MEMORY] API response: Success (UPDATE) | "
+                f"custom_id={custom_id[:50]}, version={current_version + 1}"
             )
             return True
 
@@ -842,19 +857,27 @@ class SupermemoryManager:
         try:
             self.memory_queries += 1
 
+            _logger.info(
+                f"[MEMORY] API call: search.memories() | "
+                f"query={query[:50]}..., container_tag={container_tag}, limit={limit}"
+            )
+
             # Search using Supermemory v3 API
             results = await self.client.search.memories(
                 q=query,
                 container_tag=container_tag,
-                limit=limit
+                limit=limit,
+                threshold=0.6,
+                rerank=True
             )
 
             if not results or not hasattr(results, 'results'):
+                _logger.info("[MEMORY] API response: No results returned")
                 return []
 
             memories = []
             for r in results.results:
-                meta = r.metadata if hasattr(r, 'metadata') else {}
+                meta = r.metadata if (hasattr(r, 'metadata') and r.metadata is not None) else {}
                 memories.append({
                     "content": r.memory if hasattr(r, 'memory') else str(r),
                     "metadata": meta,
@@ -864,11 +887,216 @@ class SupermemoryManager:
                 })
 
             self.insights_retrieved += len(memories)
-            _logger.debug(
-                f"[MEMORY] Retrieved {len(memories)} memories for query: {query[:50]}..."
+            _logger.info(
+                f"[MEMORY] API response: Success | Found {len(memories)} memories"
             )
             return memories
 
         except Exception as e:
             _logger.error(f"[MEMORY] Error searching memories: {e}")
+            return []
+
+
+# ============================================================================
+# Synchronous Supermemory Manager for LangChain Tools
+# ============================================================================
+
+
+class SupermemoryManagerSync:
+    """
+    Synchronous wrapper for Supermemory API - designed for LangChain tools.
+
+    This class uses the synchronous Supermemory client to avoid event loop
+    conflicts when called from LangChain tool functions (which are sync but
+    run inside an async FastAPI context).
+
+    The async SupermemoryManager above uses AsyncSupermemory and is suitable
+    for direct async/await usage. This sync version is specifically for
+    LangChain ReAct agent tools.
+    """
+
+    def __init__(self, api_key: str | None = None):
+        """
+        Initialize synchronous Supermemory manager.
+
+        Args:
+            api_key: Supermemory API key (falls back to env SUPERMEMORY_API_KEY)
+        """
+        import os
+        from supermemory import Supermemory  # Sync client!
+
+        self.api_key = api_key or os.getenv("SUPERMEMORY_API_KEY")
+        self.base_url = os.getenv("SUPERMEMORY_BASE_URL", "https://api.supermemory.ai")
+        self.enabled = bool(self.api_key)
+
+        if not self.api_key:
+            raise ValueError(
+                "SUPERMEMORY_API_KEY not found in environment or constructor"
+            )
+
+        _logger.info(f"[MEMORY-SYNC] Initializing synchronous Supermemory client (base_url={self.base_url})")
+        self.client = Supermemory(api_key=self.api_key, base_url=self.base_url)
+
+    def add_memory(
+        self,
+        content: str,
+        type: str | None = None,  # Note: SDK doesn't use this, kept for compatibility
+        metadata: dict | None = None,
+        custom_id: str | None = None,
+        container_tag: str | None = None,
+    ) -> bool:
+        """
+        Add a memory to Supermemory (synchronous).
+
+        Args:
+            content: Memory content text
+            type: Memory type (DEPRECATED - SDK doesn't support this parameter)
+            metadata: Optional metadata dict
+            custom_id: Optional custom ID for deduplication
+            container_tag: Optional container tag for isolation
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not content or not content.strip():
+            _logger.warning("[MEMORY-SYNC] Empty content, skipping add")
+            return False
+
+        try:
+            # Log the API call
+            _logger.info(
+                f"[MEMORY-SYNC] API call: memories.add() | "
+                f"container_tags={[container_tag] if container_tag else []}, "
+                f"custom_id={custom_id[:50] if custom_id else 'None'}..., "
+                f"content_len={len(content)}"
+            )
+
+            # Direct sync call - no await or asyncio!
+            # NOTE: SDK doesn't support 'type' parameter, removed it
+            response = self.client.memories.add(
+                content=content,
+                metadata=metadata or {},
+                custom_id=custom_id,
+                container_tags=[container_tag] if container_tag else [],  # Plural list!
+            )
+
+            _logger.info(
+                f"[MEMORY-SYNC] API response: Success | "
+                f"id={response.id if hasattr(response, 'id') else 'N/A'}"
+            )
+            return True
+
+        except Exception as e:
+            _logger.error(f"[MEMORY-SYNC] Error adding memory: {e}", exc_info=True)
+            return False
+
+    def update_memory(
+        self,
+        custom_id: str,
+        content: str,
+        metadata: dict | None = None,
+        container_tag: str | None = None,
+    ) -> bool:
+        """
+        Update an existing memory by custom_id (synchronous).
+
+        Uses the same add() API with the same custom_id to trigger an update.
+
+        Args:
+            custom_id: Custom ID of memory to update
+            content: New content
+            metadata: New metadata
+            container_tag: Container tag
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not custom_id:
+            _logger.warning("[MEMORY-SYNC] No custom_id provided for update")
+            return False
+
+        try:
+            _logger.info(
+                f"[MEMORY-SYNC] API call: memories.add() (update) | "
+                f"custom_id={custom_id[:50]}..., content_len={len(content)}"
+            )
+
+            # Same API call with same custom_id = update
+            # NOTE: SDK doesn't support 'type' parameter, removed it
+            response = self.client.memories.add(
+                content=content,
+                metadata=metadata or {},
+                custom_id=custom_id,
+                container_tags=[container_tag] if container_tag else [],
+            )
+
+            _logger.info(
+                f"[MEMORY-SYNC] API response: Updated | "
+                f"id={response.id if hasattr(response, 'id') else 'N/A'}"
+            )
+            return True
+
+        except Exception as e:
+            _logger.error(f"[MEMORY-SYNC] Error updating memory: {e}", exc_info=True)
+            return False
+
+    def search_memory(
+        self,
+        query: str,
+        container_tag: str | None = None,
+        limit: int = 5,
+    ) -> list[dict]:
+        """
+        Search memories (synchronous).
+
+        Args:
+            query: Search query
+            container_tag: Optional container tag filter
+            limit: Max results
+
+        Returns:
+            List of memory dicts with content, metadata, id
+        """
+        if not query or not query.strip():
+            _logger.warning("[MEMORY-SYNC] Empty query, returning no results")
+            return []
+
+        try:
+            _logger.info(
+                f"[MEMORY-SYNC] API call: search.memories() | "
+                f"q='{query[:100]}', container_tag={container_tag}, limit={limit}"
+            )
+
+            # Direct sync call - note: search.memories uses singular container_tag!
+            results = self.client.search.memories(
+                q=query,
+                container_tag=container_tag,  # SINGULAR string, not list!
+                limit=limit,
+                threshold=0.6,
+                rerank=True,
+            )
+
+            memories = []
+            if results and hasattr(results, "memories"):
+                for r in results.memories:
+                    # Safe metadata handling
+                    meta = (
+                        r.metadata
+                        if (hasattr(r, "metadata") and r.metadata is not None)
+                        else {}
+                    )
+                    memories.append(
+                        {
+                            "content": r.content if hasattr(r, "content") else "",
+                            "metadata": meta,
+                            "id": r.id if hasattr(r, "id") else None,
+                            "custom_id": r.custom_id if hasattr(r, "custom_id") else None,
+                        }
+                    )
+
+            _logger.info(f"[MEMORY-SYNC] Search returned {len(memories)} results")
+            return memories
+
+        except Exception as e:
+            _logger.error(f"[MEMORY-SYNC] Error searching memories: {e}", exc_info=True)
             return []

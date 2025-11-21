@@ -403,6 +403,8 @@ async def http_reset(streamer: Any = Depends(get_streamer)) -> JSONResponse:
         # Clear background jobs and force corpus rebuild detection
         streamer.jobs = {}
         streamer._corpus_fingerprint = None
+        # Clear LangChain agent to force recreation with latest code
+        streamer.langchain_agent = None
         # Keep configuration (query, windows, etc.) so the next /start can reuse or override
         await streamer._broadcast({"type": "log", "message": "simulation reset"})
     except Exception:

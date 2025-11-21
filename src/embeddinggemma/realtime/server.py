@@ -34,6 +34,7 @@ from embeddinggemma.llm.prompts import build_judge_prompt as prompts_build_judge
 from embeddinggemma.ui.queries import dedup_multi_queries  # type: ignore
 from embeddinggemma.ui.reports import merge_reports_to_summary  # type: ignore
 from embeddinggemma.memory import SupermemoryManager  # type: ignore
+from embeddinggemma.memory.supermemory_client import SupermemoryManagerSync  # type: ignore
 from embeddinggemma.memory.room_analyzer import RoomAnalyzer  # type: ignore
 from embeddinggemma.agents import MemoryManagerAgent  # type: ignore
 
@@ -731,6 +732,104 @@ class SnapshotStreamer:
         blended.sort(key=lambda x: x.get('blended_score', 0.0), reverse=True)
         return blended[: int(self.top_k)]
 
+    async def _check_bootstrap_needed(self) -> bool:
+        """
+        Check if foundational bootstrap has been run for this container.
+
+        Returns:
+            True if bootstrap is needed, False if already exists
+        """
+        try:
+            if not self.memory_manager or not self.memory_manager.enabled:
+                return False
+
+            container_tag = self.run_id or "default"
+
+            # Search for codebase_module_tree memory (foundational bootstrap marker)
+            memories = await self.memory_manager.search_memory(
+                query="codebase_module_tree",
+                container_tag=container_tag,
+                limit=1
+            )
+
+            # If found and marked as auto-generated, bootstrap is done
+            if memories:
+                metadata = memories[0].get("metadata", {})
+                if metadata.get("auto_generated"):
+                    _logger.debug("[BOOTSTRAP] Foundational knowledge already exists")
+                    return False
+
+            # No bootstrap found, need to run
+            _logger.info("[BOOTSTRAP] No foundational knowledge found, bootstrap needed")
+            return True
+
+        except Exception as e:
+            _logger.warning(f"[BOOTSTRAP] Error checking bootstrap status: {e}")
+            # On error, assume bootstrap is needed
+            return True
+
+    async def _run_bootstrap(self) -> None:
+        """
+        Run codebase bootstrap to create foundational knowledge.
+
+        This scans the project structure and creates initial memories about:
+        - Module tree (all Python packages)
+        - Entry points (main executable files)
+        - Module overviews for significant modules
+        """
+        try:
+            if not self.memory_manager or not self.memory_manager.enabled:
+                _logger.debug("[BOOTSTRAP] Skipped - memory manager disabled")
+                return
+
+            from embeddinggemma.memory.codebase_bootstrap import CodebaseBootstrap
+
+            container_tag = self.run_id or "default"
+            root_dir = os.getcwd()
+
+            _logger.info("[BOOTSTRAP] Creating foundational codebase knowledge...")
+            _ = asyncio.create_task(self._broadcast({
+                "type": "log",
+                "message": "bootstrap: scanning codebase structure..."
+            }))
+
+            # Create and run bootstrap
+            bootstrapper = CodebaseBootstrap(
+                root_dir=root_dir,
+                memory_manager=self.memory_manager
+            )
+
+            result = await bootstrapper.bootstrap(container_tag=container_tag)
+
+            if result.get('success'):
+                memories_created = result.get('memories_created', 0)
+                modules_count = len(result.get('module_tree', {}))
+                entry_points_count = len(result.get('entry_points', []))
+
+                _logger.info(
+                    f"[BOOTSTRAP] Success - Created {memories_created} foundational memories "
+                    f"({modules_count} modules, {entry_points_count} entry points)"
+                )
+
+                _ = asyncio.create_task(self._broadcast({
+                    "type": "log",
+                    "message": f"bootstrap: created {memories_created} foundational memories ({modules_count} modules)"
+                }))
+            else:
+                error = result.get('error', 'Unknown error')
+                _logger.error(f"[BOOTSTRAP] Failed: {error}")
+                _ = asyncio.create_task(self._broadcast({
+                    "type": "log",
+                    "message": f"bootstrap: failed - {error}"
+                }))
+
+        except Exception as e:
+            _logger.error(f"[BOOTSTRAP] Exception during bootstrap: {e}", exc_info=True)
+            _ = asyncio.create_task(self._broadcast({
+                "type": "log",
+                "message": f"bootstrap: error - {str(e)[:100]}"
+            }))
+
     async def _build_judge_prompt(self, query: str, results: list[dict]) -> str:
         # delegate to prompts module; prefer explicit judge_mode, then report_mode
         judge_mode = (getattr(self, 'judge_mode', None) or 'steering')
@@ -929,7 +1028,13 @@ class SnapshotStreamer:
                 langchain_enabled = os.environ.get('LANGCHAIN_MEMORY_ENABLED', 'true').lower() == 'true'
 
                 # Lazy initialize LangChain Memory Agent
-                if self.langchain_agent is None and self.memory_manager and self.memory_manager.enabled and langchain_enabled:
+                # Create/recreate agent if: (1) not initialized, (2) run_id changed (new exploration session)
+                needs_recreation = (
+                    self.langchain_agent is None or
+                    (self.langchain_agent and getattr(self.langchain_agent, 'container_tag', None) != self.run_id)
+                )
+
+                if needs_recreation and self.memory_manager and self.memory_manager.enabled and langchain_enabled:
                     try:
                         if self.llm_provider == 'openai':
                             from langchain_openai import ChatOpenAI
@@ -947,10 +1052,14 @@ class SnapshotStreamer:
                                 temperature=0.0
                             )
 
-                            # Create LangChain Memory Agent
+                            # Create synchronous memory manager for LangChain tools
+                            # (avoids event loop conflicts in sync tool functions)
+                            sync_memory_manager = SupermemoryManagerSync()
+
+                            # Create LangChain Memory Agent with sync manager
                             self.langchain_agent = LangChainMemoryAgent(
                                 llm=llm,
-                                memory_manager=self.memory_manager,
+                                memory_manager=sync_memory_manager,
                                 container_tag=self.run_id or "default",
                                 model=langchain_model
                             )
@@ -1288,6 +1397,9 @@ class SnapshotStreamer:
         # Collection name format: {root_dir_name}_{timestamp} (e.g., "codebase_20251110_175332")
         self.run_id = self.qdrant_collection
 
+        # Clear LangChain agent to force recreation with latest code and new container_tag
+        self.langchain_agent = None
+
         # Initialize logging paths for this run
         self._run_dir = os.path.join(SETTINGS_DIR, "runs", str(self.run_id))
         self._query_log_path = os.path.join(self._run_dir, "queries.jsonl")
@@ -1300,6 +1412,12 @@ class SnapshotStreamer:
         self._total_cost = 0.0
         self._run_start_time = time.time()
         self._update_manifest()  # Create initial manifest
+
+        # Check if foundational knowledge bootstrap is needed
+        bootstrap_needed = await self._check_bootstrap_needed()
+        if bootstrap_needed:
+            await self._run_bootstrap()
+
         # Build retriever and corpus
         # Ensure LLM API keys are present from env if not set
         try:

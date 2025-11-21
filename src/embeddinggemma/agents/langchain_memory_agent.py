@@ -94,47 +94,75 @@ class LangChainMemoryAgent:
                 name="search_memory",
                 func=self._search_memory_tool,
                 description=(
-                    "Search existing memories to check for duplicates or similar findings. "
-                    "Input: search query string. "
-                    "Returns: JSON list of matching memories with custom_id, content, version."
+                    "Search existing memories to check for duplicates or find related findings. "
+                    "Input: SPECIFIC search query string (e.g., 'server initialization', 'FastAPI routes', 'database connection'). "
+                    "IMPORTANT: Be specific! Use file paths, function names, or technical terms, NOT generic queries. "
+                    "Returns: JSON list of matching memories with custom_id, content, type, version."
                 )
             )
         ]
 
     def _build_prompt(self) -> PromptTemplate:
         """Build the ReAct prompt template for the agent."""
-        template = """You are a memory management agent for code exploration. Your job is to analyze
-code discoveries and create or update memories in a knowledge base.
+        template = """You are the Memory Agent responsible for building architectural knowledge about codebases.
 
-CURRENT ITERATION CONTEXT:
+IMPORTANT: ALWAYS start by checking foundational knowledge before analyzing new discoveries.
+
+FOUNDATIONAL KNOWLEDGE (check first):
+- search_memory("codebase_module_tree") → Module structure map
+- search_memory("codebase_entry_points") → Main executable files
+- search_memory("module overview [area]") → Specific module details
+
+CURRENT EXPLORATION TASK:
 Query: {query}
+
+CURRENT ITERATION RESULTS:
 Code Chunks Found: {code_chunks_summary}
 Judge Evaluation: {judge_summary}
 
 MEMORY TYPES:
-- entry_point: Main functions, API routes, CLI entrypoints
-- pattern: Architectural patterns (async/await, DI, factories)
+- entry_point: Main functions, API routes, CLI entrypoints, server initialization
+- pattern: Architectural patterns (async/await, DI, factories, singleton)
 - dependency: Critical imports and external dependencies
+- module_architecture: High-level module organization and relationships
 - bug: Error patterns, suspicious code
 - security: Authentication, authorization, vulnerabilities
 
-YOUR TASK:
-1. Analyze what was discovered in this iteration
-2. Search for existing similar memories (avoid duplicates)
-3. If similar memory exists: UPDATE it with new info
-4. If no similar memory: CREATE a new memory
-5. Prioritize significant discoveries (entry points, patterns, security issues)
+YOUR WORKFLOW:
+1. FIRST: Search for foundational knowledge ("codebase_module_tree", "codebase_entry_points")
+2. CONTEXT: Understand where current findings fit in the module structure
+3. SEARCH: Look for existing memories related to current discoveries
+4. DECIDE: Create NEW memory OR update EXISTING memory
+5. PRIORITIZE: Entry points and architectural insights over trivial findings
+
+CREATING ARCHITECTURAL MEMORIES:
+- Reference module structure from foundational knowledge
+- Connect findings to known modules/entry points
+- Use clear custom_ids like "entry_point_server_initialization" or "module_agents_architecture"
+- Include context: "This is part of the [module_name] module which handles [purpose]"
 
 GUIDELINES:
-- Always search before creating to avoid duplicates
-- Update existing memories when you find related new info
-- Use descriptive content (what, where, why it matters)
-- Include file_path, line numbers, and confidence in metadata
-- Skip trivial findings (imports, comments, boilerplate)
+- Always retrieve foundational knowledge first to understand codebase structure
+- Build on existing architectural understanding, don't create isolated memories
+- Update memories when you find related information
+- Skip trivial findings (simple imports, comments, basic utility functions)
+- Focus on architectural significance (how does this fit in the system?)
+
+SEARCH QUERY RULES (CRITICAL):
+- ❌ NEVER use generic queries like: "Classify the code", "modules", "architecture"
+- ✅ ALWAYS use specific queries with concrete references:
+  * File paths: "server.py initialization", "agents/langchain_memory_agent.py"
+  * Function names: "start_exploration function", "add_memory implementation"
+  * Technical terms: "FastAPI WebSocket routes", "Qdrant vector database setup"
+  * Specific patterns: "async/await in realtime server", "LangChain agent tools"
+- If you don't know what to search for, use the judge's insights or code chunk file paths as query terms
+- Example: Instead of "Classify modules" → "src/embeddinggemma/realtime/server.py WebSocket handling"
 
 You have access to the following tools:
 
 {tools}
+
+Tool Names: {tool_names}
 
 Use the following format:
 
@@ -146,7 +174,10 @@ Observation: tool result
 Thought: I now know what to do
 Final Answer: Summary of memories created/updated
 
-Begin!
+Begin! Remember:
+1. ALWAYS check foundational knowledge first with search_memory("codebase_module_tree")
+2. Use SPECIFIC search queries with file paths, function names, or technical terms from the code chunks
+3. NEVER use generic queries like "Classify the code" or "modules"
 
 Thought: {agent_scratchpad}"""
 
@@ -180,6 +211,11 @@ Thought: {agent_scratchpad}"""
             identifier = data.get("identifier", "unknown")
             metadata = data.get("metadata", {})
 
+            _logger.info(
+                f"[LANGCHAIN-AGENT] Tool called: add_memory | "
+                f"type={type_}, file_path={file_path}, identifier={identifier}"
+            )
+
             # Generate custom_id for deduplication
             from src.embeddinggemma.memory.supermemory_client import SupermemoryManager
             custom_id = SupermemoryManager.generate_custom_id(type_, file_path, identifier)
@@ -190,24 +226,24 @@ Thought: {agent_scratchpad}"""
                 "identifier": identifier
             })
 
-            # Call async method (need to handle async in sync context)
-            import asyncio
-            loop = asyncio.get_event_loop()
-            success = loop.run_until_complete(
-                self.memory_manager.add_memory(
-                    content=content,
-                    type=type_,
-                    metadata=metadata,
-                    custom_id=custom_id,
-                    container_tag=self.container_tag
-                )
+            # Direct sync call - no asyncio needed!
+            success = self.memory_manager.add_memory(
+                content=content,
+                type=type_,
+                metadata=metadata,
+                custom_id=custom_id,
+                container_tag=self.container_tag
             )
 
             if success:
                 self.memories_created += 1
-                return f"success: Created memory '{custom_id}'"
+                result = f"success: Created memory '{custom_id}'"
+                _logger.info(f"[LANGCHAIN-AGENT] Tool result: {result}")
+                return result
             else:
-                return "error: Failed to create memory"
+                result = "error: Failed to create memory"
+                _logger.warning(f"[LANGCHAIN-AGENT] Tool result: {result}")
+                return result
 
         except Exception as e:
             _logger.error(f"[LANGCHAIN-AGENT] Error in add_memory tool: {e}")
@@ -223,26 +259,31 @@ Thought: {agent_scratchpad}"""
             content = data.get("content", "")
             metadata = data.get("metadata", {})
 
+            _logger.info(
+                f"[LANGCHAIN-AGENT] Tool called: update_memory | "
+                f"custom_id={custom_id[:50] if custom_id else 'MISSING'}"
+            )
+
             if not custom_id:
                 return "error: custom_id is required for updates"
 
-            # Call async method
-            import asyncio
-            loop = asyncio.get_event_loop()
-            success = loop.run_until_complete(
-                self.memory_manager.update_memory(
-                    custom_id=custom_id,
-                    content=content,
-                    metadata=metadata,
-                    container_tag=self.container_tag
-                )
+            # Direct sync call - no asyncio needed!
+            success = self.memory_manager.update_memory(
+                custom_id=custom_id,
+                content=content,
+                metadata=metadata,
+                container_tag=self.container_tag
             )
 
             if success:
                 self.memories_updated += 1
-                return f"success: Updated memory '{custom_id}'"
+                result = f"success: Updated memory '{custom_id}'"
+                _logger.info(f"[LANGCHAIN-AGENT] Tool result: {result}")
+                return result
             else:
-                return "error: Failed to update memory"
+                result = "error: Failed to update memory"
+                _logger.warning(f"[LANGCHAIN-AGENT] Tool result: {result}")
+                return result
 
         except Exception as e:
             _logger.error(f"[LANGCHAIN-AGENT] Error in update_memory tool: {e}")
@@ -251,15 +292,16 @@ Thought: {agent_scratchpad}"""
     def _search_memory_tool(self, query: str) -> str:
         """Tool function for searching existing memories."""
         try:
-            # Call async method
-            import asyncio
-            loop = asyncio.get_event_loop()
-            memories = loop.run_until_complete(
-                self.memory_manager.search_memory(
-                    query=query,
-                    container_tag=self.container_tag,
-                    limit=5
-                )
+            _logger.info(
+                f"[LANGCHAIN-AGENT] Tool called: search_memory | "
+                f"query={query[:50]}..."
+            )
+
+            # Direct sync call - no asyncio needed!
+            memories = self.memory_manager.search_memory(
+                query=query,
+                container_tag=self.container_tag,
+                limit=5
             )
 
             # Format results for agent
@@ -272,7 +314,9 @@ Thought: {agent_scratchpad}"""
                     "version": memory.get("version", 1)
                 })
 
-            return json.dumps(results, indent=2)
+            result = json.dumps(results, indent=2)
+            _logger.info(f"[LANGCHAIN-AGENT] Tool result: Found {len(results)} memories")
+            return result
 
         except Exception as e:
             _logger.error(f"[LANGCHAIN-AGENT] Error in search_memory tool: {e}")
@@ -352,23 +396,41 @@ Thought: {agent_scratchpad}"""
             }
 
     def _summarize_code_chunks(self, code_chunks: list[dict[str, Any]]) -> str:
-        """Summarize code chunks for agent prompt."""
+        """Summarize code chunks for agent prompt with specific technical details."""
         if not code_chunks:
             return "No code chunks found"
 
         summary_lines = []
         for i, chunk in enumerate(code_chunks[:5], 1):  # Limit to 5
             file_path = chunk.get("file_path", "unknown")
-            content = chunk.get("content", "")[:100]  # Truncate
-            summary_lines.append(f"{i}. {file_path}: {content}...")
+            content = chunk.get("content", "")
+
+            # Extract function/class names from code for specific search context
+            func_class_hints = []
+            for line in content.split('\n')[:10]:  # First 10 lines
+                line_stripped = line.strip()
+                if line_stripped.startswith('def '):
+                    func_name = line_stripped.split('(')[0].replace('def ', '').strip()
+                    func_class_hints.append(f"def {func_name}")
+                elif line_stripped.startswith('class '):
+                    class_name = line_stripped.split('(')[0].split(':')[0].replace('class ', '').strip()
+                    func_class_hints.append(f"class {class_name}")
+                elif line_stripped.startswith('async def '):
+                    func_name = line_stripped.split('(')[0].replace('async def ', '').strip()
+                    func_class_hints.append(f"async def {func_name}")
+
+            hints_str = ", ".join(func_class_hints[:3]) if func_class_hints else "code block"
+            summary_lines.append(f"{i}. {file_path} ({hints_str})")
 
         if len(code_chunks) > 5:
             summary_lines.append(f"... and {len(code_chunks) - 5} more chunks")
 
+        summary_lines.append("\n💡 TIP: Use these file paths and function names in your search queries!")
+
         return "\n".join(summary_lines)
 
     def _summarize_judge_results(self, judge_results: dict[int, dict[str, Any]] | None) -> str:
-        """Summarize judge evaluation results for agent prompt."""
+        """Summarize judge evaluation results with specific technical insights."""
         if not judge_results:
             return "No judge evaluation available"
 
@@ -378,15 +440,17 @@ Thought: {agent_scratchpad}"""
         summary_lines = [
             f"Total chunks evaluated: {len(judge_results)}",
             f"Relevant chunks: {relevant_count}",
-            f"Entry points found: {entry_point_count}"
+            f"Entry points found: {entry_point_count}",
+            ""
         ]
 
-        # Add key findings
+        # Add key findings with MORE context
+        summary_lines.append("Key Insights (use these terms in your searches):")
         for idx, result in list(judge_results.items())[:3]:  # Top 3
             if result.get("is_relevant"):
-                why = result.get("why", "")[:100]
+                why = result.get("why", "")[:200]  # More context
                 entry = " [ENTRY POINT]" if result.get("entry_point") else ""
-                summary_lines.append(f"- Chunk {idx}: {why}{entry}")
+                summary_lines.append(f"- {why}{entry}")
 
         return "\n".join(summary_lines)
 
