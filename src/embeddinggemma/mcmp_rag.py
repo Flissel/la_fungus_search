@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional, Set, Any
 import logging
+import os
 import warnings
 import numpy as np
 
@@ -26,6 +27,8 @@ from embeddinggemma.mcmp.pca import pca_fit_transform as _pca_fit_transform
 from embeddinggemma.mcmp.visualize import build_snapshot as _build_snapshot
 from embeddinggemma.mcmp.indexing import build_faiss_index as _build_faiss
 from embeddinggemma.mcmp.indexing import faiss_search as _faiss_search
+from embeddinggemma.mcmp.indexing import save_faiss_index as _save_faiss
+from embeddinggemma.mcmp.indexing import load_faiss_index as _load_faiss
 
 
 _logger = logging.getLogger("MCMP.Facade")
@@ -113,8 +116,81 @@ class MCPMRetriever:
         # simulation.spawn_agents expects `retr.Agent` to be present
         self.Agent = Agent  # type: ignore[attr-defined]
 
+    # ---- Persistence ----
+    # Use absolute path based on package location so it works from any CWD
+    _CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".fungus_cache")
+    _FAISS_FILE = "faiss.index"
+    _EMB_FILE = "embeddings.npz"
+    _CHUNKS_FILE = "chunks.json"
+
+    def _cache_path(self, filename: str) -> str:
+        import os
+        os.makedirs(self._CACHE_DIR, exist_ok=True)
+        return os.path.join(self._CACHE_DIR, filename)
+
+    def save_persistent_index(self) -> bool:
+        """Save FAISS index + embeddings + chunk texts to disk."""
+        import os
+        if not self.documents:
+            return False
+        try:
+            # Save FAISS index
+            _save_faiss(self._faiss_index, self._cache_path(self._FAISS_FILE))
+            # Save embeddings as compressed numpy
+            mat = np.array([d.embedding for d in self.documents], dtype=np.float32)
+            np.savez_compressed(self._cache_path(self._EMB_FILE), embeddings=mat)
+            # Save chunk texts (for document reconstruction)
+            import json
+            texts = [d.content for d in self.documents]
+            with open(self._cache_path(self._CHUNKS_FILE), "w", encoding="utf-8") as f:
+                json.dump(texts, f, ensure_ascii=False)
+            _logger.info("Persistent index saved: %d docs, %d dim", len(self.documents), mat.shape[1])
+            return True
+        except Exception as e:
+            _logger.warning("Failed to save persistent index: %s", e)
+            return False
+
+    def load_persistent_index(self) -> bool:
+        """Load FAISS index + embeddings + chunks from disk. Skips embedding computation."""
+        import os, json
+        faiss_path = self._cache_path(self._FAISS_FILE)
+        emb_path = self._cache_path(self._EMB_FILE)
+        chunks_path = self._cache_path(self._CHUNKS_FILE)
+
+        # Embeddings + chunks are required; FAISS index is optional (rebuilt from embeddings)
+        if not os.path.exists(emb_path) or not os.path.exists(chunks_path):
+            return False
+
+        try:
+            # Load chunks
+            with open(chunks_path, "r", encoding="utf-8") as f:
+                texts = json.load(f)
+            # Load embeddings
+            data = np.load(emb_path)
+            embs = data["embeddings"]
+            if len(texts) != embs.shape[0]:
+                _logger.warning("Cache mismatch: %d texts vs %d embeddings", len(texts), embs.shape[0])
+                return False
+            # Reconstruct documents
+            self.documents = [
+                Document(id=i, content=text, embedding=embs[i], metadata={})
+                for i, text in enumerate(texts)
+            ]
+            self._embed_dim = int(embs.shape[1])
+            # Load FAISS index
+            self._faiss_index = _load_faiss(faiss_path, gpu=True)
+            if self._faiss_index is None:
+                # Rebuild from cached embeddings (fast, no re-embedding needed)
+                self._faiss_index = _build_faiss(embs, self._embed_dim)
+
+            _logger.info("Persistent index loaded: %d docs, %d dim", len(self.documents), self._embed_dim)
+            return True
+        except Exception as e:
+            _logger.warning("Failed to load persistent index: %s", e)
+            return False
+
     # ---- Public API ----
-    def add_documents(self, docs: List[str]) -> None:
+    def add_documents(self, docs: List[str], cache: bool = True) -> None:
         start_id = len(self.documents)
         contents = list(docs or [])
         if self.embedding_model is not None:
@@ -137,6 +213,18 @@ class MCPMRetriever:
             except Exception as e:
                 _logger.warning("FAISS index build failed: %s", e)
                 self._faiss_index = None
+        # Persist to disk for fast restart
+        if cache and self.documents:
+            self.save_persistent_index()
+
+    def add_documents_incremental(self, docs: List[str]) -> Dict[str, int]:
+        """Add only NEW documents (not already indexed). Returns stats."""
+        existing = {d.content for d in self.documents}
+        new_docs = [d for d in docs if d not in existing]
+        if not new_docs:
+            return {"new": 0, "total": len(self.documents), "skipped": len(docs)}
+        self.add_documents(new_docs, cache=True)
+        return {"new": len(new_docs), "total": len(self.documents), "skipped": len(docs) - len(new_docs)}
 
     def clear_documents(self) -> None:
         self.documents.clear()
@@ -178,6 +266,11 @@ class MCPMRetriever:
     def search(self, query: str, top_k: int = 10) -> Dict[str, Any]:
         if not self.documents:
             return {"results": []}
+        # Fast path: if embedding model available, use direct cosine search
+        # (bypasses slow MCMP simulation for large indices)
+        if self.embedding_model is not None:
+            return self.search_direct(query, top_k)
+        # Fallback: MCMP simulation (requires embedding model for query encoding)
         if self._current_query_embedding is None:
             self.initialize_simulation(query)
             self.step(min(5, self.max_iterations))
@@ -185,6 +278,44 @@ class MCPMRetriever:
         return {"results": [
             {"content": d.content, "metadata": d.metadata, "relevance_score": float(d.relevance_score)}
             for d in ranked
+        ]}
+
+    def search_direct(self, query: str, top_k: int = 10) -> Dict[str, Any]:
+        """Fast direct cosine search — no MCMP simulation needed.
+        Uses FAISS if available, otherwise brute-force numpy."""
+        if not self.documents:
+            return {"results": []}
+        if self.embedding_model is None:
+            _logger.warning("search_direct: no embedding model, cannot encode query")
+            return {"results": []}
+
+        q = np.array(self.embedding_model.encode([query])[0], dtype=np.float32)
+        top_k = min(int(top_k), len(self.documents))
+
+        # Try FAISS first
+        if self._faiss_index is not None:
+            try:
+                distances, indices = _faiss_search(self._faiss_index, q, top_k)
+                results = []
+                for i, dist in zip(indices, distances):
+                    i = int(i)
+                    if 0 <= i < len(self.documents):
+                        d = self.documents[i]
+                        sim = max(0.0, float(dist))  # inner product = cosine for normalized
+                        results.append({"content": d.content, "metadata": d.metadata, "relevance_score": sim})
+                return {"results": results}
+            except Exception as e:
+                _logger.warning("search_direct FAISS failed, falling back: %s", e)
+
+        # Brute-force cosine
+        mat = np.array([d.embedding for d in self.documents], dtype=np.float32)
+        mat_n = mat / (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-12)
+        q_n = q / (np.linalg.norm(q) + 1e-12)
+        sims = mat_n @ q_n
+        idx = np.argsort(-sims)[:top_k]
+        return {"results": [
+            {"content": self.documents[int(i)].content, "metadata": self.documents[int(i)].metadata, "relevance_score": float(sims[int(i)])}
+            for i in idx
         ]}
 
     def get_visualization_snapshot(self,
@@ -293,12 +424,30 @@ class MCPMRetriever:
     def find_nearest_documents(self, position: np.ndarray, k: int = 3) -> List[Tuple[Document, float]]:
         if not self.documents:
             return []
+        k = min(int(k), len(self.documents))
+        pos = np.array(position, dtype=np.float32).reshape(1, -1)
+
+        # Fast path: use FAISS index if available (O(log n) vs O(n))
+        if self._faiss_index is not None:
+            try:
+                distances, indices = _faiss_search(self._faiss_index, pos.squeeze(), k)
+                results = []
+                for i, dist in zip(indices, distances):
+                    i = int(i)
+                    if 0 <= i < len(self.documents):
+                        # FAISS L2 distance → approximate cosine similarity
+                        sim = max(0.0, 1.0 - float(dist) / 2.0)
+                        results.append((self.documents[i], sim))
+                return results
+            except Exception:
+                pass  # Fall through to brute-force
+
+        # Fallback: brute-force cosine similarity (slow for large N)
         mat = np.array([d.embedding for d in self.documents], dtype=np.float32)
-        pos = np.array(position, dtype=np.float32)
+        pos_n = pos.squeeze() / (np.linalg.norm(pos) + 1e-12)
         mat_n = mat / (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-12)
-        pos_n = pos / (np.linalg.norm(pos) + 1e-12)
         sims = mat_n @ pos_n
-        idx = np.argsort(-sims)[:int(k)]
+        idx = np.argsort(-sims)[:k]
         return [(self.documents[int(i)], float(sims[int(i)])) for i in idx]
 
 

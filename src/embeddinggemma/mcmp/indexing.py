@@ -61,6 +61,55 @@ def build_faiss_index(embs: np.ndarray, dim: int) -> Optional[object]:
     return index
 
 
+def save_faiss_index(index, path: str) -> bool:
+    """Save FAISS index to disk. GPU indexes are moved to CPU first."""
+    if not _FAISS_OK or index is None:
+        return False
+    import os
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    try:
+        # GPU index must be converted to CPU for serialization
+        cpu_index = index
+        try:
+            cpu_index = faiss.index_gpu_to_cpu(index)
+        except Exception:
+            pass
+        faiss.write_index(cpu_index, path)
+        _logger.info("save_faiss_index: saved to %s", path)
+        return True
+    except Exception as e:
+        _logger.warning("save_faiss_index: failed: %s", e)
+        return False
+
+
+def load_faiss_index(path: str, gpu: bool = True) -> Optional[object]:
+    """Load FAISS index from disk, optionally move to GPU."""
+    if not _FAISS_OK:
+        return None
+    import os
+    if not os.path.exists(path):
+        return None
+    try:
+        index = faiss.read_index(path)
+        if gpu:
+            try:
+                gpu_count = int(getattr(faiss, 'get_num_gpus', lambda: 0)())
+                if gpu_count > 0:
+                    index = faiss.index_cpu_to_all_gpus(index)
+                    _logger.info("load_faiss_index: moved to GPU (%d GPUs)", gpu_count)
+            except Exception:
+                pass
+        try:
+            index.nprobe = 12
+        except Exception:
+            pass
+        _logger.info("load_faiss_index: loaded from %s (ntotal=%d)", path, int(index.ntotal))
+        return index
+    except Exception as e:
+        _logger.warning("load_faiss_index: failed: %s", e)
+        return None
+
+
 def faiss_search(index, query_vec: np.ndarray, top_k: int):
     _logger.debug("faiss_search: top_k=%d", int(top_k))
     q = query_vec.reshape(1, -1).astype(np.float32)
