@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 import hashlib
@@ -32,7 +34,7 @@ def _load_cached_chunks(path: str, windows: List[int]) -> List[str]:
     try:
         if os.path.exists(c):
             with open(c, 'r', encoding='utf-8') as f:
-                return [line.rstrip("\n") for line in f]
+                return [line.rstrip("\n").replace('\\n', '\n') for line in f]
     except Exception:
         return []
     return []
@@ -44,7 +46,7 @@ def _save_cached_chunks(path: str, windows: List[int], chunks: List[str]) -> Non
         os.makedirs(os.path.dirname(c), exist_ok=True)
         with open(c, 'w', encoding='utf-8') as f:
             for ch in chunks:
-                f.write(ch.replace('\n', '\n') + '\n')
+                f.write(ch.replace('\n', '\\n') + '\n')
     except Exception:
         pass
 
@@ -157,6 +159,15 @@ def chunk_python_file(path: str, windows: List[int]) -> List[str]:
     return _chunk_line_windows(path, windows)
 
 
+_CODE_EXTENSIONS = {
+    '.py', '.ts', '.tsx', '.js', '.jsx', '.rs', '.go', '.java',
+    '.c', '.cpp', '.h', '.hpp', '.cs', '.rb', '.php', '.swift',
+    '.kt', '.scala', '.sh', '.bash', '.zsh', '.yaml', '.yml',
+    '.toml', '.json', '.sql', '.prisma', '.graphql', '.vue',
+    '.svelte', '.css', '.scss', '.html', '.md', '.txt',
+}
+
+
 def list_code_files(root_dir: str, max_files: int, exclude_dirs: List[str] = None) -> List[str]:
     files: List[str] = []
     count = 0
@@ -164,7 +175,8 @@ def list_code_files(root_dir: str, max_files: int, exclude_dirs: List[str] = Non
         if exclude_dirs:
             dirs[:] = [d for d in dirs if not any(ex in os.path.join(root, d) for ex in exclude_dirs)]
         for fn in filenames:
-            if fn.endswith('.py'):
+            ext = os.path.splitext(fn)[1].lower()
+            if ext in _CODE_EXTENSIONS:
                 files.append(os.path.join(root, fn))
                 count += 1
                 if max_files and count >= max_files:

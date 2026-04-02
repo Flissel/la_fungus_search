@@ -12,7 +12,7 @@ start = time.time()
 from embeddinggemma.mcmp_rag import MCPMRetriever
 from embeddinggemma.ui.corpus import collect_codebase_chunks
 
-CODEBASE = "C:/Users/User/Desktop/poc_injection_chain"
+CODEBASE = os.environ.get("FUNGUS_CODEBASE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 EXCLUDE = [".git", "__pycache__", "node_modules", ".venv", "target", ".next",
            ".pitchdeck_chroma", ".playwright-mcp", ".pytest_cache",
            "openfang/target", "multiseat-os/downloads"]

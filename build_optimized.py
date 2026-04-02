@@ -18,7 +18,7 @@ import re
 sys.path.insert(0, "src")
 os.environ.setdefault("TRANSFORMERS_CACHE", os.path.expanduser("~/.cache/huggingface"))
 
-CODEBASE = "C:/Users/User/Desktop/poc_injection_chain"
+CODEBASE = os.environ.get("FUNGUS_CODEBASE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 EXCLUDE_DIRS = [
     ".git", "__pycache__", "node_modules", ".venv", "target", ".next",
     ".pitchdeck_chroma", ".playwright-mcp", ".pytest_cache", ".fungus_cache",

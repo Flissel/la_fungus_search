@@ -107,7 +107,7 @@ class EmbeddingBackend:
                 raise
         return self.model
 
-    def encode(self, texts: List[str]) -> List[float]:
+    def encode(self, texts: List[str]) -> List[List[float]]:
         m = self.load()
         _logger.debug("encode: texts=%d", len(texts))
         return m.encode(texts)

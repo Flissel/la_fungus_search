@@ -1,0 +1,51 @@
+# ============================================================
+# LLM Configuration — La-Fungus-Search (EmbeddingGemma)
+# ============================================================
+# Zentrale Config fuer alle LLM-Aufrufe in la-fungus-search.
+# Provider wechseln = nur hier aendern, kein Code anfassen.
+#
+# Reihenfolge: overrides[dir][role] > roles[role] > default
+# ============================================================
+
+keys:
+  openai: ${OPENAI_API_KEY}
+  gemini: ${GOOGLE_API_KEY}
+  grok: ${GROK_API_KEY}
+  ollama: null
+
+providers:
+  openai:
+    type: openai
+    base_url: https://api.openai.com/v1
+    key_ref: openai
+  gemini:
+    type: openai
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    key_ref: gemini
+  grok:
+    type: openai
+    base_url: https://api.x.ai/v1
+    key_ref: grok
+  ollama:
+    type: openai
+    base_url: http://127.0.0.1:11434/v1
+    key_ref: null
+
+default:
+  provider: ollama
+  model: qwen2.5-coder:7b
+  temperature: 0
+
+roles:
+  openai:
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0
+  google:
+    provider: gemini
+    model: gemini-1.5-pro
+    temperature: 0
+  grok:
+    provider: grok
+    model: grok-2-latest
+    temperature: 0
