@@ -14,8 +14,8 @@ EXCLUDE_DIRS = [
     "downloads", ".pitchdeck_chroma", ".playwright-mcp",
     "uv.lock", ".kilocode", ".vscode",
 ]
-EMBED_MODEL = "all-MiniLM-L6-v2"
-MAX_FILES = 8000
+EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+MAX_FILES = 15000
 CHUNK_WINDOW = [200]
 
 print("=== Vibemind-OS Full Index Build ===")

@@ -40,7 +40,7 @@ CODEBASE = os.environ.get(
     "FUNGUS_CODEBASE",
     os.path.normpath(os.path.join(_HERE, "..", "..")),
 )
-EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "all-MiniLM-L6-v2")
+EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 EXCLUDE_DIRS = [
     ".git", "__pycache__", "node_modules", ".venv", "target", ".next",
     ".fungus_cache", ".pytest_cache", "models", "dist", "build",
@@ -336,7 +336,7 @@ async def fungus_reindex(codebase_path: str = "") -> str:
         raw_chunks = collect_codebase_chunks(
             root_dir=target,
             windows=[200],
-            max_files=8000,
+            max_files=15000,
             exclude_dirs=EXCLUDE_DIRS,
         )
         chunk_time = time.time() - t0

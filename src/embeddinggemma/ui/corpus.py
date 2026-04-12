@@ -167,6 +167,39 @@ _CODE_EXTENSIONS = {
     '.svelte', '.css', '.scss', '.html', '.md', '.txt',
 }
 
+# Dotfiles to index (config/env templates — NOT actual secrets)
+_DOTFILE_PATTERNS = {
+    '.env.example', '.env.template', '.env.sample',
+    '.env.hotel', '.env.hotel.example', '.env.electron',
+    '.gitignore', '.dockerignore', '.eslintrc', '.prettierrc',
+    'Dockerfile', 'Makefile', 'Cargo.toml', 'Cargo.lock',
+    'pyproject.toml', 'docker-compose.yml', 'docker-compose.yaml',
+}
+
+# Actual .env files contain secrets — index them too but could be excluded
+# by setting FUNGUS_SKIP_SECRETS=1
+_SECRETS_FILES = {'.env', '.envrc'}
+_SKIP_SECRETS = os.environ.get('FUNGUS_SKIP_SECRETS', '') == '1'
+
+
+def _is_indexable(filename: str) -> bool:
+    """Check if a file should be indexed."""
+    fn_lower = filename.lower()
+    # Standard code extensions
+    ext = os.path.splitext(fn_lower)[1]
+    if ext in _CODE_EXTENSIONS:
+        return True
+    # Dotfile patterns (exact name match)
+    if fn_lower in _DOTFILE_PATTERNS:
+        return True
+    # .env files (secrets — optional)
+    if fn_lower in _SECRETS_FILES:
+        return not _SKIP_SECRETS
+    # .env.* variants (templates are safe)
+    if fn_lower.startswith('.env.'):
+        return True
+    return False
+
 
 def list_code_files(root_dir: str, max_files: int, exclude_dirs: List[str] = None) -> List[str]:
     files: List[str] = []
@@ -175,8 +208,7 @@ def list_code_files(root_dir: str, max_files: int, exclude_dirs: List[str] = Non
         if exclude_dirs:
             dirs[:] = [d for d in dirs if not any(ex in os.path.join(root, d) for ex in exclude_dirs)]
         for fn in filenames:
-            ext = os.path.splitext(fn)[1].lower()
-            if ext in _CODE_EXTENSIONS:
+            if _is_indexable(fn):
                 files.append(os.path.join(root, fn))
                 count += 1
                 if max_files and count >= max_files:
