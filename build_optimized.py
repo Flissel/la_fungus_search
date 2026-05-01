@@ -37,12 +37,25 @@ CHUNK_WINDOW = [200]  # Single window to reduce overlap
 
 def simhash(text, hashbits=64):
     """Compute SimHash fingerprint for near-duplicate detection."""
+    if not isinstance(text, str):
+        text = str(text) if text is not None else ""
     tokens = re.findall(r'\w+', text.lower())
     v = [0] * hashbits
     for token in tokens:
-        token_hash = int(hashlib.md5(token.encode()).hexdigest(), 16)
+        try:
+            token_hash = int(hashlib.md5(token.encode()).hexdigest(), 16)
+        except Exception:
+            continue
+        if not isinstance(token_hash, int):
+            print(f"[simhash] non-int token_hash: type={type(token_hash).__name__} val={repr(token_hash)[:80]} token={repr(token)[:40]}")
+            continue
         for i in range(hashbits):
-            if token_hash & (1 << i):
+            try:
+                bit = token_hash & (1 << i)
+            except TypeError as e:
+                print(f"[simhash] BOOM & at i={i} token_hash_type={type(token_hash).__name__} repr={repr(token_hash)[:80]}")
+                raise
+            if bit:
                 v[i] += 1
             else:
                 v[i] -= 1

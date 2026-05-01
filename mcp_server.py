@@ -41,6 +41,9 @@ CODEBASE = os.environ.get(
     os.path.normpath(os.path.join(_HERE, "..", "..")),
 )
 EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
+# S.3: device override. Brain uses ~11GB GPU; default to CPU here so reindex
+# doesn't OOM. Override with FUNGUS_DEVICE=cuda if GPU has headroom.
+DEVICE_MODE = os.environ.get("FUNGUS_DEVICE", "cpu")
 EXCLUDE_DIRS = [
     ".git", "__pycache__", "node_modules", ".venv", "target", ".next",
     ".fungus_cache", ".pytest_cache", "models", "dist", "build",
@@ -63,7 +66,7 @@ def _load_retriever():
         embedding_model_name=EMBED_MODEL,
         num_agents=50,
         max_iterations=10,
-        device_mode="auto",
+        device_mode=DEVICE_MODE,
         embed_batch_size=256,
     )
 
@@ -328,7 +331,7 @@ async def fungus_reindex(codebase_path: str = "") -> str:
             embedding_model_name=EMBED_MODEL,
             num_agents=50,
             max_iterations=10,
-            device_mode="auto",
+            device_mode=DEVICE_MODE,
             embed_batch_size=256,
         )
 

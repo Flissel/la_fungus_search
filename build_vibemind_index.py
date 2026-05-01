@@ -52,11 +52,21 @@ t0 = time.time()
 filtered = [c for c in raw_chunks if len(c.strip()) >= 50]
 print(f"[3] After filter: {len(filtered)} (removed {len(raw_chunks)-len(filtered)} short) | {time.time()-t0:.1f}s")
 
-# 4. Deduplicate
+# 4. Deduplicate (exact-match only, skip simhash which segfaults on large corpora)
 t0 = time.time()
-from build_optimized import deduplicate_chunks
-deduped, dupe_count = deduplicate_chunks(filtered, threshold=3)
-print(f"[4] After dedup: {len(deduped)} (removed {dupe_count} near-dupes) | {time.time()-t0:.1f}s")
+seen = set()
+deduped = []
+dupe_count = 0
+for c in filtered:
+    if not isinstance(c, str):
+        continue
+    key = hash(c)
+    if key in seen:
+        dupe_count += 1
+        continue
+    seen.add(key)
+    deduped.append(c)
+print(f"[4] After exact-dedup: {len(deduped)} (removed {dupe_count} exact-dupes) | {time.time()-t0:.1f}s")
 
 # 5. Embed + index
 t0 = time.time()
