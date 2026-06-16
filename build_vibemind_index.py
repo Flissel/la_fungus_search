@@ -13,6 +13,10 @@ EXCLUDE_DIRS = [
     ".fungus_cache", ".pytest_cache", "models", "dist", "build",
     "downloads", ".pitchdeck_chroma", ".playwright-mcp",
     "uv.lock", ".kilocode", ".vscode",
+    # ── Opt-Stage-2 (2026-05-25): dead/duplicate trees that polluted top-K ──
+    "Coding_engine",   # old copy under spaces/coding/Coding_engine/
+    "_archive",
+    "all_services",
 ]
 EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 MAX_FILES = 15000
@@ -33,9 +37,16 @@ r = MCPMRetriever(
     num_agents=50,
     max_iterations=10,
     device_mode="auto",
-    embed_batch_size=256,
+    embed_batch_size=32,   # Opt-Stage-2: was 256 → OOM on 12GB GPU with long chunks
 )
-print(f"[1] Model loaded: {time.time()-t0:.1f}s | dim={r.embedding_model.get_sentence_embedding_dimension()}")
+# Opt-Stage-2: cap sequence length — Qwen3 default is 32k which gives
+# O(n²) attention; window=200 lines ≈ 600 tokens for code, 512 is safe ceiling.
+try:
+    r.embedding_model.max_seq_length = 512
+except Exception:
+    pass
+print(f"[1] Model loaded: {time.time()-t0:.1f}s | dim={r.embedding_model.get_sentence_embedding_dimension()} | "
+      f"max_seq_length={getattr(r.embedding_model, 'max_seq_length', '?')} | batch_size=32")
 
 # 2. Collect chunks
 t0 = time.time()
@@ -47,10 +58,15 @@ raw_chunks = collect_codebase_chunks(
 )
 print(f"[2] Raw chunks: {len(raw_chunks)} | {time.time()-t0:.1f}s")
 
-# 3. Filter short/empty chunks
+# 3. Filter short/empty chunks AND oversized chunks (Opt-Stage-2)
+# Oversized chunks (>20k chars ≈ >5k tokens) blow up attention quadratically
+# and aren't useful for semantic search anyway (single huge JSON/lock-file blobs).
 t0 = time.time()
-filtered = [c for c in raw_chunks if len(c.strip()) >= 50]
-print(f"[3] After filter: {len(filtered)} (removed {len(raw_chunks)-len(filtered)} short) | {time.time()-t0:.1f}s")
+MAX_CHARS = 20000
+filtered = [c for c in raw_chunks if 50 <= len(c.strip()) <= MAX_CHARS]
+short_n = sum(1 for c in raw_chunks if len(c.strip()) < 50)
+oversized_n = sum(1 for c in raw_chunks if len(c.strip()) > MAX_CHARS)
+print(f"[3] After filter: {len(filtered)} (removed {short_n} short, {oversized_n} oversized) | {time.time()-t0:.1f}s")
 
 # 4. Deduplicate (exact-match only, skip simhash which segfaults on large corpora)
 t0 = time.time()

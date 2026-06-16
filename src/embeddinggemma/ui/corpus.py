@@ -11,6 +11,36 @@ CACHE_DIR = os.path.join(".fungus_cache", "chunks")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 
+# ── Opt-Stage-2 (2026-05-25): path-boost in chunk header. ──
+# Embedding score of a chunk was dominated by body tokens; identifier-rich
+# filenames + parent dirs (e.g. "face_math/landmark_detector.py") barely
+# influenced ranking. We now prepend a small block that repeats the
+# filename stem + parent dirs as searchable identifiers, then a snake_case
+# split of the same tokens (so "FaceLandmarkDetector" → "face landmark
+# detector" matches a natural-language query token-by-token).
+_SPLIT_RE = re.compile(r"[_\-.]|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def _path_boost_header(rel: str, start: int, end: int, step: int) -> str:
+    """Build a chunk header that gives path tokens real semantic weight."""
+    parts = [p for p in re.split(r"[\\/]", rel) if p]
+    fname = parts[-1] if parts else rel
+    stem = os.path.splitext(fname)[0]
+    parent_dirs = " ".join(parts[-4:-1])  # up to 3 parent dirs
+    # Snake/camel/kebab → individual lowercase tokens
+    nat = " ".join(t for t in _SPLIT_RE.split(stem) if t).lower()
+    # Header gives the embedder 3 distinct mentions of the path tokens:
+    #   1. the verbatim relative path (anchors filename + dir hierarchy)
+    #   2. the stem + parent dirs as a phrase
+    #   3. natural-language token decomposition (camelCase → "camel case")
+    return (
+        f"# file: {rel} | lines: {start}-{end} | window: {step}\n"
+        f"# path: {stem} in {parent_dirs}\n"
+        f"# tokens: {nat}\n"
+    )
+
+
+
 def _file_sha1(path: str) -> str:
     try:
         h = hashlib.sha1()
@@ -67,7 +97,7 @@ def _chunk_line_windows(path: str, windows: List[int]) -> List[str]:
             end = min(i + step, total)
             body = ''.join(lines[i:end])
             if body.strip():
-                header = f"# file: {rel} | lines: {start}-{end} | window: {step}\n"
+                header = _path_boost_header(rel, start, end, step)
                 chunks.append(header + body)
     return chunks
 
@@ -95,7 +125,7 @@ def _chunk_python_file_ast(path: str, windows: List[int]) -> List[str]:
             return []
         # If block is small enough, keep as one chunk
         if (end_idx - start_idx + 1) <= max_window:
-            header = f"# file: {rel} | lines: {start_idx}-{end_idx} | window: {max_window}\n"
+            header = _path_boost_header(rel, start_idx, end_idx, max_window)
             return [header + body]
         # Otherwise split into windowed sub-chunks
         chunks_local: List[str] = []
@@ -107,7 +137,7 @@ def _chunk_python_file_ast(path: str, windows: List[int]) -> List[str]:
             e = min(i + step, end_idx)
             sub = ''.join(lines[s - 1:e])
             if sub.strip():
-                header = f"# file: {rel} | lines: {s}-{e} | window: {max_window}\n"
+                header = _path_boost_header(rel, s, e, max_window)
                 chunks_local.append(header + sub)
             if e >= end_idx:
                 break
