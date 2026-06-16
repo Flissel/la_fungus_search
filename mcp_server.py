@@ -58,51 +58,16 @@ EXCLUDE_DIRS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Eagerly load model + index at import time (before mcp.run starts the
-# async event loop).  This way the heavy synchronous work is done before
-# any tool call arrives.
+# Lazy / background loading — heavy work runs in a daemon thread so
+# mcp.run() (and the MCP handshake) can start immediately.  Tool calls
+# that need the retriever or multivec wait on _ready_event.
 # ---------------------------------------------------------------------------
+import threading as _threading
+
 _index_meta: dict = {}
+_retriever = None
+_ready_event = _threading.Event()  # set when retriever + heavy indexes are ready
 
-
-def _load_retriever():
-    from embeddinggemma.mcmp_rag import MCPMRetriever
-
-    r = MCPMRetriever(
-        embedding_model_name=EMBED_MODEL,
-        num_agents=50,
-        max_iterations=10,
-        device_mode=DEVICE_MODE,
-        embed_batch_size=256,
-    )
-
-    t0 = time.time()
-    loaded = r.load_persistent_index()
-    load_time = time.time() - t0
-
-    global _index_meta
-    if loaded:
-        _index_meta = {
-            "docs": len(r.documents),
-            "dim": r._embed_dim,
-            "load_time_s": round(load_time, 2),
-            "source": "persistent_cache",
-        }
-    else:
-        _index_meta = {"docs": 0, "dim": None, "load_time_s": 0, "source": "none"}
-
-    return r
-
-
-# Load synchronously NOW — before the event loop starts
-_retriever = _load_retriever()
-
-
-# ── Stage-4 (2026-05-25): hybrid BM25 + semantic ────────────────────────
-# Pure-cosine search loses on rare-token queries ("importlib", "FAISS", a
-# specific function name) because the embedder smears identifiers. BM25
-# nails exactly those. We hybrid-merge with alpha ∈ [0,1]: alpha=1 → pure
-# semantic, alpha=0 → pure BM25, default 0.65 → semantic-dominant.
 import numpy as _np  # for hybrid math
 from embeddinggemma.bm25_lite import BM25Lite as _BM25Lite
 
@@ -133,31 +98,70 @@ def _minmax(arr: _np.ndarray) -> _np.ndarray:
     return ((arr - mn) / (mx - mn)).astype(_np.float32)
 
 
-# ── Stage-9 (2026-05-25): ColBERT-Lite multi-vector index ──────────────
-# Each chunk has been re-embedded as N views (header, body-first, body-second).
-# At query time we split the query into phrases too and use Sum-of-MaxSim.
-# Naming-gap kills cosine-of-single-vector: avg-pooling smears identifiers.
-# Multi-view + MaxSim keeps the strongest signal per (query phrase × chunk view)
-# accessible. Index ~3× larger but build is one-time and search adds <50ms.
 _multivec_embs: _np.ndarray | None = None
 _multivec_chunk_ids: _np.ndarray | None = None
-try:
-    _mv_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        ".fungus_cache", "multivec.npz",
-    )
-    if os.path.exists(_mv_path):
-        from embeddinggemma.multivec import load_multivec as _load_mv
-        _multivec_embs, _multivec_chunk_ids = _load_mv(_mv_path)
-        logger.info("ColBERT-Lite ready: %d views over %d chunks",
-                    _multivec_embs.shape[0],
-                    int(_multivec_chunk_ids.max()) + 1)
-    else:
-        logger.info("ColBERT-Lite disabled (no multivec.npz at %s)", _mv_path)
-except Exception as e:
-    logger.warning("ColBERT-Lite load failed: %s", e)
-    _multivec_embs = None
-    _multivec_chunk_ids = None
+
+
+def _background_load():
+    """Load retriever + multivec in a daemon thread; sets _ready_event when done."""
+    global _retriever, _index_meta, _multivec_embs, _multivec_chunk_ids
+
+    try:
+        from embeddinggemma.mcmp_rag import MCPMRetriever
+        r = MCPMRetriever(
+            embedding_model_name=EMBED_MODEL,
+            num_agents=50,
+            max_iterations=10,
+            device_mode=DEVICE_MODE,
+            embed_batch_size=256,
+        )
+        t0 = time.time()
+        loaded = r.load_persistent_index()
+        load_time = time.time() - t0
+        if loaded:
+            _index_meta = {
+                "docs": len(r.documents),
+                "dim": r._embed_dim,
+                "load_time_s": round(load_time, 2),
+                "source": "persistent_cache",
+            }
+        else:
+            _index_meta = {"docs": 0, "dim": None, "load_time_s": 0, "source": "none"}
+        _retriever = r
+        logger.info("Retriever ready: %s docs=%d", _index_meta["source"], _index_meta["docs"])
+    except Exception as e:
+        logger.warning("Retriever load failed: %s", e)
+        _index_meta = {"docs": 0, "dim": None, "load_time_s": 0, "source": "error"}
+
+    try:
+        _mv_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            ".fungus_cache", "multivec.npz",
+        )
+        if os.path.exists(_mv_path):
+            from embeddinggemma.multivec import load_multivec as _load_mv
+            _multivec_embs, _multivec_chunk_ids = _load_mv(_mv_path)
+            logger.info("ColBERT-Lite ready: %d views over %d chunks",
+                        _multivec_embs.shape[0],
+                        int(_multivec_chunk_ids.max()) + 1)
+        else:
+            logger.info("ColBERT-Lite disabled (no multivec.npz)")
+    except Exception as e:
+        logger.warning("ColBERT-Lite load failed: %s", e)
+        _multivec_embs = None
+        _multivec_chunk_ids = None
+
+    _ready_event.set()
+    logger.info("Background load complete.")
+
+
+_bg_thread = _threading.Thread(target=_background_load, daemon=True, name="fungus-bg-load")
+_bg_thread.start()
+
+
+def _ensure_ready(timeout: float = 30.0) -> bool:
+    """Block until background load finishes (or timeout). Returns True if ready."""
+    return _ready_event.wait(timeout=timeout)
 
 
 # ── Stage-8 (2026-05-25): Cross-Encoder Reranker ────────────────────────
@@ -254,6 +258,9 @@ def _sync_search(query: str, top_k: int, alpha: float = 0.65) -> dict:
     Default 0.65 prefers semantic but lets BM25 break ties on rare-token queries.
     Falls back to pure semantic if BM25 isn't loaded.
     """
+    _ensure_ready()
+    if _retriever is None or not _retriever.documents:
+        return {"results": []}
     if _bm25 is None or alpha >= 0.999:
         return _retriever.search_direct(query, top_k=top_k)
 
@@ -476,7 +483,8 @@ async def fungus_search(query: str, top_k: int = 10, prefer_code: bool = True,
             but much higher precision on naming-gap queries. First call
             triggers a one-time model download (~280MB). Default False.
     """
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return "ERROR: No index loaded. Run the fungus_reindex tool first."
 
     top_k = min(max(1, top_k), 30)
@@ -530,7 +538,8 @@ async def fungus_search_multi(queries: str, top_k: int = 5) -> str:
         queries: Multiple queries separated by newlines or semicolons
         top_k: Results per query (default 5)
     """
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return "ERROR: No index loaded. Run the fungus_reindex tool first."
 
     query_list = [q.strip() for q in re.split(r'[;\n]', queries) if q.strip()]
@@ -645,7 +654,8 @@ async def fungus_search_deep(query: str, top_k: int = 10, n_steps: int = 8,
         alpha: Hybrid semantic/BM25 weight applied BEFORE the simulation
             (to seed agents near high-quality starting points).
     """
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return "ERROR: No index loaded."
 
     top_k = min(max(1, top_k), 30)
@@ -725,7 +735,8 @@ async def fungus_search_expanded(query: str, top_k: int = 10,
         top_k: How many merged top results to return.
         n_subqueries: How many sub-queries to generate (3-6 is typical).
     """
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return "ERROR: No index loaded."
 
     top_k = min(max(1, top_k), 30)
@@ -805,7 +816,8 @@ async def fungus_search_judged(query: str, top_k: int = 10,
         top_k: How many results to return after judging.
         candidates: How many hybrid candidates to send to the LLM (10-30 typical).
     """
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return "ERROR: No index loaded."
 
     top_k = min(max(1, top_k), 20)
@@ -928,7 +940,8 @@ async def fungus_search_validated(query: str, top_k: int = 10,
         iterations: How many re-search rounds the LLM can request (1-3).
         use_ast: If True (default), enable AST-Scan for syntactic queries.
     """
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return "ERROR: No index loaded."
 
     top_k = min(max(1, top_k), 30)
@@ -1122,7 +1135,8 @@ async def fungus_search_synthesized(query: str, top_k: int = 10,
         iterations: LLM re-search rounds (passed to validated pipeline).
         use_ast: Enable AST-Scan recall floor.
     """
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return "ERROR: No index loaded."
     top_k = min(max(1, top_k), 20)
 
@@ -1432,7 +1446,8 @@ async def fungus_search_multivec(query: str, top_k: int = 10,
         return ("ERROR: multivec index not built. Run:\n"
                 "    cd vibemind-os/la-fungus-search\n"
                 "    FUNGUS_DEVICE=cuda python build_multivec_index.py")
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return "ERROR: No index loaded."
 
     top_k = min(max(1, top_k), 30)
@@ -1527,7 +1542,8 @@ async def fungus_lookup_file(filepath: str, top_k: int = 10) -> str:
         filepath: Partial or full file path to search for (e.g. "brain/core/radial_attention.py")
         top_k: Max chunks to return (default 10)
     """
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return "ERROR: No index loaded."
 
     def _lookup():
@@ -1574,7 +1590,8 @@ async def fungus_index_stats() -> str:
     """
     meta = dict(_index_meta)
 
-    if not _retriever.documents:
+    _ensure_ready()
+    if not _retriever or not _retriever.documents:
         return f"Index is empty. Meta: {meta}"
 
     from collections import Counter
