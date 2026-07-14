@@ -55,6 +55,9 @@ EXCLUDE_DIRS = [
     "Coding_engine",   # old copy under spaces/coding/Coding_engine/
     "_archive",        # coding-engine/_archive/ + similar
     "all_services",    # coding-engine/Data/all_services/ (generated artefacts)
+    # ── 2026-07-14: generated/duplicate trees that dominated top-K ──
+    "graphify-out",         # 30k chunks from one generated graph.json (35% of index!)
+    "temp-merge-parking",   # duplicated Automation_ui tree
 ]
 
 # ---------------------------------------------------------------------------
