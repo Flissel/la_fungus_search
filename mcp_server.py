@@ -162,7 +162,7 @@ _bg_thread = _threading.Thread(target=_background_load, daemon=True, name="fungu
 _bg_thread.start()
 
 
-def _ensure_ready(timeout: float = 120.0) -> bool:
+def _ensure_ready(timeout: float = 300.0) -> bool:
     """Block until background load finishes (or timeout). Returns True if ready.
 
     Default 120s (was 30s): the cold start loads model weights + index in ~50s.
