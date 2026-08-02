@@ -59,9 +59,9 @@ EXCLUDE_DIRS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Lazy / background loading — heavy work runs in a daemon thread so
-# mcp.run() (and the MCP handshake) can start immediately.  Tool calls
-# that need the retriever or multivec wait on _ready_event.
+# Lazy / background loading — MCP startup and handshake stay lightweight.
+# The first tool call that actually needs the retriever starts one daemon
+# loader; later queries share the same ready event.
 # ---------------------------------------------------------------------------
 import threading as _threading
 
@@ -154,17 +154,35 @@ def _background_load():
     logger.info("Background load complete.")
 
 
-_bg_thread = _threading.Thread(target=_background_load, daemon=True, name="fungus-bg-load")
-_bg_thread.start()
+_bg_thread: _threading.Thread | None = None
+_bg_thread_lock = _threading.Lock()
+
+
+def _start_background_load() -> None:
+    """Start the heavy retriever load once, on first real query."""
+    global _bg_thread
+    if _ready_event.is_set():
+        return
+    with _bg_thread_lock:
+        if _ready_event.is_set():
+            return
+        if _bg_thread is None or not _bg_thread.is_alive():
+            _bg_thread = _threading.Thread(
+                target=_background_load,
+                daemon=True,
+                name="fungus-bg-load",
+            )
+            _bg_thread.start()
 
 
 def _ensure_ready(timeout: float = 300.0) -> bool:
-    """Block until background load finishes (or timeout). Returns True if ready.
+    """Start the lazy loader and wait until it finishes (or timeout).
 
-    Default 120s (was 30s): the cold start loads model weights + index in ~50s.
+    The cold start loads model weights + index in ~50s.
     A 30s wait expired mid-load, so the FIRST search after a reconnect returned a
     false "Index empty". Search tools genuinely need the retriever, so they wait
     here; index_stats does NOT (it reports load progress non-blockingly)."""
+    _start_background_load()
     return _ready_event.wait(timeout=timeout)
 
 
@@ -1582,12 +1600,12 @@ async def fungus_index_stats() -> str:
     """
     meta = dict(_index_meta)
 
-    # NON-BLOCKING: the heavy model+index load (~50s on a cold stdio start) runs
-    # in the _background_load daemon thread. Do NOT block on _ensure_ready here —
-    # that made index_stats hang for up to 30s on the first call after a reconnect
-    # (and the client read it as a hang). Instead report load progress instantly
-    # so the caller sees "still loading" and can retry, rather than a stalled tool.
+    # NON-BLOCKING: do not turn a status request into the first heavy query.
+    # Report whether the lazy loader has not started or is currently running.
     if not _ready_event.is_set():
+        if _bg_thread is None:
+            return ("Index not loaded yet (lazy start). Run a search query to "
+                    "start the retriever. Meta: " + str(meta))
         return ("Index still loading (cold start ~50s: model weights + index). "
                 "Retry in a moment. Meta: " + str(meta))
     if not _retriever or not _retriever.documents:
