@@ -33,12 +33,8 @@ def select_diverse_results(results_items: List[Dict[str, Any]],
     if not results_items:
         return []
     texts = [(it.get('content') or '')[:2048] for it in results_items]
-    try:
-        embs = retr.embedding_model.encode(texts)
-        embs = np.array(embs, dtype=np.float32)
-    except Exception:
-        rng = np.random.default_rng(42)
-        embs = rng.normal(0, 1, size=(len(texts), 64)).astype(np.float32)
+    embs = retr.embedding_model.encode(texts)
+    embs = np.array(embs, dtype=np.float32)
     sims = _cos_sim(embs, embs)
 
     selected: List[int] = []

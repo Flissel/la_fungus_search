@@ -81,3 +81,22 @@ def test_realtime_judge_generation_uses_fixed_judge_path(monkeypatch):
     assert calls[0]["prompt"] == ""
     assert calls[0]["system"] is None
     assert calls[0]["save_prompt_path"].endswith("judge_prompt_step_0.txt")
+
+
+def test_realtime_embedding_loader_uses_fixed_openfang_gateway_role(monkeypatch):
+    expected_model = object()
+    calls = []
+
+    def load_embedding_model():
+        calls.append(True)
+        return expected_model
+
+    _module(
+        "embeddinggemma.mcmp.embeddings",
+        monkeypatch,
+        load_embedding_model=load_embedding_model,
+    )
+    server = _load_server(monkeypatch, lambda **_kwargs: "summary", lambda **_kwargs: "judge")
+
+    assert server._load_embed_client() is expected_model
+    assert calls == [True]

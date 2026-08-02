@@ -1,50 +1,102 @@
-import types
 import pytest
 
 
-def test_load_sentence_model_cpu(monkeypatch):
+def _canonical_embedding_config():
+    return {
+        "driver": "openai",
+        "provider": "openfang",
+        "model": "text-embedding-3-large",
+        "dim": 3072,
+    }
+
+
+def test_load_embedding_backend_uses_exact_fungus_search_contract(monkeypatch):
     from embeddinggemma.mcmp import embeddings
 
-    calls = {"ctor": []}
+    expected_model = object()
+    config = _canonical_embedding_config()
+    calls = {"config": [], "model": []}
 
-    class DummyModel:
-        def __init__(self, name, device=None):
-            calls["ctor"].append((name, device))
+    def fake_get_config():
+        return {"embeddings": {"fungus_search": config}}
 
-    # Patch device resolver and env logger
-    monkeypatch.setattr(embeddings, "resolve_device", lambda pref: "cpu")
-    monkeypatch.setattr(embeddings, "_log_torch_env", lambda: None)
-    monkeypatch.setattr(embeddings, "SentenceTransformer", DummyModel)
+    def fake_get_embedding_config(role):
+        calls["config"].append(role)
+        return config
 
-    m = embeddings.load_sentence_model("test-model", device_preference="auto")
-    assert isinstance(m, DummyModel)
-    assert calls["ctor"] == [("test-model", "cpu")]
+    def fake_get_embedding_model(role):
+        calls["model"].append(role)
+        return expected_model
+
+    monkeypatch.setattr(embeddings, "get_config", fake_get_config)
+    monkeypatch.setattr(embeddings, "get_embedding_config", fake_get_embedding_config)
+    monkeypatch.setattr(embeddings, "get_embedding_model", fake_get_embedding_model)
+
+    model, dimension = embeddings.load_embedding_backend()
+
+    assert model is expected_model
+    assert dimension == 3072
+    assert calls == {"config": ["fungus_search"], "model": ["fungus_search"]}
 
 
-def test_load_sentence_model_fallback_to_cpu(monkeypatch):
+def test_load_embedding_backend_rejects_missing_fungus_search_instead_of_default_fallback(monkeypatch):
     from embeddinggemma.mcmp import embeddings
 
-    class FailingThenCPU:
-        def __init__(self, name, device=None):
-            # First attempt with non-CPU should fail to trigger fallback
-            if device != "cpu":
-                raise RuntimeError("No GPU available")
-            self.name = name
-            self.device = device
+    fallback = _canonical_embedding_config()
+    calls = []
 
-    ctor_calls = []
+    monkeypatch.setattr(embeddings, "get_config", lambda: {"embeddings": {"default": fallback}})
+    monkeypatch.setattr(embeddings, "get_embedding_config", lambda _role: fallback)
+    monkeypatch.setattr(embeddings, "get_embedding_model", lambda role: calls.append(role))
 
-    def ctor_spy(name, device=None):
-        ctor_calls.append((name, device))
-        return FailingThenCPU(name, device=device)
+    with pytest.raises(RuntimeError, match=r"requires explicit embeddings\.fungus_search"):
+        embeddings.load_embedding_backend()
 
-    monkeypatch.setattr(embeddings, "resolve_device", lambda pref: "cuda")
-    monkeypatch.setattr(embeddings, "_log_torch_env", lambda: None)
-    monkeypatch.setattr(embeddings, "SentenceTransformer", ctor_spy)
-
-    m = embeddings.load_sentence_model("test-model", device_preference="auto")
-    assert getattr(m, "device", None) == "cpu"
-    # Verify we tried cuda then fell back to cpu
-    assert ctor_calls == [("test-model", "cuda"), ("test-model", "cpu")]
+    assert calls == []
 
 
+def test_load_embedding_backend_rejects_direct_provider_drift(monkeypatch):
+    from embeddinggemma.mcmp import embeddings
+
+    direct_config = {**_canonical_embedding_config(), "provider": "openai"}
+    calls = []
+
+    monkeypatch.setattr(embeddings, "get_config", lambda: {"embeddings": {"fungus_search": direct_config}})
+    monkeypatch.setattr(embeddings, "get_embedding_config", lambda _role: direct_config)
+    monkeypatch.setattr(embeddings, "get_embedding_model", lambda role: calls.append(role))
+
+    with pytest.raises(RuntimeError, match="expected provider='openfang'.*got 'openai'"):
+        embeddings.load_embedding_backend()
+
+    assert calls == []
+
+
+def test_load_embedding_backend_rejects_extra_contract_fields(monkeypatch):
+    from embeddinggemma.mcmp import embeddings
+
+    config = {**_canonical_embedding_config(), "fallback_provider": "openai"}
+    calls = []
+
+    monkeypatch.setattr(embeddings, "get_config", lambda: {"embeddings": {"fungus_search": config}})
+    monkeypatch.setattr(embeddings, "get_embedding_config", lambda _role: config)
+    monkeypatch.setattr(embeddings, "get_embedding_model", lambda role: calls.append(role))
+
+    with pytest.raises(RuntimeError, match="contract fields must be exactly"):
+        embeddings.load_embedding_backend()
+
+    assert calls == []
+
+
+def test_load_embedding_model_propagates_shared_gateway_failure(monkeypatch):
+    from embeddinggemma.mcmp import embeddings
+
+    def unavailable(_role):
+        raise RuntimeError("OpenFang unreachable")
+
+    config = _canonical_embedding_config()
+    monkeypatch.setattr(embeddings, "get_config", lambda: {"embeddings": {"fungus_search": config}})
+    monkeypatch.setattr(embeddings, "get_embedding_config", lambda _role: config)
+    monkeypatch.setattr(embeddings, "get_embedding_model", unavailable)
+
+    with pytest.raises(RuntimeError, match="OpenFang unreachable"):
+        embeddings.load_embedding_backend()

@@ -7,10 +7,8 @@ start = time.time()
 from embeddinggemma.mcmp_rag import MCPMRetriever
 
 r = MCPMRetriever(
-    embedding_model_name="google/embeddinggemma-300m",
     num_agents=10,
     max_iterations=5,
-    device_mode="auto",
 )
 
 loaded = r.load_persistent_index()

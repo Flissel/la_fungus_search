@@ -5,7 +5,6 @@ import os
 import re
 
 sys.path.insert(0, "src")
-os.environ.setdefault("TRANSFORMERS_CACHE", os.path.expanduser("~/.cache/huggingface"))
 
 CODEBASE = "C:/Users/User/Desktop/Vibemind_V1/vibemind-os"
 EXCLUDE_DIRS = [
@@ -18,13 +17,12 @@ EXCLUDE_DIRS = [
     "_archive",
     "all_services",
 ]
-EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 MAX_FILES = 15000
 CHUNK_WINDOW = [200]
 
 print("=== Vibemind-OS Full Index Build ===")
 print(f"Codebase: {CODEBASE}")
-print(f"Model: {EMBED_MODEL}")
+print("Embedding role: fungus_search (OpenFang)")
 print()
 
 # 1. Load model
@@ -33,20 +31,12 @@ from embeddinggemma.mcmp_rag import MCPMRetriever
 from embeddinggemma.ui.corpus import collect_codebase_chunks
 
 r = MCPMRetriever(
-    embedding_model_name=EMBED_MODEL,
     num_agents=50,
     max_iterations=10,
-    device_mode="auto",
-    embed_batch_size=32,   # Opt-Stage-2: was 256 → OOM on 12GB GPU with long chunks
+    embed_batch_size=32,
 )
-# Opt-Stage-2: cap sequence length — Qwen3 default is 32k which gives
-# O(n²) attention; window=200 lines ≈ 600 tokens for code, 512 is safe ceiling.
-try:
-    r.embedding_model.max_seq_length = 512
-except Exception:
-    pass
-print(f"[1] Model loaded: {time.time()-t0:.1f}s | dim={r.embedding_model.get_sentence_embedding_dimension()} | "
-      f"max_seq_length={getattr(r.embedding_model, 'max_seq_length', '?')} | batch_size=32")
+print(f"[1] OpenFang embedding backend ready: {time.time()-t0:.1f}s | "
+      f"role=fungus_search | dim={r._expected_embedding_dim} | batch_size=32")
 
 # 2. Collect chunks
 t0 = time.time()

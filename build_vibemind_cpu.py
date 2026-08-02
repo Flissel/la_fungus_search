@@ -11,9 +11,6 @@ import time
 import os
 
 sys.path.insert(0, "src")
-os.environ.setdefault("TRANSFORMERS_CACHE", os.path.expanduser("~/.cache/huggingface"))
-os.environ["CUDA_VISIBLE_DEVICES"] = ""  # force CPU
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 CODEBASE = "C:/Users/User/Desktop/Vibemind_V1/vibemind-os"
 EXCLUDE_DIRS = [
@@ -22,13 +19,12 @@ EXCLUDE_DIRS = [
     "downloads", ".pitchdeck_chroma", ".playwright-mcp",
     "uv.lock", ".kilocode", ".vscode",
 ]
-EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 MAX_FILES = 15000
 CHUNK_WINDOW = [200]
 
 print("=== Vibemind-OS Full Index Build (CPU) ===")
 print(f"Codebase: {CODEBASE}")
-print(f"Model: {EMBED_MODEL}")
+print("Embedding role: fungus_search (OpenFang)")
 print()
 
 t0 = time.time()
@@ -36,13 +32,12 @@ from embeddinggemma.mcmp_rag import MCPMRetriever
 from embeddinggemma.ui.corpus import collect_codebase_chunks
 
 r = MCPMRetriever(
-    embedding_model_name=EMBED_MODEL,
     num_agents=50,
     max_iterations=10,
-    device_mode="cpu",
-    embed_batch_size=32,  # smaller batch for CPU
+    embed_batch_size=32,
 )
-print(f"[1] Model loaded: {time.time()-t0:.1f}s | dim={r.embedding_model.get_sentence_embedding_dimension()}")
+print(f"[1] OpenFang embedding backend ready: {time.time()-t0:.1f}s | "
+      f"role=fungus_search | dim={r._expected_embedding_dim}")
 
 t0 = time.time()
 raw_chunks = collect_codebase_chunks(
@@ -69,7 +64,7 @@ print(f"[4] After exact-dedup: {len(unique)} (removed {len(chunks)-len(unique)} 
 
 # Embed + index
 t0 = time.time()
-print(f"[5] Embedding {len(unique)} chunks (CPU, batch 32) — this will take 20-50 min...")
+print(f"[5] Embedding {len(unique)} chunks through OpenFang (batch 32)...")
 r.add_documents(unique)
 print(f"[5] add_documents done: {time.time()-t0:.1f}s | docs={len(r.documents)}")
 

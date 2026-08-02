@@ -17,27 +17,6 @@ _ensure_src_on_path()
 
 
 @pytest.fixture(autouse=True)
-def stub_sentence_transformers(monkeypatch):
-    try:
-        import sentence_transformers  # type: ignore # noqa: F401
-        return
-    except Exception:
-        pass
-    st_mod = types.ModuleType("sentence_transformers")
-
-    class SentenceTransformer:
-        def __init__(self, model_name, device=None):
-            self.model_name = model_name
-            self.device = device
-
-        def encode(self, texts):
-            return [[0.0] * 8 for _ in texts]
-
-    st_mod.SentenceTransformer = SentenceTransformer
-    sys.modules["sentence_transformers"] = st_mod
-
-
-@pytest.fixture(autouse=True)
 def stub_llama_index(monkeypatch):
     """Provide a minimal llama_index stub for indexer/search tests."""
     core_name = "llama_index.core"

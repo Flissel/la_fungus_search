@@ -78,8 +78,7 @@ def split_chunk_into_views(content: str) -> List[str]:
     return views
 
 
-def build_multivec_index(chunks: List[str], embedding_model, batch_size: int = 32,
-                         max_seq_length: int = 512) -> Tuple[np.ndarray, np.ndarray]:
+def build_multivec_index(chunks: List[str], embedding_model, batch_size: int = 32) -> Tuple[np.ndarray, np.ndarray]:
     """Compute multi-vector embeddings for all chunks.
 
     Returns:
@@ -87,11 +86,6 @@ def build_multivec_index(chunks: List[str], embedding_model, batch_size: int = 3
         chunk_ids:  (total_views,)  int32     — which chunk each view belongs to
     """
     t0 = time.time()
-    try:
-        embedding_model.max_seq_length = max_seq_length
-    except Exception:
-        pass
-
     # Pass 1: split each chunk into views, collect a flat list with chunk_ids
     all_views: List[str] = []
     chunk_ids: List[int] = []
@@ -102,16 +96,20 @@ def build_multivec_index(chunks: List[str], embedding_model, batch_size: int = 3
     _logger.info("multivec build: %d chunks → %d views (%.1fx)",
                  len(chunks), len(all_views), len(all_views) / max(1, len(chunks)))
 
-    # Pass 2: embed in batches. encode() returns normalized vectors for
-    # most ST models; we re-normalize to be safe.
-    embs = embedding_model.encode(
-        all_views,
-        batch_size=batch_size,
-        show_progress_bar=True,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-    )
-    embs = np.asarray(embs, dtype=np.float32)
+    # Pass 2: embed through the configured OpenFang role.  The shared client
+    # owns transport, retries, and provider policy; local model kwargs would
+    # be an accidental bypass.
+    batches = []
+    for start in range(0, len(all_views), max(1, batch_size)):
+        batch = all_views[start:start + max(1, batch_size)]
+        vectors = embedding_model.encode(batch)
+        if len(vectors) != len(batch):
+            raise RuntimeError(
+                "OpenFang embedding response count does not match the request: "
+                f"expected {len(batch)}, got {len(vectors)}."
+            )
+        batches.append(np.asarray(vectors, dtype=np.float32))
+    embs = np.concatenate(batches, axis=0) if batches else np.empty((0, 0), dtype=np.float32)
     _logger.info("multivec build: embedded %d views in %.1fs → shape %s",
                  len(all_views), time.time() - t0, embs.shape)
     return embs, np.array(chunk_ids, dtype=np.int32)

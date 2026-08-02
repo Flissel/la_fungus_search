@@ -45,8 +45,6 @@ FUNGUS_ROOT = CODEBASE / "la-fungus-search"
 LOG_DIR = REPO_ROOT / "backups"
 
 WINDOWS = [200]
-EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
-
 FILE_PREFIX_RE = re.compile(r"^# file: (.+?) \| lines:")
 
 # Match the exclusion set in build_vibemind_cpu.py:20-25
@@ -309,13 +307,6 @@ def main() -> int:
         "TRANSFORMERS_CACHE",
         os.path.expanduser("~/.cache/huggingface"),
     )
-    # GPU embedding: Qwen3-Embedding-0.6B on CPU is ~6s/chunk (a 5-file commit
-    # would take 2.5-5 min). On the RTX 3060 the same work is ~0.1s for 48
-    # chunks — model-load (~8s) then dominates. FUNGUS_DEVICE=cpu overrides
-    # back to CPU if the GPU is busy/contended (Brain also uses CUDA, but
-    # typically only ~3.4 GB of 12 GB — plenty of headroom).
-    device = os.environ.get("FUNGUS_DEVICE", "cuda").lower()
-
     # Chdir into FUNGUS_ROOT so .fungus_cache/ resolves correctly.
     original_cwd = os.getcwd()
     os.chdir(FUNGUS_ROOT)
@@ -327,13 +318,11 @@ def main() -> int:
         # only used for *search*, not for index building. Minimal here to cut
         # constructor overhead.
         r = MCPMRetriever(
-            embedding_model_name=EMBED_MODEL,
             num_agents=1,
             max_iterations=1,
-            device_mode=device,
             embed_batch_size=32,
         )
-        log.info(f"embedding device: {device}")
+        log.info("embedding role: fungus_search via OpenFang")
 
         t1 = time.time()
         if not r.load_persistent_index():
