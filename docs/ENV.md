@@ -29,6 +29,11 @@ Optional vector settings:
 - `QDRANT_COLLECTION=codebase`
 
 `FUNGUS_RERANKER_DEVICE` controls only the optional local cross-encoder
-reranker; it never selects the embedding provider or model.
+reranker; it never selects the embedding provider or model. It is deliberately
+absent from the default install. To enable it explicitly, install
+`pip install ".[reranker]"` (or `uv sync --extra reranker`). The reranker is
+loaded lazily only for a query that uses reranking, never during MCP import;
+missing the extra therefore leaves the default heavy-free rather than acting as
+an embedding fallback.
 
 No deployment, cache rebuild, or cache deletion is implied by this document.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -104,14 +105,15 @@ def test_embedding_client_rejects_malformed_or_dimension_mismatched_service_resp
 
 def test_active_embedding_paths_have_no_local_model_fallback_or_provider_bypass():
     source = (ROOT / "src" / "embeddinggemma" / "mcmp" / "embeddings.py").read_text(encoding="utf-8")
-    dependencies = (ROOT / "pyproject.toml").read_text(encoding="utf-8").lower()
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = "\n".join(project["project"]["dependencies"]).lower()
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").lower()
 
     assert "embedding-service" in source
     assert "sentence_transformers" not in source
     assert "get_embedding_model" not in source
     assert "openai" not in source.lower()
-    for local_embedding_dependency in ("sentence-transformers", '"torch', "transformers"):
+    for local_embedding_dependency in ("sentence-transformers", "torch", "transformers"):
         assert local_embedding_dependency not in dependencies
     for local_embedding_dependency in ("sentence-transformers", "torch", "transformers", "ollama"):
         assert local_embedding_dependency not in requirements

@@ -13,3 +13,9 @@ dependencies = [
     "scikit-learn>=1.0.0",
     "streamlit>=1.28.0",
 ]
+
+[project.optional-dependencies]
+reranker = [
+    "sentence-transformers>=3.0.0",
+    "torch>=2.0.0",
+]

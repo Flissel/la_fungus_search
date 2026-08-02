@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from typing import Any, Sequence
+from urllib.parse import urlparse
 
 import requests
 
@@ -37,11 +38,19 @@ class EmbeddingServiceClient:
         max_retries: int | None = None,
         retry_backoff: float | None = None,
     ) -> None:
-        configured_url = (base_url or os.environ.get("EMBEDDING_SERVICE_URL", "")).strip()
-        if not configured_url:
+        configured_url = base_url if base_url is not None else os.environ.get("EMBEDDING_SERVICE_URL", "")
+        if not configured_url or not configured_url.strip():
             raise EmbeddingServiceError(
                 "EMBEDDING_SERVICE_URL is required; set a URL reachable from this Fungus runtime"
             )
+        if any(character.isspace() for character in configured_url):
+            raise EmbeddingServiceError("EMBEDDING_SERVICE_URL must be an absolute HTTP(S) URL without whitespace")
+        try:
+            parsed_url = urlparse(configured_url)
+        except ValueError as exc:
+            raise EmbeddingServiceError("EMBEDDING_SERVICE_URL must be an absolute HTTP(S) URL") from exc
+        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+            raise EmbeddingServiceError("EMBEDDING_SERVICE_URL must be an absolute HTTP(S) URL")
         self._base_url = configured_url.rstrip("/")
         self._session = session or requests.Session()
         self._timeout = float(timeout if timeout is not None else os.environ.get("EMBEDDING_HTTP_TIMEOUT", "30"))
