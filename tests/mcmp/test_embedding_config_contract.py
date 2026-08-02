@@ -1,10 +1,17 @@
 from pathlib import Path
-import tomllib
 
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_embedding_contract_tests_do_not_require_python_311_tomllib():
+    for relative_path in (
+        "tests/mcmp/test_embedding_config_contract.py",
+        "tests/mcmp/test_embeddings.py",
+    ):
+        assert "\nimport tomllib" not in (ROOT / relative_path).read_text(encoding="utf-8")
 
 
 def test_embedding_loader_requires_explicit_reachable_service_url(monkeypatch):
@@ -72,12 +79,17 @@ def test_env_example_keeps_llm_config_and_requires_service_url_without_docker_de
 
 
 def test_reranker_is_a_declared_optional_extra_while_default_stays_heavy_free():
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = project["project"]["dependencies"]
-    extra = project["project"]["optional-dependencies"]["reranker"]
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    default_dependencies, optional_dependencies = project.split(
+        "[project.optional-dependencies]", maxsplit=1
+    )
+    reranker_extra = optional_dependencies.split("reranker = [", maxsplit=1)[1].split(
+        "]", maxsplit=1
+    )[0]
     docs = (ROOT / "docs" / "ENV.md").read_text(encoding="utf-8")
 
-    assert all("sentence-transformers" not in item and "torch" not in item for item in dependencies)
-    assert any(item.startswith("sentence-transformers") for item in extra)
-    assert any(item.startswith("torch") for item in extra)
+    assert "sentence-transformers" not in default_dependencies
+    assert '"torch' not in default_dependencies
+    assert "sentence-transformers" in reranker_extra
+    assert '"torch' in reranker_extra
     assert ".[reranker]" in docs
