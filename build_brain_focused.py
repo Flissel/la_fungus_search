@@ -19,14 +19,6 @@ import time
 import os
 
 sys.path.insert(0, "src")
-os.environ.setdefault("TRANSFORMERS_CACHE", os.path.expanduser("~/.cache/huggingface"))
-# Allow GPU if available (8GB free is enough for Qwen-Embedding-0.6B + this corpus).
-# Override with FORCE_CPU=1 if Brain or another GPU consumer is running.
-if os.environ.get("FORCE_CPU") == "1":
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-
-EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
 CHUNK_WINDOW = [200]
 
 # Curated focused roots
@@ -45,7 +37,7 @@ EXCLUDE_DIRS = [
 ]
 
 print("=== Brain-Focused Fungus Index Build (CPU) ===")
-print(f"Model: {EMBED_MODEL}")
+print("Embedding role: fungus_search (OpenFang)")
 print(f"Roots: {len(ROOTS)}")
 for r in ROOTS:
     print(f"  - {r}")
@@ -55,19 +47,15 @@ t0 = time.time()
 from embeddinggemma.mcmp_rag import MCPMRetriever
 from embeddinggemma.ui.corpus import collect_codebase_chunks
 
-DEVICE = "cpu" if os.environ.get("FORCE_CPU") == "1" else "auto"
-# Conservative batch — Qwen-Embedding-0.6B layer activations spike to ~800MB
-# at batch 64 with long sequences. 16 fits in 4GB easily.
-BATCH = 16 if DEVICE == "cpu" else 16
+BATCH = 16
 retriever = MCPMRetriever(
-    embedding_model_name=EMBED_MODEL,
     num_agents=20,
     max_iterations=5,
-    device_mode=DEVICE,
     embed_batch_size=BATCH,
 )
-print(f"  device={DEVICE} batch={BATCH}")
-print(f"[1] Model loaded: {time.time()-t0:.1f}s | dim={retriever.embedding_model.get_sentence_embedding_dimension()}")
+print(f"  role=fungus_search batch={BATCH}")
+print(f"[1] OpenFang embedding backend ready: {time.time()-t0:.1f}s | "
+      f"dim={retriever._expected_embedding_dim}")
 
 # Collect from each root, merge
 t0 = time.time()
@@ -100,7 +88,7 @@ print(f"[3] After filter+dedup: {len(unique)} | {time.time()-t0:.1f}s")
 
 # Embed
 t0 = time.time()
-print(f"[4] Embedding {len(unique)} chunks (device={DEVICE}, batch={BATCH})...")
+print(f"[4] Embedding {len(unique)} chunks through OpenFang (batch={BATCH})...")
 retriever.add_documents(unique)
 print(f"[4] add_documents done: {time.time()-t0:.1f}s | docs={len(retriever.documents)}")
 

@@ -10,12 +10,11 @@ def test_retriever_uses_fixed_shared_embedding_role(monkeypatch):
     expected_model = object()
     calls = []
 
-    def load_embedding_model():
+    def load_embedding_backend():
         calls.append(True)
-        return expected_model
+        return expected_model, 3072
 
-    monkeypatch.setattr(mcmp_rag, "load_embedding_model", load_embedding_model, raising=False)
-    monkeypatch.setattr(mcmp_rag, "get_embedding_dim", lambda _role: 3072, raising=False)
+    monkeypatch.setattr(mcmp_rag, "load_embedding_backend", load_embedding_backend)
 
     retriever = mcmp_rag.MCPMRetriever()
 
@@ -30,7 +29,7 @@ def test_retriever_propagates_openfang_embedding_failure(monkeypatch):
     def unavailable():
         raise RuntimeError("OpenFang unreachable")
 
-    monkeypatch.setattr(mcmp_rag, "load_embedding_model", unavailable, raising=False)
+    monkeypatch.setattr(mcmp_rag, "load_embedding_backend", unavailable)
 
     with pytest.raises(RuntimeError, match="OpenFang unreachable"):
         mcmp_rag.MCPMRetriever()
@@ -39,8 +38,7 @@ def test_retriever_propagates_openfang_embedding_failure(monkeypatch):
 def test_persistent_index_with_legacy_dimension_requires_rebuild(monkeypatch, tmp_path):
     import embeddinggemma.mcmp_rag as mcmp_rag
 
-    monkeypatch.setattr(mcmp_rag, "load_embedding_model", lambda: object(), raising=False)
-    monkeypatch.setattr(mcmp_rag, "get_embedding_dim", lambda _role: 3072, raising=False)
+    monkeypatch.setattr(mcmp_rag, "load_embedding_backend", lambda: (object(), 3072))
     monkeypatch.setattr(mcmp_rag.MCPMRetriever, "_CACHE_DIR", str(tmp_path))
 
     (tmp_path / "chunks.json").write_text(json.dumps(["legacy document"]), encoding="utf-8")
@@ -59,8 +57,7 @@ def test_retriever_rejects_embedding_response_with_unexpected_dimension(monkeypa
         def encode(self, _texts):
             return [[0.0] * 384]
 
-    monkeypatch.setattr(mcmp_rag, "load_embedding_model", lambda: WrongDimensionModel(), raising=False)
-    monkeypatch.setattr(mcmp_rag, "get_embedding_dim", lambda _role: 3072, raising=False)
+    monkeypatch.setattr(mcmp_rag, "load_embedding_backend", lambda: (WrongDimensionModel(), 3072))
 
     retriever = mcmp_rag.MCPMRetriever()
 
@@ -75,8 +72,7 @@ def test_retriever_rejects_embedding_response_count_mismatch(monkeypatch):
         def encode(self, _texts):
             return []
 
-    monkeypatch.setattr(mcmp_rag, "load_embedding_model", lambda: MissingVectorModel())
-    monkeypatch.setattr(mcmp_rag, "get_embedding_dim", lambda _role: 3072)
+    monkeypatch.setattr(mcmp_rag, "load_embedding_backend", lambda: (MissingVectorModel(), 3072))
 
     retriever = mcmp_rag.MCPMRetriever()
 
@@ -87,8 +83,7 @@ def test_retriever_rejects_embedding_response_count_mismatch(monkeypatch):
 def test_persistent_index_with_non_matrix_embeddings_requires_rebuild(monkeypatch, tmp_path):
     import embeddinggemma.mcmp_rag as mcmp_rag
 
-    monkeypatch.setattr(mcmp_rag, "load_embedding_model", lambda: object())
-    monkeypatch.setattr(mcmp_rag, "get_embedding_dim", lambda _role: 3072)
+    monkeypatch.setattr(mcmp_rag, "load_embedding_backend", lambda: (object(), 3072))
     monkeypatch.setattr(mcmp_rag.MCPMRetriever, "_CACHE_DIR", str(tmp_path))
 
     (tmp_path / "chunks.json").write_text(json.dumps(["corrupt document"]), encoding="utf-8")

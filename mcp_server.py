@@ -42,10 +42,8 @@ CODEBASE = os.environ.get(
     "FUNGUS_CODEBASE",
     os.path.normpath(os.path.join(_HERE, "..", "..")),
 )
-EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
-# S.3: device override. Brain uses ~11GB GPU; default to CPU here so reindex
-# doesn't OOM. Override with FUNGUS_DEVICE=cuda if GPU has headroom.
-DEVICE_MODE = os.environ.get("FUNGUS_DEVICE", "cpu")
+# The reranker is independent of OpenFang embeddings and remains optional.
+RERANKER_DEVICE = os.environ.get("FUNGUS_RERANKER_DEVICE", "cpu")
 EXCLUDE_DIRS = [
     ".git", "__pycache__", "node_modules", ".venv", "target", ".next",
     ".fungus_cache", ".pytest_cache", "models", "dist", "build",
@@ -112,10 +110,8 @@ def _background_load():
     try:
         from embeddinggemma.mcmp_rag import MCPMRetriever
         r = MCPMRetriever(
-            embedding_model_name=EMBED_MODEL,
             num_agents=50,
             max_iterations=10,
-            device_mode=DEVICE_MODE,
             embed_batch_size=256,
         )
         t0 = time.time()
@@ -192,7 +188,7 @@ def _get_reranker():
         return None
     try:
         from sentence_transformers import CrossEncoder
-        device = DEVICE_MODE if DEVICE_MODE in ("cuda", "cpu") else "auto"
+        device = RERANKER_DEVICE if RERANKER_DEVICE in ("cuda", "cpu") else "auto"
         # max_length=512 matches our chunk window (~512 tokens for code).
         _reranker = CrossEncoder(_RERANKER_MODEL, max_length=512, device=device)
         logger.info("Reranker loaded: %s on %s", _RERANKER_MODEL, device)
@@ -1630,7 +1626,7 @@ async def fungus_index_stats() -> str:
         f"- **Total chunks**: {len(_retriever.documents)}",
         f"- **Unique files**: {len(file_counter)}",
         f"- **Embedding dim**: {_retriever._embed_dim}",
-        f"- **Model**: {_retriever.embedding_model_name}",
+        "- **Embedding role**: fungus_search (OpenFang)",
         f"- **Load time**: {meta.get('load_time_s', '?')}s",
         "",
         "### File types:",
@@ -1670,10 +1666,8 @@ async def fungus_reindex(codebase_path: str = "") -> str:
         from embeddinggemma.ui.corpus import collect_codebase_chunks
 
         r = MCPMRetriever(
-            embedding_model_name=EMBED_MODEL,
             num_agents=50,
             max_iterations=10,
-            device_mode=DEVICE_MODE,
             embed_batch_size=256,
         )
 

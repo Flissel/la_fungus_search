@@ -4,7 +4,6 @@ import time
 import os
 
 sys.path.insert(0, "src")
-os.environ.setdefault("TRANSFORMERS_CACHE", os.path.expanduser("~/.cache/huggingface"))
 
 print("Loading embedding model...")
 start = time.time()
@@ -18,22 +17,15 @@ EXCLUDE = [".git", "__pycache__", "node_modules", ".venv", "target", ".next",
            "openfang/target", "multiseat-os/downloads"]
 
 r = MCPMRetriever(
-    embedding_model_name="all-MiniLM-L6-v2",
     num_agents=50,
     max_iterations=10,
-    device_mode="auto",
     embed_batch_size=128,
 )
 
 model_time = time.time() - start
 print(f"Model loaded in {model_time:.1f}s")
-print(f"Embedding model: {r.embedding_model}")
-if r.embedding_model:
-    test = r.embedding_model.encode(["test"])
-    print(f"Embedding dim: {test[0].shape}")
-else:
-    print("WARNING: No embedding model! Will use random vectors.")
-    sys.exit(1)
+print("Embedding role: fungus_search (OpenFang)")
+print(f"Embedding dim: {r._expected_embedding_dim}")
 
 print(f"\nCollecting chunks from {CODEBASE}...")
 start = time.time()

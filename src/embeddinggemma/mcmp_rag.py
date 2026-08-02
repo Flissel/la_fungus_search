@@ -14,9 +14,7 @@ import os
 import warnings
 import numpy as np
 
-from vibemind_shared import get_embedding_dim
-
-from embeddinggemma.mcmp.embeddings import EMBEDDING_ROLE, load_embedding_model
+from embeddinggemma.mcmp.embeddings import load_embedding_backend
 from embeddinggemma.mcmp.simulation import (
     spawn_agents as _spawn_agents,
     update_agent_position as _update_agent_position,
@@ -83,8 +81,7 @@ class MCPMRetriever:
         self.exploration_bonus = float(exploration_bonus)
         self.embed_batch_size = int(embed_batch_size)
         self.build_faiss_after_add = bool(build_faiss_after_add)
-        self._expected_embedding_dim = int(get_embedding_dim(EMBEDDING_ROLE))
-        self.embedding_model = load_embedding_model()
+        self.embedding_model, self._expected_embedding_dim = load_embedding_backend()
 
         self.documents: List[Document] = []
         self.agents: List[Agent] = []

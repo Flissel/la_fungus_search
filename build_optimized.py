@@ -16,7 +16,6 @@ import json
 import re
 
 sys.path.insert(0, "src")
-os.environ.setdefault("TRANSFORMERS_CACHE", os.path.expanduser("~/.cache/huggingface"))
 
 CODEBASE = os.environ.get("FUNGUS_CODEBASE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 EXCLUDE_DIRS = [
@@ -30,7 +29,6 @@ EXCLUDE_FILES = [
     "test_search.py", "test_persistent.py", "build_index.py", "build_optimized.py",
     "check_cache.py", "verify_index.py",
 ]
-EMBED_MODEL = "all-MiniLM-L6-v2"
 MAX_FILES = 5000
 CHUNK_WINDOW = [200]  # Single window to reduce overlap
 
@@ -127,19 +125,18 @@ def main():
 
     print(f"=== Optimized Index Build ===")
     print(f"Codebase: {CODEBASE}")
-    print(f"Model: {EMBED_MODEL}")
+    print("Embedding role: fungus_search (OpenFang)")
     print()
 
     # 1. Load model
     t0 = time.time()
     r = MCPMRetriever(
-        embedding_model_name=EMBED_MODEL,
         num_agents=50,
         max_iterations=10,
-        device_mode="auto",
         embed_batch_size=256,
     )
-    print(f"[1] Model loaded: {time.time()-t0:.1f}s | dim={r.embedding_model.get_sentence_embedding_dimension()}")
+    print(f"[1] OpenFang embedding backend ready: {time.time()-t0:.1f}s | "
+          f"role=fungus_search | dim={r._expected_embedding_dim}")
 
     # 2. Collect chunks
     t0 = time.time()

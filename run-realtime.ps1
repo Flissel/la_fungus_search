@@ -4,6 +4,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if ([string]::IsNullOrWhiteSpace($env:VIBEMIND_CONFIG_DIR)) {
+    throw "VIBEMIND_CONFIG_DIR must point to the canonical VibeMind configuration directory."
+}
+
+$configPath = Join-Path $env:VIBEMIND_CONFIG_DIR "llm_config.yml"
+if (-not (Test-Path $configPath)) {
+    throw "Canonical VibeMind configuration not found: $configPath"
+}
+
 $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $python)) {
     Write-Error "Python venv not found: $python"
