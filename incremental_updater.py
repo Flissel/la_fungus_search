@@ -362,7 +362,7 @@ def _run_with_args(args: argparse.Namespace) -> int:
             max_iterations=1,
             embed_batch_size=32,
         )
-        log.info("embedding role: fungus_search via OpenFang")
+        log.info("embedding backend: VibeMind embedding-service")
 
         t1 = time.time()
         if not r.load_persistent_index():

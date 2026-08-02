@@ -96,7 +96,7 @@ def build_multivec_index(chunks: List[str], embedding_model, batch_size: int = 3
     _logger.info("multivec build: %d chunks → %d views (%.1fx)",
                  len(chunks), len(all_views), len(all_views) / max(1, len(chunks)))
 
-    # Pass 2: embed through the configured OpenFang role.  The shared client
+    # Pass 2: embed through the configured VibeMind embedding-service.  The client
     # owns transport, retries, and provider policy; local model kwargs would
     # be an accidental bypass.
     batches = []
@@ -105,7 +105,7 @@ def build_multivec_index(chunks: List[str], embedding_model, batch_size: int = 3
         vectors = embedding_model.encode(batch)
         if len(vectors) != len(batch):
             raise RuntimeError(
-                "OpenFang embedding response count does not match the request: "
+                "embedding-service response count does not match the request: "
                 f"expected {len(batch)}, got {len(vectors)}."
             )
         batches.append(np.asarray(vectors, dtype=np.float32))
