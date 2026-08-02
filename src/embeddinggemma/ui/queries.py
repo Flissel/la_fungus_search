@@ -1,6 +1,7 @@
-import os
 import re
 from typing import List
+
+from embeddinggemma.rag.generation import generate_text
 
 
 def _normalize_query_text(text: str) -> str:
@@ -74,23 +75,6 @@ def dedup_multi_queries(queries: List[str], similarity_threshold: float = 0.8) -
     return kept
 
 
-def _ollama_generate(prompt: str, model: str = None, timeout: int = 180) -> str:
-    try:
-        import requests
-        host = os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434').rstrip('/')
-        model_name = model or os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b')
-        r = requests.post(
-            f"{host}/api/generate",
-            json={"model": model_name, "prompt": prompt, "stream": False, "options": {"temperature": 0.1}},
-            timeout=timeout,
-        )
-        if r.ok:
-            return r.json().get('response', '')
-        return f"[LLM error] status={r.status_code}"
-    except Exception as e:
-        return f"[LLM error] {e}"
-
-
 def generate_multi_queries_from_llm(base_query: str, num_queries: int = 5, context_files: List[str] = None, keyword_hints: List[str] = None) -> List[str]:
     print(f"Generating {num_queries} queries for {base_query}")
     print(f"Context files: {context_files}")
@@ -119,7 +103,7 @@ def generate_multi_queries_from_llm(base_query: str, num_queries: int = 5, conte
     ]
     sys_prompt = "\n".join(lines_prompt).replace("{n}", str(n))
     user = f"Base query: {base_query}\nWrite {n} concrete repository search questions (one per line), grounded in the hinted files."
-    text = _ollama_generate(f"System:\n{sys_prompt}\n\nUser:\n{user}")
+    text = generate_text(prompt=user, system=sys_prompt)
     lines = [re.sub(r"^[\-\d\.\)\s]+", "", ln).strip() for ln in (text or "").splitlines()]
     lines = [ln for ln in lines if ln]
     return lines[:n]
