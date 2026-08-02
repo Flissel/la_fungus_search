@@ -9,7 +9,6 @@ from typing import Any, Sequence
 import requests
 
 
-EMBEDDING_SERVICE_DEFAULT_URL = "http://embedding-service:8080"
 EMBEDDING_DIMENSION = 3072
 
 
@@ -38,8 +37,12 @@ class EmbeddingServiceClient:
         max_retries: int | None = None,
         retry_backoff: float | None = None,
     ) -> None:
-        configured_url = base_url or os.environ.get("EMBEDDING_SERVICE_URL", "")
-        self._base_url = (configured_url or EMBEDDING_SERVICE_DEFAULT_URL).strip().rstrip("/")
+        configured_url = (base_url or os.environ.get("EMBEDDING_SERVICE_URL", "")).strip()
+        if not configured_url:
+            raise EmbeddingServiceError(
+                "EMBEDDING_SERVICE_URL is required; set a URL reachable from this Fungus runtime"
+            )
+        self._base_url = configured_url.rstrip("/")
         self._session = session or requests.Session()
         self._timeout = float(timeout if timeout is not None else os.environ.get("EMBEDDING_HTTP_TIMEOUT", "30"))
         self._max_retries = max(0, int(max_retries if max_retries is not None else os.environ.get("EMBEDDING_HTTP_MAX_RETRIES", "2")))

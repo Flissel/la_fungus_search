@@ -47,7 +47,9 @@ def test_embedding_client_retries_only_transient_service_unavailability(monkeypa
     ]
     sleeps: list[float] = []
     monkeypatch.setattr(embeddings.time, "sleep", sleeps.append)
-    client = embeddings.EmbeddingServiceClient(session=session, max_retries=2, retry_backoff=0.25)
+    client = embeddings.EmbeddingServiceClient(
+        base_url="http://embedding-service.test", session=session, max_retries=2, retry_backoff=0.25
+    )
 
     assert client.encode(["retry me"]) == [[0.1] * 3072]
     assert session.post.call_count == 2
@@ -60,7 +62,9 @@ def test_embedding_client_fails_closed_after_bounded_transient_retries(monkeypat
     session = MagicMock()
     session.post.side_effect = requests.exceptions.Timeout("service unavailable")
     monkeypatch.setattr(embeddings.time, "sleep", lambda _seconds: None)
-    client = embeddings.EmbeddingServiceClient(session=session, max_retries=1)
+    client = embeddings.EmbeddingServiceClient(
+        base_url="http://embedding-service.test", session=session, max_retries=1
+    )
 
     with pytest.raises(embeddings.EmbeddingServiceUnavailable, match="after 2 attempts"):
         client.encode(["must not fall back"])
@@ -75,7 +79,9 @@ def test_embedding_client_does_not_retry_non_transient_http_errors():
     response.raise_for_status.side_effect = requests.exceptions.HTTPError(response=response)
     session = MagicMock()
     session.post.return_value = response
-    client = embeddings.EmbeddingServiceClient(session=session, max_retries=2)
+    client = embeddings.EmbeddingServiceClient(
+        base_url="http://embedding-service.test", session=session, max_retries=2
+    )
 
     with pytest.raises(embeddings.EmbeddingServiceError, match="status 400"):
         client.encode(["bad request"])
@@ -88,7 +94,9 @@ def test_embedding_client_rejects_malformed_or_dimension_mismatched_service_resp
 
     session = MagicMock()
     session.post.return_value = _response({"vectors": [[0.1] * 384]})
-    client = embeddings.EmbeddingServiceClient(session=session, max_retries=0)
+    client = embeddings.EmbeddingServiceClient(
+        base_url="http://embedding-service.test", session=session, max_retries=0
+    )
 
     with pytest.raises(embeddings.EmbeddingServiceError, match="3072.*384"):
         client.encode(["wrong dimension"])
