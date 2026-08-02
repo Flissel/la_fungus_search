@@ -593,31 +593,19 @@ async def fungus_search_multi(queries: str, top_k: int = 5) -> str:
 # Stage-6 (Ant-Colony) + Stage-7 (Query-Expansion) + Stage-5 (LLM-Judge)
 # ═════════════════════════════════════════════════════════════════════════
 
-# --- shared LLM helper (used by stages 5 + 7) ---------------------------
-_OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-_LLM_MODEL = os.environ.get("FUNGUS_LLM_MODEL", "qwen2.5-coder:7b")
+# --- fixed OpenFang LLM paths (used by stages 5, 7, and 13) ------------
+def _generate_summary(prompt: str) -> str:
+    """Generate through the fixed OpenFang fungus_summary role."""
+    from embeddinggemma.rag.generation import generate_text
+
+    return generate_text(prompt=prompt)
 
 
-def _ollama_generate(prompt: str, model: str | None = None, timeout: int = 60) -> str:
-    """Call Ollama /api/generate synchronously. Returns text or empty string on error."""
-    import urllib.request, json as _json
-    body = _json.dumps({
-        "model": model or _LLM_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.0, "num_ctx": 4096},
-    }).encode("utf-8")
-    try:
-        req = urllib.request.Request(
-            f"{_OLLAMA_HOST}/api/generate",
-            data=body, headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = _json.loads(resp.read().decode("utf-8"))
-            return data.get("response", "")
-    except Exception as e:
-        logger.warning("ollama call failed: %s", e)
-        return ""
+def _generate_judge(prompt: str) -> str:
+    """Generate through the fixed OpenFang fungus_judge role."""
+    from embeddinggemma.rag.generation import generate_judge_text
+
+    return generate_judge_text(prompt=prompt)
 
 
 def _strip_json(text: str) -> str:
@@ -727,7 +715,7 @@ async def fungus_search_expanded(query: str, top_k: int = 10,
                                  n_subqueries: int = 4) -> str:
     """Expand the user query into N sub-queries via LLM, then merge results.
 
-    The LLM (default: qwen2.5-coder:7b via Ollama) rewrites the query into
+    The OpenFang summary role rewrites the query into
     several angles ("synonyms", "related concepts", "specific identifiers",
     "alternative wordings") so that the embedder + BM25 catch matches that
     a single phrasing would miss. Especially helpful when the user query
@@ -754,7 +742,7 @@ async def fungus_search_expanded(query: str, top_k: int = 10,
         f"phrasings. Return ONLY a JSON array of strings, nothing else.\n\n"
         f"Original query: {query}\n\nJSON array:"
     )
-    raw = await asyncio.to_thread(_ollama_generate, expand_prompt)
+    raw = await asyncio.to_thread(_generate_summary, expand_prompt)
     sub_queries: list[str] = []
     js = _strip_json(raw)
     try:
@@ -861,7 +849,7 @@ async def fungus_search_judged(query: str, top_k: int = 10,
     )
 
     t0 = time.time()
-    raw = await asyncio.to_thread(_ollama_generate, judge_prompt, None, 180)
+    raw = await asyncio.to_thread(_generate_judge, judge_prompt)
     js = _strip_json(raw)
     judgements: dict[int, dict] = {}
     try:
@@ -1056,7 +1044,7 @@ async def fungus_search_validated(query: str, top_k: int = 10,
             f"Generate 0-3 follow-up queries.\n\nJSON:"
         )
 
-        raw = await asyncio.to_thread(_ollama_generate, validator_prompt, None, 90)
+        raw = await asyncio.to_thread(_generate_judge, validator_prompt)
         js = _strip_json(raw)
         followups: list[str] = []
         gap_reason = ""
@@ -1210,7 +1198,7 @@ async def fungus_search_synthesized(query: str, top_k: int = 10,
                 f'Return ONLY JSON: {{"gaps_identified": <bool>, '
                 f'"why": "<short>", "followup_queries": [...]}}\n\nJSON:'
             )
-            raw = _ollama_generate(prompt, None, 90)
+            raw = _generate_judge(prompt)
             js = _strip_json(raw)
             followups = []
             try:
@@ -1373,7 +1361,7 @@ async def fungus_search_synthesized(query: str, top_k: int = 10,
     )
 
     t1 = time.time()
-    raw = await asyncio.to_thread(_ollama_generate, synth_prompt, None, 240)
+    raw = await asyncio.to_thread(_generate_summary, synth_prompt)
     synth_time = time.time() - t1
 
     js = _strip_json(raw)
