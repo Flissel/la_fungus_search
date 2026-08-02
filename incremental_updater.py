@@ -37,12 +37,14 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import BinaryIO
 
 # Repo paths (hardcoded by design — see plan, matches build_vibemind_cpu.py:18)
 REPO_ROOT = Path("c:/Users/User/Desktop/Vibemind_V1")
 CODEBASE = REPO_ROOT / "vibemind-os"
 FUNGUS_ROOT = CODEBASE / "la-fungus-search"
 LOG_DIR = REPO_ROOT / "backups"
+DEFAULT_LOCK_FILE = LOG_DIR / "fungus_incremental_updater.lock"
 
 WINDOWS = [200]
 FILE_PREFIX_RE = re.compile(r"^# file: (.+?) \| lines:")
@@ -54,6 +56,59 @@ EXCLUDE_DIRS = {
     "downloads", ".pitchdeck_chroma", ".playwright-mcp",
     "uv.lock", ".kilocode", ".vscode",
 }
+
+
+# ── machine-wide singleton ──────────────────────────────────────────────────
+
+def acquire_singleton_lock(lock_path: Path | None = None) -> BinaryIO | None:
+    """Acquire the one machine-wide incremental-updater slot.
+
+    The file remains on disk for diagnostics, while the OS lock is tied to the
+    open handle and is therefore released automatically if the process dies.
+    """
+    configured = os.environ.get("FUNGUS_UPDATER_LOCK_FILE", "").strip()
+    path = Path(lock_path or configured or DEFAULT_LOCK_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+b")
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+
+    handle.seek(0)
+    handle.truncate()
+    handle.write(f"{os.getpid()}\n".encode("ascii"))
+    handle.flush()
+    return handle
+
+
+def release_singleton_lock(handle: BinaryIO) -> None:
+    """Release a lock returned by :func:`acquire_singleton_lock`."""
+    try:
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        handle.close()
 
 
 # ── logging ──────────────────────────────────────────────────────────────────
@@ -258,22 +313,7 @@ def background_self() -> None:
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--background", action="store_true",
-                        help="self-detach and exit immediately (for git-hook)")
-    parser.add_argument("--since", default="HEAD~1",
-                        help="git ref to diff against (default: HEAD~1)")
-    parser.add_argument("--repo-cwd", default=None,
-                        help="repo the commit happened in (set by the git hook)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="print plan without modifying index")
-    args = parser.parse_args()
-
-    if args.background:
-        background_self()
-        return 0
-
+def _run_with_args(args: argparse.Namespace) -> int:
     log = setup_logging()
     t0 = time.time()
     repo_cwd = Path(args.repo_cwd).resolve() if args.repo_cwd else None
@@ -446,6 +486,32 @@ def main() -> int:
         f"({removed_count} removed, {len(new_chunks)} added) ==="
     )
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--background", action="store_true",
+                        help="self-detach and exit immediately (for git-hook)")
+    parser.add_argument("--since", default="HEAD~1",
+                        help="git ref to diff against (default: HEAD~1)")
+    parser.add_argument("--repo-cwd", default=None,
+                        help="repo the commit happened in (set by the git hook)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print plan without modifying index")
+    args = parser.parse_args()
+
+    if args.background:
+        background_self()
+        return 0
+
+    lock_handle = acquire_singleton_lock()
+    if lock_handle is None:
+        print("[fungus-inc] updater already running; exiting", file=sys.stderr)
+        return 0
+    try:
+        return _run_with_args(args)
+    finally:
+        release_singleton_lock(lock_handle)
 
 
 if __name__ == "__main__":

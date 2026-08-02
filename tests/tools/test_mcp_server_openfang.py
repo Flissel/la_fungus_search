@@ -1,5 +1,7 @@
+import asyncio
 import importlib
 import sys
+import threading
 from pathlib import Path
 from types import ModuleType
 
@@ -67,3 +69,60 @@ def test_mcp_active_llm_call_sites_do_not_use_direct_provider_helper():
     assert source.count("asyncio.to_thread(_generate_summary,") == 2
     assert source.count("asyncio.to_thread(_generate_judge,") == 2
     assert "raw = _generate_judge(prompt)" in source
+
+
+def test_retriever_load_is_lazy_and_starts_once_on_first_query(monkeypatch):
+    class DeferredThread:
+        starts = 0
+        run_targets = False
+
+        def __init__(self, *, target, daemon=None, name=None):
+            self.target = target
+            self.daemon = daemon
+            self.name = name
+            self.started = False
+
+        def start(self):
+            type(self).starts += 1
+            self.started = True
+            if type(self).run_targets:
+                self.target()
+
+        def is_alive(self):
+            return self.started
+
+    monkeypatch.setattr(threading, "Thread", DeferredThread)
+    server, _calls = _load_mcp_server(monkeypatch)
+
+    assert DeferredThread.starts == 0, "MCP import must not start the heavy retriever"
+    assert server._bg_thread is None
+
+    monkeypatch.setattr(server, "_background_load", server._ready_event.set)
+    DeferredThread.run_targets = True
+
+    assert server._ensure_ready(timeout=0.1) is True
+    assert DeferredThread.starts == 1
+    assert server._ensure_ready(timeout=0.1) is True
+    assert DeferredThread.starts == 1
+
+
+def test_index_stats_reports_lazy_state_without_starting_loader(monkeypatch):
+    class NoStartThread:
+        starts = 0
+
+        def __init__(self, *, target, daemon=None, name=None):
+            self.target = target
+
+        def start(self):
+            type(self).starts += 1
+
+        def is_alive(self):
+            return False
+
+    monkeypatch.setattr(threading, "Thread", NoStartThread)
+    server, _calls = _load_mcp_server(monkeypatch)
+
+    result = asyncio.run(server.fungus_index_stats())
+
+    assert "not loaded yet" in result.lower()
+    assert NoStartThread.starts == 0
