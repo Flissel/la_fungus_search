@@ -6,7 +6,8 @@ from typing import Any, Dict, Optional
 from vibemind_shared import get_client_sync, get_model
 
 
-_ROLE = "fungus_summary"
+_SUMMARY_ROLE = "fungus_summary"
+_JUDGE_ROLE = "fungus_judge"
 def _write_prompt(path: Optional[str], prompt: str) -> None:
     if not path:
         return
@@ -26,6 +27,28 @@ def _response_text(response: Any) -> str:
     return content
 
 
+def _generate_completion(
+    role: str,
+    prompt: str = "",
+    *,
+    system: Optional[str] = None,
+    save_prompt_path: Optional[str] = None,
+) -> str:
+    _write_prompt(save_prompt_path, prompt)
+
+    messages: list[Dict[str, str]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    client = get_client_sync(role)
+    response = client.chat.completions.create(
+        model=get_model(role),
+        messages=messages,
+    )
+    return _response_text(response)
+
+
 def generate_text(
     provider: Optional[str] = None,
     prompt: str = "",
@@ -35,26 +58,34 @@ def generate_text(
     save_usage_path: Optional[str] = None,
     **_legacy: Any,
 ) -> str:
-    """Generate a summary through the configured OpenFang role.
+    """Generate a summary through the fixed OpenFang summary role.
 
     ``provider`` and the remaining legacy keyword arguments are accepted only
     for source compatibility. Provider, model, credentials, retries, and cost
     authority are owned by ``vibemind_shared`` and OpenFang.
     """
     del provider, save_usage_path, _legacy
-    _write_prompt(save_prompt_path, prompt)
-
-    messages: list[Dict[str, str]] = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-
-    client = get_client_sync(_ROLE)
-    response = client.chat.completions.create(
-        model=get_model(_ROLE),
-        messages=messages,
+    return _generate_completion(
+        _SUMMARY_ROLE,
+        prompt,
+        system=system,
+        save_prompt_path=save_prompt_path,
     )
-    return _response_text(response)
+
+
+def generate_judge_text(
+    prompt: str,
+    *,
+    system: Optional[str] = None,
+    save_prompt_path: Optional[str] = None,
+) -> str:
+    """Generate a judge result through the fixed OpenFang judge role."""
+    return _generate_completion(
+        _JUDGE_ROLE,
+        prompt,
+        system=system,
+        save_prompt_path=save_prompt_path,
+    )
 
 
 def generate_with_openai(

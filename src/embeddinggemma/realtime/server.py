@@ -17,7 +17,7 @@ import numpy as np
 
 from embeddinggemma.mcmp_rag import MCPMRetriever
 from embeddinggemma.ui.corpus import collect_codebase_chunks, list_code_files  # type: ignore
-from embeddinggemma.rag.generation import generate_text
+from embeddinggemma.rag.generation import generate_judge_text, generate_text
 from embeddinggemma.llm.prompts import get_report_instructions
 from embeddinggemma.modeprompts import deep as _pm_deep  # type: ignore
 from embeddinggemma.modeprompts import structure as _pm_structure  # type: ignore
@@ -115,6 +115,20 @@ def _generate_summary(
 ) -> str:
     """Call the sole summary path without accepting provider overrides."""
     return generate_text(
+        prompt=prompt,
+        system=system,
+        save_prompt_path=save_prompt_path,
+    )
+
+
+def _generate_judge(
+    prompt: str,
+    *,
+    system: str | None = None,
+    save_prompt_path: str | None = None,
+) -> str:
+    """Call the fixed OpenFang judge path without accepting provider overrides."""
+    return generate_judge_text(
         prompt=prompt,
         system=system,
         save_prompt_path=save_prompt_path,
@@ -344,7 +358,7 @@ class SnapshotStreamer:
             except Exception:
                 pass
             judge_prompt_path = os.path.join(SETTINGS_DIR, f"reports/judge_prompt_step_{int(self.step_i)}.txt")
-            text = _generate_summary(
+            text = _generate_judge(
                 prompt=prompt,
                 system=self.summary_system,
                 save_prompt_path=judge_prompt_path,

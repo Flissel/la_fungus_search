@@ -40,6 +40,21 @@ def test_generate_text_uses_openfang_summary_role(monkeypatch):
     assert calls == [("client", "fungus_summary"), ("model", "fungus_summary")]
 
 
+def test_generate_judge_text_uses_openfang_judge_role(monkeypatch):
+    completions = SimpleNamespace(
+        create=lambda **kwargs: SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="judgement"))]
+        )
+    )
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    generation, calls = _load_generation(monkeypatch, client, model="openfang-judge-model")
+
+    result = generation.generate_judge_text(prompt="Judge this")
+
+    assert result == "judgement"
+    assert calls == [("client", "fungus_judge"), ("model", "fungus_judge")]
+
+
 def test_legacy_provider_wrapper_cannot_override_openfang_authority(monkeypatch):
     received = {}
 
@@ -75,3 +90,18 @@ def test_generate_text_propagates_openfang_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="openfang unavailable"):
         generation.generate_text(prompt="Explain this")
+
+
+def test_generate_judge_text_propagates_openfang_failure(monkeypatch):
+    def unavailable(_role):
+        raise RuntimeError("openfang judge unavailable")
+
+    shared = ModuleType("vibemind_shared")
+    shared.get_client_sync = unavailable
+    shared.get_model = lambda _role: "unused"
+    monkeypatch.setitem(sys.modules, "vibemind_shared", shared)
+    sys.modules.pop("embeddinggemma.rag.generation", None)
+    generation = importlib.import_module("embeddinggemma.rag.generation")
+
+    with pytest.raises(RuntimeError, match="openfang judge unavailable"):
+        generation.generate_judge_text(prompt="Judge this")
