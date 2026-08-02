@@ -55,6 +55,9 @@ EXCLUDE_DIRS = [
     "Coding_engine",   # old copy under spaces/coding/Coding_engine/
     "_archive",        # coding-engine/_archive/ + similar
     "all_services",    # coding-engine/Data/all_services/ (generated artefacts)
+    # ── 2026-07-14: generated/duplicate trees that dominated top-K ──
+    "graphify-out",         # 30k chunks from one generated graph.json (35% of index!)
+    "temp-merge-parking",   # duplicated Automation_ui tree
 ]
 
 # ---------------------------------------------------------------------------
@@ -159,8 +162,13 @@ _bg_thread = _threading.Thread(target=_background_load, daemon=True, name="fungu
 _bg_thread.start()
 
 
-def _ensure_ready(timeout: float = 30.0) -> bool:
-    """Block until background load finishes (or timeout). Returns True if ready."""
+def _ensure_ready(timeout: float = 300.0) -> bool:
+    """Block until background load finishes (or timeout). Returns True if ready.
+
+    Default 120s (was 30s): the cold start loads model weights + index in ~50s.
+    A 30s wait expired mid-load, so the FIRST search after a reconnect returned a
+    false "Index empty". Search tools genuinely need the retriever, so they wait
+    here; index_stats does NOT (it reports load progress non-blockingly)."""
     return _ready_event.wait(timeout=timeout)
 
 
@@ -1590,7 +1598,14 @@ async def fungus_index_stats() -> str:
     """
     meta = dict(_index_meta)
 
-    _ensure_ready()
+    # NON-BLOCKING: the heavy model+index load (~50s on a cold stdio start) runs
+    # in the _background_load daemon thread. Do NOT block on _ensure_ready here —
+    # that made index_stats hang for up to 30s on the first call after a reconnect
+    # (and the client read it as a hang). Instead report load progress instantly
+    # so the caller sees "still loading" and can retry, rather than a stalled tool.
+    if not _ready_event.is_set():
+        return ("Index still loading (cold start ~50s: model weights + index). "
+                "Retry in a moment. Meta: " + str(meta))
     if not _retriever or not _retriever.documents:
         return f"Index is empty. Meta: {meta}"
 

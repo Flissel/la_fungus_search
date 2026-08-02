@@ -22,9 +22,18 @@ EXCLUDE_DIRS = [
     ".fungus_cache", ".pytest_cache", "models", "dist", "build",
     "downloads", ".pitchdeck_chroma", ".playwright-mcp",
     "uv.lock", ".kilocode", ".vscode",
+    # Keep in sync with mcp_server.py EXCLUDE_DIRS (Opt-Stage-2 2026-05-25):
+    # dead/duplicate trees that otherwise dominate the index and polluted top-K.
+    "Coding_engine",   # old copy under spaces/coding/Coding_engine/
+    "_archive",        # coding-engine/_archive/ + similar
+    "all_services",    # coding-engine/Data/all_services/ (generated artefacts)
+    # 2026-07-14: graphify-out was 35% of the index (30k chunks from one
+    # generated graph.json) and dominated top-K for real code queries.
+    "graphify-out",
+    "temp-merge-parking",  # duplicated Automation_ui tree
 ]
 EMBED_MODEL = os.environ.get("FUNGUS_EMBED_MODEL", "Qwen/Qwen3-Embedding-0.6B")
-MAX_FILES = 15000
+MAX_FILES = 30000  # was 15000 — walker hit the cap before reaching voice/ (only 58 chunks indexed)
 CHUNK_WINDOW = [200]
 BATCH_SIZE = 16
 MAX_CHARS = 1200   # truncate long chunks to bound memory
@@ -140,7 +149,11 @@ except Exception as e:
 
 # 6. Persist embeddings + chunks
 t0 = time.time()
-np.savez(os.path.join(CACHE_DIR, "embeddings.npz"), vectors=vectors)
+# MCPMRetriever.load_persistent_index() reads data["embeddings"] (mcmp_rag.py) —
+# writing only "vectors" produced an index that silently failed to load
+# ("embeddings is not a file in the archive") and every search returned 0 hits.
+# Write both keys so old and new readers work.
+np.savez(os.path.join(CACHE_DIR, "embeddings.npz"), embeddings=vectors, vectors=vectors)
 with open(os.path.join(CACHE_DIR, "chunks.json"), "w", encoding="utf-8") as f:
     json.dump(chunks, f, ensure_ascii=False)
 print(f"[6] cache written | {time.time()-t0:.1f}s", flush=True)

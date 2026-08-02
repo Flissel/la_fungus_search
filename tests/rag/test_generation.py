@@ -8,6 +8,7 @@ def test_generate_with_ollama_success(monkeypatch):
     class DummyResponse:
         def __init__(self):
             self._json = {"response": "ok"}
+            self.status_code = 200
 
         def raise_for_status(self):
             return None
