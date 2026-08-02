@@ -7,6 +7,28 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _install_fastmcp_stub(monkeypatch):
+    mcp_package = ModuleType("mcp")
+    mcp_package.__path__ = []
+    server_package = ModuleType("mcp.server")
+    server_package.__path__ = []
+    fastmcp_module = ModuleType("mcp.server.fastmcp")
+
+    class FastMCP:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def tool(self):
+            return lambda function: function
+
+    fastmcp_module.FastMCP = FastMCP
+    mcp_package.server = server_package
+    server_package.fastmcp = fastmcp_module
+    monkeypatch.setitem(sys.modules, "mcp", mcp_package)
+    monkeypatch.setitem(sys.modules, "mcp.server", server_package)
+    monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
+
+
 def _load_mcp_server(monkeypatch):
     calls = []
     generation = ModuleType("embeddinggemma.rag.generation")
@@ -22,6 +44,7 @@ def _load_mcp_server(monkeypatch):
     generation.generate_text = generate_text
     generation.generate_judge_text = generate_judge_text
     monkeypatch.setitem(sys.modules, "embeddinggemma.rag.generation", generation)
+    _install_fastmcp_stub(monkeypatch)
     sys.modules.pop("mcp_server", None)
     return importlib.import_module("mcp_server"), calls
 
