@@ -1,5 +1,5 @@
 # VibeMind Shared LLM Config
-vibemind-shared>=0.1.0
+vibemind-shared @ git+https://github.com/Flissel/vibemind-shared.git@91ba4708ef60152f6d5e6c85162407dbbeeb4cdb
 
 sentence-transformers>=3.0.0
 torch>=2.0.0
