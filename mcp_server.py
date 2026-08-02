@@ -42,7 +42,7 @@ CODEBASE = os.environ.get(
     "FUNGUS_CODEBASE",
     os.path.normpath(os.path.join(_HERE, "..", "..")),
 )
-# The reranker is independent of OpenFang embeddings and remains optional.
+# The reranker is independent of embedding-service vectors and remains optional.
 RERANKER_DEVICE = os.environ.get("FUNGUS_RERANKER_DEVICE", "cpu")
 EXCLUDE_DIRS = [
     ".git", "__pycache__", "node_modules", ".venv", "target", ".next",
@@ -178,7 +178,8 @@ def _start_background_load() -> None:
 def _ensure_ready(timeout: float = 300.0) -> bool:
     """Start the lazy loader and wait until it finishes (or timeout).
 
-    The cold start loads model weights + index in ~50s.
+    The cold start loads the persisted index; embeddings are requested from the
+    shared embedding-service only when an index or query needs them.
     A 30s wait expired mid-load, so the FIRST search after a reconnect returned a
     false "Index empty". Search tools genuinely need the retriever, so they wait
     here; index_stats does NOT (it reports load progress non-blockingly)."""
@@ -1606,7 +1607,7 @@ async def fungus_index_stats() -> str:
         if _bg_thread is None:
             return ("Index not loaded yet (lazy start). Run a search query to "
                     "start the retriever. Meta: " + str(meta))
-        return ("Index still loading (cold start ~50s: model weights + index). "
+        return ("Index still loading (cold start: persisted index). "
                 "Retry in a moment. Meta: " + str(meta))
     if not _retriever or not _retriever.documents:
         return f"Index is empty. Meta: {meta}"
@@ -1632,7 +1633,7 @@ async def fungus_index_stats() -> str:
         f"- **Total chunks**: {len(_retriever.documents)}",
         f"- **Unique files**: {len(file_counter)}",
         f"- **Embedding dim**: {_retriever._embed_dim}",
-        "- **Embedding role**: fungus_search (OpenFang)",
+        "- **Embedding backend**: VibeMind embedding-service (3072-dim)",
         f"- **Load time**: {meta.get('load_time_s', '?')}s",
         "",
         "### File types:",

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 
-def test_retriever_uses_fixed_shared_embedding_role(monkeypatch):
+def test_retriever_uses_shared_embedding_service_contract(monkeypatch):
     import embeddinggemma.mcmp_rag as mcmp_rag
 
     expected_model = object()
@@ -23,15 +23,15 @@ def test_retriever_uses_fixed_shared_embedding_role(monkeypatch):
     assert calls == [True]
 
 
-def test_retriever_propagates_openfang_embedding_failure(monkeypatch):
+def test_retriever_propagates_embedding_service_failure(monkeypatch):
     import embeddinggemma.mcmp_rag as mcmp_rag
 
     def unavailable():
-        raise RuntimeError("OpenFang unreachable")
+        raise RuntimeError("embedding-service unreachable")
 
     monkeypatch.setattr(mcmp_rag, "load_embedding_backend", unavailable)
 
-    with pytest.raises(RuntimeError, match="OpenFang unreachable"):
+    with pytest.raises(RuntimeError, match="embedding-service unreachable"):
         mcmp_rag.MCPMRetriever()
 
 

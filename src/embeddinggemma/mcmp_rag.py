@@ -204,7 +204,7 @@ class MCPMRetriever:
             vecs = self.embedding_model.encode(batch)
             if len(vecs) != len(batch):
                 raise RuntimeError(
-                    "OpenFang embedding response count does not match the request: "
+                    "embedding-service response count does not match the request: "
                     f"expected {len(batch)}, got {len(vecs)}."
                 )
             for vector in vecs:
@@ -212,7 +212,7 @@ class MCPMRetriever:
                 if embedding.ndim != 1 or embedding.shape[0] != self._expected_embedding_dim:
                     actual_dim = embedding.shape[0] if embedding.ndim == 1 else "non-vector"
                     raise RuntimeError(
-                        "OpenFang embedding response has unexpected dimension: "
+                        "embedding-service response has unexpected dimension: "
                         f"expected dimension {self._expected_embedding_dim}, got {actual_dim}."
                     )
                 embs.append(embedding)
@@ -252,7 +252,7 @@ class MCPMRetriever:
         q = self.embedding_model.encode([query])[0]
         if len(q) != self._expected_embedding_dim:
             raise RuntimeError(
-                "OpenFang embedding response has unexpected dimension: "
+                "embedding-service response has unexpected dimension: "
                 f"expected dimension {self._expected_embedding_dim}, got {len(q)}."
             )
         self._current_query_embedding = np.array(q, dtype=np.float32)
@@ -290,7 +290,7 @@ class MCPMRetriever:
         if q.ndim != 1 or q.shape[0] != self._expected_embedding_dim:
             actual_dim = q.shape[0] if q.ndim == 1 else "non-vector"
             raise RuntimeError(
-                "OpenFang embedding response has unexpected dimension: "
+                "embedding-service response has unexpected dimension: "
                 f"expected dimension {self._expected_embedding_dim}, got {actual_dim}."
             )
         top_k = min(int(top_k), len(self.documents))

@@ -83,7 +83,7 @@ def test_realtime_judge_generation_uses_fixed_judge_path(monkeypatch):
     assert calls[0]["save_prompt_path"].endswith("judge_prompt_step_0.txt")
 
 
-def test_realtime_embedding_loader_uses_fixed_openfang_gateway_role(monkeypatch):
+def test_realtime_embedding_loader_uses_shared_embedding_service_client(monkeypatch):
     expected_model = object()
     calls = []
 
