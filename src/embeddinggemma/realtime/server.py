@@ -17,8 +17,7 @@ import numpy as np
 
 from embeddinggemma.mcmp_rag import MCPMRetriever
 from embeddinggemma.ui.corpus import collect_codebase_chunks, list_code_files  # type: ignore
-from embeddinggemma.llm import generate_text  # type: ignore
-from embeddinggemma.llm.config import load_config  # type: ignore
+from embeddinggemma.rag.generation import generate_judge_text, generate_text
 from embeddinggemma.llm.prompts import get_report_instructions
 from embeddinggemma.modeprompts import deep as _pm_deep  # type: ignore
 from embeddinggemma.modeprompts import structure as _pm_structure  # type: ignore
@@ -108,6 +107,34 @@ def _build_report_prompt(mode: str, query: str, top_k: int, docs: list[dict]) ->
     return prompts_build_report_prompt(mode, query, top_k, docs)
 
 
+def _generate_summary(
+    prompt: str,
+    *,
+    system: str | None = None,
+    save_prompt_path: str | None = None,
+) -> str:
+    """Call the sole summary path without accepting provider overrides."""
+    return generate_text(
+        prompt=prompt,
+        system=system,
+        save_prompt_path=save_prompt_path,
+    )
+
+
+def _generate_judge(
+    prompt: str,
+    *,
+    system: str | None = None,
+    save_prompt_path: str | None = None,
+) -> str:
+    """Call the fixed OpenFang judge path without accepting provider overrides."""
+    return generate_judge_text(
+        prompt=prompt,
+        system=system,
+        save_prompt_path=save_prompt_path,
+    )
+
+
 class SnapshotStreamer:
     def __init__(self) -> None:
         self.retr: MCPMRetriever | None = None
@@ -187,68 +214,8 @@ class SnapshotStreamer:
         # run artifacts
         import time as _t
         self.run_id: str = os.environ.get('RUN_ID', f"run_{int(_t.time())}")
-        # LLM configuration defaults (centralized)
-        try:
-            _cfg = load_config()
-        except Exception:
-            _cfg = None
-        # Apply central config with env fallback
-        if _cfg is not None:
-            self.llm_provider: str = _cfg.provider
-            self.ollama_model: str = _cfg.ollama.model
-            self.ollama_host: str = _cfg.ollama.host
-            self.ollama_system: str | None = _cfg.ollama.system
-            self.ollama_num_gpu: int | None = _cfg.ollama.num_gpu
-            self.ollama_num_thread: int | None = _cfg.ollama.num_thread
-            self.ollama_num_batch: int | None = _cfg.ollama.num_batch
-            self.openai_model: str = _cfg.openai.model
-            self.openai_api_key: str | None = _cfg.openai.api_key
-            self.openai_base_url: str | None = _cfg.openai.base_url
-            self.openai_temperature: float = float(_cfg.openai.temperature)
-            self.google_model: str = _cfg.google.model
-            self.google_api_key: str | None = _cfg.google.api_key
-            self.google_base_url: str | None = _cfg.google.base_url
-            self.google_temperature: float = float(_cfg.google.temperature)
-            self.grok_model: str = _cfg.grok.model
-            self.grok_api_key: str | None = _cfg.grok.api_key
-            self.grok_base_url: str | None = _cfg.grok.base_url
-            self.grok_temperature: float = float(_cfg.grok.temperature)
-            # Ensure API keys fall back to env if missing in config
-            if not self.openai_api_key:
-                self.openai_api_key = os.environ.get('OPENAI_API_KEY')
-            if not self.google_api_key:
-                self.google_api_key = os.environ.get('GOOGLE_API_KEY')
-            if not self.grok_api_key:
-                self.grok_api_key = os.environ.get('GROK_API_KEY')
-        else:
-            # Fallback to envs directly if config fails
-            try:
-                self.ollama_model: str = os.environ.get('OLLAMA_MODEL', 'qwen2.5-coder:7b')
-                self.ollama_host: str = os.environ.get('OLLAMA_HOST', 'http://127.0.0.1:11434')
-                self.ollama_system: str | None = os.environ.get('OLLAMA_SYSTEM')
-                self.ollama_num_gpu: int | None = int(os.environ.get('OLLAMA_NUM_GPU')) if os.environ.get('OLLAMA_NUM_GPU') else None
-                self.ollama_num_thread: int | None = int(os.environ.get('OLLAMA_NUM_THREAD')) if os.environ.get('OLLAMA_NUM_THREAD') else None
-                self.ollama_num_batch: int | None = int(os.environ.get('OLLAMA_NUM_BATCH')) if os.environ.get('OLLAMA_NUM_BATCH') else None
-            except Exception:
-                self.ollama_model = 'qwen2.5-coder:7b'
-                self.ollama_host = 'http://127.0.0.1:11434'
-                self.ollama_system = None
-                self.ollama_num_gpu = None
-                self.ollama_num_thread = None
-                self.ollama_num_batch = None
-            self.llm_provider: str = os.environ.get('LLM_PROVIDER', 'ollama')
-            self.openai_model: str = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
-            self.openai_api_key: str | None = os.environ.get('OPENAI_API_KEY')
-            self.openai_base_url: str | None = os.environ.get('OPENAI_BASE_URL')
-            self.openai_temperature: float = float(os.environ.get('OPENAI_TEMPERATURE', '0.0'))
-            self.google_model: str = os.environ.get('GOOGLE_MODEL', 'gemini-1.5-pro')
-            self.google_api_key: str | None = os.environ.get('GOOGLE_API_KEY')
-            self.google_base_url: str | None = os.environ.get('GOOGLE_BASE_URL')
-            self.google_temperature: float = float(os.environ.get('GOOGLE_TEMPERATURE', '0.0'))
-            self.grok_model: str = os.environ.get('GROK_MODEL', 'grok-2-latest')
-            self.grok_api_key: str | None = os.environ.get('GROK_API_KEY')
-            self.grok_base_url: str | None = os.environ.get('GROK_BASE_URL')
-            self.grok_temperature: float = float(os.environ.get('GROK_TEMPERATURE', '0.0'))
+        # OpenFang owns provider selection and model configuration.
+        self.summary_system: str | None = None
 
     @staticmethod
     def _parse_json_loose(raw: str) -> dict:
@@ -390,43 +357,11 @@ class SnapshotStreamer:
                 _ = asyncio.create_task(self._broadcast({"type": "log", "message": "judge: generating..."}))
             except Exception:
                 pass
-            llm_opts = {}
-            try:
-                if isinstance(self.ollama_num_gpu, int):
-                    llm_opts['num_gpu'] = int(self.ollama_num_gpu)
-                if isinstance(self.ollama_num_thread, int):
-                    llm_opts['num_thread'] = int(self.ollama_num_thread)
-                if isinstance(self.ollama_num_batch, int):
-                    llm_opts['num_batch'] = int(self.ollama_num_batch)
-            except Exception:
-                llm_opts = {}
             judge_prompt_path = os.path.join(SETTINGS_DIR, f"reports/judge_prompt_step_{int(self.step_i)}.txt")
-            judge_usage_path = os.path.join(SETTINGS_DIR, f"runs/{str(getattr(self, 'run_id', 'run'))}/step_{int(self.step_i)}/judge_usage.json")
-            text = generate_text(
-                provider=(self.llm_provider or 'ollama'),
+            text = _generate_judge(
                 prompt=prompt,
-                system=self.ollama_system,
-                # ollama
-                ollama_model=self.ollama_model,
-                ollama_host=self.ollama_host,
-                ollama_options=(llm_opts or None),
-                # openai
-                openai_model=self.openai_model,
-                openai_api_key=(self.openai_api_key or ''),
-                openai_base_url=(self.openai_base_url or 'https://api.openai.com'),
-                openai_temperature=float(getattr(self, 'openai_temperature', 0.0)),
-                # google
-                google_model=self.google_model,
-                google_api_key=(self.google_api_key or ''),
-                google_base_url=(self.google_base_url or 'https://generativelanguage.googleapis.com'),
-                google_temperature=float(getattr(self, 'google_temperature', 0.0)),
-                # grok
-                grok_model=self.grok_model,
-                grok_api_key=(self.grok_api_key or ''),
-                grok_base_url=(self.grok_base_url or 'https://api.x.ai'),
-                grok_temperature=float(getattr(self, 'grok_temperature', 0.0)),
+                system=self.summary_system,
                 save_prompt_path=judge_prompt_path,
-                save_usage_path=judge_usage_path,
             )
             raw = (text or "").strip()
             obj = self._parse_json_loose(raw)
@@ -443,37 +378,8 @@ class SnapshotStreamer:
             except Exception:
                 pass
             return judged
-        except Exception as e:
-            try:
-                _ = asyncio.create_task(self._broadcast({"type": "log", "message": f"judge: LLM fallback due to: {e}"}))
-            except Exception:
-                pass
-            # Fallback: heuristic
-            for it in results:
-                try:
-                    doc_id = int(it.get('id', it.get('doc_id', -1)))
-                    if doc_id in self._judge_cache:
-                        judged[doc_id] = self._judge_cache[doc_id]
-                        continue
-                    content = str(it.get('content', ''))
-                    score = float(it.get('score', 0.0))
-                    relevant = score >= 0.5
-                    entry_point = any(tok in content for tok in ['if __name__ == "__main__"', 'def main', 'class ', 'FastAPI(', 'app = FastAPI'])
-                    judge = {
-                        'doc_id': doc_id,
-                        'is_relevant': bool(relevant),
-                        'why': 'heuristic based on cosine score',
-                        'entry_point': bool(entry_point),
-                        'missing_context': [],
-                        'follow_up_queries': [],
-                        'keywords': [],
-                        'inspect': [],
-                    }
-                    self._judge_cache[doc_id] = judge
-                    judged[doc_id] = judge
-                except Exception:
-                    continue
-            return judged
+        except Exception:
+            raise
 
     def _enrich_results_with_ids(self, items: list[dict]) -> list[dict]:
         if self.retr is None or not isinstance(items, list):
@@ -607,25 +513,8 @@ class SnapshotStreamer:
     async def start(self) -> None:
         if self.running:
             return
-        # Build retriever and corpus
-        # Ensure LLM API keys are present from env if not set
-        try:
-            if not getattr(self, 'openai_api_key', None):
-                self.openai_api_key = os.environ.get('OPENAI_API_KEY')
-            if not getattr(self, 'google_api_key', None):
-                self.google_api_key = os.environ.get('GOOGLE_API_KEY')
-            if not getattr(self, 'grok_api_key', None):
-                self.grok_api_key = os.environ.get('GROK_API_KEY')
-        except Exception:
-            pass
+        # Build retriever and corpus.
         embedding_model_name = os.environ.get('EMBEDDING_MODEL', 'google/embeddinggemma-300m')
-        # Prefer OpenAI embeddings by default if API key present
-        try:
-            if not embedding_model_name or embedding_model_name.strip() == 'google/embeddinggemma-300m':
-                if os.environ.get('OPENAI_API_KEY'):
-                    embedding_model_name = 'openai:text-embedding-3-large'
-        except Exception:
-            pass
         device_mode = os.environ.get('DEVICE_MODE', 'auto')
         retr = MCPMRetriever(
             embedding_model_name=embedding_model_name,
@@ -829,43 +718,14 @@ class SnapshotStreamer:
                                     pass
                                 try:
                                     await self._broadcast({"type": "log", "message": "report: generating..."})
-                                    llm_opts = {}
-                                    try:
-                                        if isinstance(self.ollama_num_gpu, int):
-                                            llm_opts['num_gpu'] = int(self.ollama_num_gpu)
-                                        if isinstance(self.ollama_num_thread, int):
-                                            llm_opts['num_thread'] = int(self.ollama_num_thread)
-                                        if isinstance(self.ollama_num_batch, int):
-                                            llm_opts['num_batch'] = int(self.ollama_num_batch)
-                                    except Exception:
-                                        llm_opts = {}
                                     prompt_path = os.path.join(SETTINGS_DIR, f"reports/prompt_step_{int(self.step_i)}.txt")
-                                    usage_path = os.path.join(SETTINGS_DIR, f"runs/{str(getattr(self, 'run_id', 'run'))}/step_{int(self.step_i)}/usage.json")
-                                    text = generate_text(
-                                        provider=(self.llm_provider or 'ollama'),
+                                    text = _generate_summary(
                                         prompt=prompt,
-                                        system=self.ollama_system,
-                                        ollama_model=self.ollama_model,
-                                        ollama_host=self.ollama_host,
-                                        ollama_options=(llm_opts or None),
-                                        openai_model=self.openai_model,
-                                        openai_api_key=(self.openai_api_key or ''),
-                                        openai_base_url=(self.openai_base_url or 'https://api.openai.com'),
-                                        openai_temperature=float(getattr(self, 'openai_temperature', 0.0)),
-                                        google_model=self.google_model,
-                                        google_api_key=(self.google_api_key or ''),
-                                        google_base_url=(self.google_base_url or 'https://generativelanguage.googleapis.com'),
-                                        google_temperature=float(getattr(self, 'google_temperature', 0.0)),
-                                        grok_model=self.grok_model,
-                                        grok_api_key=(self.grok_api_key or ''),
-                                        grok_base_url=(self.grok_base_url or 'https://api.x.ai'),
-                                        grok_temperature=float(getattr(self, 'grok_temperature', 0.0)),
+                                        system=self.summary_system,
                                         save_prompt_path=prompt_path,
-                                        save_usage_path=usage_path,
                                     )
-                                except Exception as e:
-                                    await self._broadcast({"type": "log", "message": f"report: LLM error: {e}"})
-                                    text = "{}"
+                                except Exception:
+                                    raise
                                 # Parse JSON best-effort
                                 try:
                                     report_obj = self._parse_json_loose(text or "")
@@ -1122,23 +982,8 @@ def settings_dict() -> dict:
         "vector_backend": getattr(streamer, 'vector_backend', 'memory'),
         "qdrant_url": getattr(streamer, 'qdrant_url', ''),
         "qdrant_collection": getattr(streamer, 'qdrant_collection', ''),
-        # LLM settings
-        "ollama_model": streamer.ollama_model,
-        "ollama_host": streamer.ollama_host,
-        "ollama_system": streamer.ollama_system,
-        "ollama_num_gpu": streamer.ollama_num_gpu,
-        "ollama_num_thread": streamer.ollama_num_thread,
-        "ollama_num_batch": streamer.ollama_num_batch,
-        "llm_provider": streamer.llm_provider,
-        "openai_model": streamer.openai_model,
-        "openai_base_url": streamer.openai_base_url,
-        "openai_temperature": streamer.openai_temperature,
-        "google_model": streamer.google_model,
-        "google_base_url": streamer.google_base_url,
-        "google_temperature": streamer.google_temperature,
-        "grok_model": streamer.grok_model,
-        "grok_base_url": streamer.grok_base_url,
-        "grok_temperature": streamer.grok_temperature,
+        "summary_role": "fungus_summary",
+        "summary_system": streamer.summary_system,
         "mq_enabled": bool(getattr(streamer, 'mq_enabled', False)),
         "mq_count": min(int(getattr(streamer, 'mq_count', 5)), 3),
         "query_pool_cap": int(getattr(streamer, '_query_pool_cap', 100)),
@@ -1182,14 +1027,9 @@ def apply_settings(d: dict) -> None:
         if sm.pheromone_decay is not None: streamer.pheromone_decay = float(sm.pheromone_decay)
         if sm.embed_batch_size is not None: streamer.embed_batch_size = int(sm.embed_batch_size)
         if sm.max_chunks_per_shard is not None: streamer.max_chunks_per_shard = int(sm.max_chunks_per_shard)
-        # judge/report mode and LLM config
+        # judge/report mode and summary prompt configuration
         if getattr(sm, 'judge_mode', None) is not None: streamer.judge_mode = str(getattr(sm, 'judge_mode'))
-        if getattr(sm, 'ollama_model', None) is not None: streamer.ollama_model = str(getattr(sm, 'ollama_model'))
-        if getattr(sm, 'ollama_host', None) is not None: streamer.ollama_host = str(getattr(sm, 'ollama_host'))
-        if getattr(sm, 'ollama_system', None) is not None: streamer.ollama_system = str(getattr(sm, 'ollama_system'))
-        if getattr(sm, 'ollama_num_gpu', None) is not None: streamer.ollama_num_gpu = int(getattr(sm, 'ollama_num_gpu'))
-        if getattr(sm, 'ollama_num_thread', None) is not None: streamer.ollama_num_thread = int(getattr(sm, 'ollama_num_thread'))
-        if getattr(sm, 'ollama_num_batch', None) is not None: streamer.ollama_num_batch = int(getattr(sm, 'ollama_num_batch'))
+        if getattr(sm, 'summary_system', None) is not None: streamer.summary_system = str(getattr(sm, 'summary_system'))
         if getattr(sm, 'mq_enabled', None) is not None: streamer.mq_enabled = bool(getattr(sm, 'mq_enabled'))
         if getattr(sm, 'mq_count', None) is not None: streamer.mq_count = int(getattr(sm, 'mq_count'))
         # vector backend
@@ -1198,16 +1038,6 @@ def apply_settings(d: dict) -> None:
         if getattr(sm, 'qdrant_collection', None) is not None: streamer.qdrant_collection = str(getattr(sm, 'qdrant_collection'))
         # run id
         if getattr(sm, 'run_id', None) is not None: streamer.run_id = str(getattr(sm, 'run_id'))
-        if getattr(sm, 'llm_provider', None) is not None: streamer.llm_provider = str(getattr(sm, 'llm_provider'))
-        if getattr(sm, 'openai_model', None) is not None: streamer.openai_model = str(getattr(sm, 'openai_model'))
-        if getattr(sm, 'openai_base_url', None) is not None: streamer.openai_base_url = str(getattr(sm, 'openai_base_url'))
-        if getattr(sm, 'openai_temperature', None) is not None: streamer.openai_temperature = float(getattr(sm, 'openai_temperature'))
-        if getattr(sm, 'google_model', None) is not None: streamer.google_model = str(getattr(sm, 'google_model'))
-        if getattr(sm, 'google_base_url', None) is not None: streamer.google_base_url = str(getattr(sm, 'google_base_url'))
-        if getattr(sm, 'google_temperature', None) is not None: streamer.google_temperature = float(getattr(sm, 'google_temperature'))
-        if getattr(sm, 'grok_model', None) is not None: streamer.grok_model = str(getattr(sm, 'grok_model'))
-        if getattr(sm, 'grok_base_url', None) is not None: streamer.grok_base_url = str(getattr(sm, 'grok_base_url'))
-        if getattr(sm, 'grok_temperature', None) is not None: streamer.grok_temperature = float(getattr(sm, 'grok_temperature'))
     except Exception:
         pass
 
@@ -1318,16 +1148,7 @@ def settings_usage_lines(d: dict) -> list[str]:
         "report_every": ["realtime/server.py (_run_loop report cadence)"],
         "report_mode": ["realtime/server.py (prompt template)"] ,
         "judge_mode": ["realtime/server.py (judge prompt)"] ,
-        "ollama_model": ["realtime/server.py (LLM model)"] ,
-        "ollama_host": ["realtime/server.py (LLM host)"] ,
-        "ollama_system": ["realtime/server.py (LLM system prompt)"] ,
-        "ollama_num_gpu": ["realtime/server.py (LLM GPU opts)"] ,
-        "ollama_num_thread": ["realtime/server.py (LLM CPU threads)"] ,
-        "ollama_num_batch": ["realtime/server.py (LLM batch)"] ,
-        "llm_provider": ["realtime/server.py (choose provider)"] ,
-        "openai_model": ["realtime/server.py (OpenAI model)"] ,
-        "openai_base_url": ["realtime/server.py (OpenAI endpoint)"] ,
-        "openai_temperature": ["realtime/server.py (OpenAI temperature)"] ,
+        "summary_system": ["realtime/server.py (OpenFang summary prompt)"],
         "mode": ["frontend/UX (prompt style)", "streamlit_fungus_backup.py (mode prompt)"] ,
     }
     lines: list[str] = []
@@ -1381,29 +1202,8 @@ class SettingsModel(BaseModel):
     qdrant_collection: str | None = None
     # run
     run_id: str | None = None
-    # LLM (Ollama) configuration
-    ollama_model: str | None = None
-    ollama_host: str | None = None
-    ollama_system: str | None = None
-    ollama_num_gpu: int | None = Field(default=None, ge=0, le=128)
-    ollama_num_thread: int | None = Field(default=None, ge=0, le=4096)
-    ollama_num_batch: int | None = Field(default=None, ge=0, le=4096)
-    # OpenAI
-    llm_provider: str | None = None  # 'ollama' | 'openai'
-    openai_model: str | None = None
-    openai_api_key: str | None = None
-    openai_base_url: str | None = None
-    openai_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    # Google
-    google_model: str | None = None
-    google_api_key: str | None = None
-    google_base_url: str | None = None
-    google_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    # Grok
-    grok_model: str | None = None
-    grok_api_key: str | None = None
-    grok_base_url: str | None = None
-    grok_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    # This is prompt content only; OpenFang owns all provider settings.
+    summary_system: str | None = None
     # Multi-query
     mq_enabled: bool | None = None
     mq_count: int | None = Field(default=None, ge=1, le=10)
@@ -1519,20 +1319,8 @@ async def http_start(req: Request) -> JSONResponse:
     for k in ["alpha","beta","gamma","delta","epsilon","min_content_chars","import_only_penalty","max_reports","max_report_tokens","judge_enabled"]:
         if getattr(body, k, None) is not None:
             setattr(streamer, k, getattr(body, k))
-    # LLM configuration overrides
-    for k in ["ollama_model","ollama_host","ollama_system","ollama_num_gpu","ollama_num_thread","ollama_num_batch"]:
-        if getattr(body, k, None) is not None:
-            setattr(streamer, k, getattr(body, k))
-    for k in ["llm_provider","openai_model","openai_api_key","openai_base_url","openai_temperature"]:
-        if getattr(body, k, None) is not None:
-            setattr(streamer, k, getattr(body, k))
-    for k in ["google_model","google_api_key","google_base_url","google_temperature","grok_model","grok_api_key","grok_base_url","grok_temperature"]:
-        if getattr(body, k, None) is not None:
-            setattr(streamer, k, getattr(body, k))
-    # OpenAI overrides
-    for k in ["llm_provider","openai_model","openai_api_key","openai_base_url","openai_temperature"]:
-        if getattr(body, k, None) is not None:
-            setattr(streamer, k, getattr(body, k))
+    if getattr(body, 'summary_system', None) is not None:
+        streamer.summary_system = str(getattr(body, 'summary_system'))
     await streamer.start()
     save_settings_to_disk()
     return JSONResponse({"status": "ok"})
@@ -1606,10 +1394,8 @@ async def http_config(req: Request) -> JSONResponse:
     for k in ["alpha","beta","gamma","delta","epsilon","min_content_chars","import_only_penalty","max_reports","max_report_tokens","judge_enabled"]:
         if getattr(body, k, None) is not None:
             setattr(streamer, k, getattr(body, k))
-    # LLM configuration overrides
-    for k in ["ollama_model","ollama_host","ollama_system","ollama_num_gpu","ollama_num_thread","ollama_num_batch"]:
-        if getattr(body, k, None) is not None:
-            setattr(streamer, k, getattr(body, k))
+    if getattr(body, 'summary_system', None) is not None:
+        streamer.summary_system = str(getattr(body, 'summary_system'))
     save_settings_to_disk()
     return JSONResponse({"status": "ok"})
 
@@ -1648,26 +1434,12 @@ async def http_stop() -> JSONResponse:
                         total['by_model'][model]['total_tokens'] += tt
                 except Exception:
                     continue
-        # Rough cost estimation (USD per 1K tokens); configurable via env
-        PRICES = {
-            'openai:gpt-4o': {"prompt": float(os.environ.get('PRICE_OPENAI_GPT4O_PROMPT', '0.005')), "completion": float(os.environ.get('PRICE_OPENAI_GPT4O_COMPLETION', '0.015'))},
-            'openai:gpt-4o-mini': {"prompt": float(os.environ.get('PRICE_OPENAI_GPT4OM_PROMPT', '0.0005')), "completion": float(os.environ.get('PRICE_OPENAI_GPT4OM_COMPLETION', '0.0015'))},
-        }
-        costs = {"by_model": {}, "total_usd": 0.0}
-        for model, v in total['by_model'].items():
-            key = 'openai:' + model if not model.startswith('openai:') else model
-            price = PRICES.get(key)
-            if price:
-                usd = (v['prompt_tokens'] / 1000.0) * price['prompt'] + (v['completion_tokens'] / 1000.0) * price['completion']
-                costs['by_model'][model] = round(usd, 6)
-                costs['total_usd'] += usd
-        costs['total_usd'] = round(costs['total_usd'], 6)
-        out = {"usage": total, "costs": costs}
+        out = {"usage": total, "cost_authority": "openfang"}
         os.makedirs(base_dir, exist_ok=True)
         with open(os.path.join(base_dir, "run_costs.json"), 'w', encoding='utf-8') as f:
             json.dump(out, f, ensure_ascii=False, indent=2)
         try:
-            await streamer._broadcast({"type": "log", "message": f"run_costs: total_tokens={total['totals']['total_tokens']} total_usd={costs['total_usd']}"})
+            await streamer._broadcast({"type": "log", "message": f"run_usage: total_tokens={total['totals']['total_tokens']} cost_authority=openfang"})
         except Exception:
             pass
     except Exception:
@@ -1909,16 +1681,6 @@ async def http_answer(req: Request) -> JSONResponse:
     res = retr.search(query, top_k=top_k)
     ctx = "\n\n".join([(it.get('content') or '')[:800] for it in res.get('results', [])])
     prompt = f"Kontext:\n{ctx}\n\nAufgabe:\n{query}\n\nAntwort:"
-    llm_opts = {}
-    try:
-        if os.environ.get('OLLAMA_NUM_GPU'):
-            llm_opts['num_gpu'] = int(os.environ.get('OLLAMA_NUM_GPU'))
-        if os.environ.get('OLLAMA_NUM_THREAD'):
-            llm_opts['num_thread'] = int(os.environ.get('OLLAMA_NUM_THREAD'))
-        if os.environ.get('OLLAMA_NUM_BATCH'):
-            llm_opts['num_batch'] = int(os.environ.get('OLLAMA_NUM_BATCH'))
-    except Exception:
-        llm_opts = {}
     answer_prompt_path = os.path.join(SETTINGS_DIR, "reports/answer_prompt.txt")
     try:
         # also write under run folder
@@ -1927,25 +1689,9 @@ async def http_answer(req: Request) -> JSONResponse:
         answer_prompt_path = os.path.join(run_dir, "answer_prompt.txt")
     except Exception:
         pass
-    text = generate_text(
-        provider=(streamer.llm_provider or 'ollama'),
+    text = _generate_summary(
         prompt=prompt,
-        system=streamer.ollama_system,
-        ollama_model=streamer.ollama_model,
-        ollama_host=streamer.ollama_host,
-        ollama_options=(llm_opts or None),
-        openai_model=streamer.openai_model,
-        openai_api_key=(streamer.openai_api_key or ''),
-        openai_base_url=(streamer.openai_base_url or 'https://api.openai.com'),
-        openai_temperature=float(getattr(streamer, 'openai_temperature', 0.0)),
-        google_model=streamer.google_model,
-        google_api_key=(streamer.google_api_key or ''),
-        google_base_url=(streamer.google_base_url or 'https://generativelanguage.googleapis.com'),
-        google_temperature=float(getattr(streamer, 'google_temperature', 0.0)),
-        grok_model=streamer.grok_model,
-        grok_api_key=(streamer.grok_api_key or ''),
-        grok_base_url=(streamer.grok_base_url or 'https://api.x.ai'),
-        grok_temperature=float(getattr(streamer, 'grok_temperature', 0.0)),
+        system=streamer.summary_system,
         save_prompt_path=answer_prompt_path,
     )
     return JSONResponse({"status": "ok", "answer": text, "results": res.get('results', [])})
@@ -2023,19 +1769,13 @@ async def http_corpus_summary() -> JSONResponse:
 def _load_embed_client():
     from embeddinggemma.mcmp.embeddings import load_sentence_model  # lazy import
     model_name = os.environ.get('EMBEDDING_MODEL', 'google/embeddinggemma-300m')
-    try:
-        if not model_name or model_name.strip() == 'google/embeddinggemma-300m':
-            if os.environ.get('OPENAI_API_KEY'):
-                model_name = 'openai:text-embedding-3-large'
-    except Exception:
-        pass
     device_mode = os.environ.get('DEVICE_MODE', 'auto')
     return load_sentence_model(model_name, device_mode)
 
 
 def _encode_texts(embedder, texts: list[str]) -> list[list[float]]:
     try:
-        # OpenAI adapter returns list[list[float]] directly
+        # External embedding adapter returns list[list[float]] directly
         vecs = embedder.encode(texts)
         if isinstance(vecs, list):
             return [list(map(float, v)) for v in vecs]
