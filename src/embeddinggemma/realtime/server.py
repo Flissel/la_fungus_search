@@ -514,16 +514,12 @@ class SnapshotStreamer:
         if self.running:
             return
         # Build retriever and corpus.
-        embedding_model_name = os.environ.get('EMBEDDING_MODEL', 'google/embeddinggemma-300m')
-        device_mode = os.environ.get('DEVICE_MODE', 'auto')
         retr = MCPMRetriever(
-            embedding_model_name=embedding_model_name,
             num_agents=self.num_agents,
             max_iterations=self.max_iterations,
             exploration_bonus=self.exploration_bonus,
             pheromone_decay=self.pheromone_decay,
             embed_batch_size=self.embed_batch_size,
-            device_mode=device_mode,
         )
         if not self.windows:
             # Fallback default windows if none provided
@@ -1767,10 +1763,8 @@ async def http_corpus_summary() -> JSONResponse:
 
 
 def _load_embed_client():
-    from embeddinggemma.mcmp.embeddings import load_sentence_model  # lazy import
-    model_name = os.environ.get('EMBEDDING_MODEL', 'google/embeddinggemma-300m')
-    device_mode = os.environ.get('DEVICE_MODE', 'auto')
-    return load_sentence_model(model_name, device_mode)
+    from embeddinggemma.mcmp.embeddings import load_embedding_model  # lazy import
+    return load_embedding_model()
 
 
 def _encode_texts(embedder, texts: list[str]) -> list[list[float]]:
@@ -1779,7 +1773,6 @@ def _encode_texts(embedder, texts: list[str]) -> list[list[float]]:
         vecs = embedder.encode(texts)
         if isinstance(vecs, list):
             return [list(map(float, v)) for v in vecs]
-        # SentenceTransformers -> numpy array
         import numpy as _np
         if hasattr(vecs, 'tolist'):
             return [list(map(float, v)) for v in _np.asarray(vecs).tolist()]
@@ -1903,13 +1896,11 @@ async def http_corpus_reindex(req: Request) -> JSONResponse:
         # rebuild docs and retriever
         docs = collect_codebase_chunks(rf, streamer.windows, int(streamer.max_files), streamer.exclude_dirs, streamer.chunk_workers)
         retr = MCPMRetriever(
-            embedding_model_name=os.environ.get('EMBEDDING_MODEL', 'google/embeddinggemma-300m'),
             num_agents=streamer.num_agents,
             max_iterations=streamer.max_iterations,
             exploration_bonus=streamer.exploration_bonus,
             pheromone_decay=streamer.pheromone_decay,
             embed_batch_size=streamer.embed_batch_size,
-            device_mode=os.environ.get('DEVICE_MODE', 'auto'),
         )
         retr.add_documents(docs)
         retr.initialize_simulation(streamer.query)

@@ -53,27 +53,3 @@ def ensure_fake_sklearn(monkeypatch):
     sys.modules["sklearn.metrics.pairwise"] = pairwise_mod
 
 
-@pytest.fixture(autouse=True)
-def stub_sentence_transformers_if_missing(monkeypatch):
-    """Provide a tiny stub for sentence_transformers.SentenceTransformer if not installed.
-
-    Our embedding loader only needs to be able to construct an instance with name/device.
-    Tests patch the class anyway, but this keeps import-time robustness.
-    """
-    try:
-        import sentence_transformers  # type: ignore # noqa: F401
-        return
-    except Exception:
-        pass
-
-    st_mod = types.ModuleType("sentence_transformers")
-
-    class SentenceTransformer:
-        def __init__(self, model_name, device=None):
-            self.model_name = model_name
-            self.device = device
-
-    st_mod.SentenceTransformer = SentenceTransformer
-    sys.modules["sentence_transformers"] = st_mod
-
-

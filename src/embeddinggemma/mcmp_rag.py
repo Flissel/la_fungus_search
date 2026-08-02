@@ -14,7 +14,9 @@ import os
 import warnings
 import numpy as np
 
-from embeddinggemma.mcmp.embeddings import load_sentence_model
+from vibemind_shared import get_embedding_dim
+
+from embeddinggemma.mcmp.embeddings import EMBEDDING_ROLE, load_embedding_model
 from embeddinggemma.mcmp.simulation import (
     spawn_agents as _spawn_agents,
     update_agent_position as _update_agent_position,
@@ -64,13 +66,10 @@ class Agent:
 
 class MCPMRetriever:
     def __init__(self,
-                 embedding_model_name: str = "google/embeddinggemma-300m",
                  num_agents: int = 200,
                  max_iterations: int = 50,
                  pheromone_decay: float = 0.95,
                  exploration_bonus: float = 0.1,
-                 device_mode: str = "auto",
-                 use_embedding_model: bool = True,
                  embed_batch_size: int = 128,
                  build_faiss_after_add: bool = True):
         warnings.warn(
@@ -78,23 +77,14 @@ class MCPMRetriever:
             DeprecationWarning,
             stacklevel=2,
         )
-        self.embedding_model_name = embedding_model_name
         self.num_agents = int(num_agents)
         self.max_iterations = int(max_iterations)
         self.pheromone_decay = float(pheromone_decay)
         self.exploration_bonus = float(exploration_bonus)
-        self.device_mode = device_mode
-        self.use_embedding_model = bool(use_embedding_model)
         self.embed_batch_size = int(embed_batch_size)
         self.build_faiss_after_add = bool(build_faiss_after_add)
-
-        self.embedding_model = None
-        if self.use_embedding_model:
-            try:
-                self.embedding_model = load_sentence_model(self.embedding_model_name, self.device_mode)
-            except Exception as e:
-                _logger.error("SentenceTransformer load failed: %s", e)
-                self.embedding_model = None
+        self._expected_embedding_dim = int(get_embedding_dim(EMBEDDING_ROLE))
+        self.embedding_model = load_embedding_model()
 
         self.documents: List[Document] = []
         self.agents: List[Agent] = []
@@ -168,15 +158,27 @@ class MCPMRetriever:
             # Load embeddings
             data = np.load(emb_path)
             embs = data["embeddings"]
+            if embs.ndim != 2:
+                raise RuntimeError(
+                    "Embedding cache rebuild required: cached embeddings must be a "
+                    "two-dimensional matrix."
+                )
             if len(texts) != embs.shape[0]:
                 _logger.warning("Cache mismatch: %d texts vs %d embeddings", len(texts), embs.shape[0])
                 return False
+            cached_dim = int(embs.shape[1])
+            if cached_dim != self._expected_embedding_dim:
+                raise RuntimeError(
+                    "Embedding cache rebuild required: cached dimension "
+                    f"{cached_dim} does not match configured dimension "
+                    f"{self._expected_embedding_dim}."
+                )
             # Reconstruct documents
             self.documents = [
                 Document(id=i, content=text, embedding=embs[i], metadata={})
                 for i, text in enumerate(texts)
             ]
-            self._embed_dim = int(embs.shape[1])
+            self._embed_dim = cached_dim
             # Load FAISS index
             self._faiss_index = _load_faiss(faiss_path, gpu=True)
             if self._faiss_index is None:
@@ -185,6 +187,11 @@ class MCPMRetriever:
 
             _logger.info("Persistent index loaded: %d docs, %d dim", len(self.documents), self._embed_dim)
             return True
+        except RuntimeError as e:
+            if str(e).startswith("Embedding cache rebuild required:"):
+                raise
+            _logger.warning("Failed to load persistent index: %s", e)
+            return False
         except Exception as e:
             _logger.warning("Failed to load persistent index: %s", e)
             return False
@@ -193,16 +200,25 @@ class MCPMRetriever:
     def add_documents(self, docs: List[str], cache: bool = True) -> None:
         start_id = len(self.documents)
         contents = list(docs or [])
-        if self.embedding_model is not None:
-            embs: List[np.ndarray] = []
-            bs = max(1, self.embed_batch_size)
-            for i in range(0, len(contents), bs):
-                batch = contents[i:i+bs]
-                vecs = self.embedding_model.encode(batch)
-                embs.extend([np.array(v, dtype=np.float32) for v in vecs])
-        else:
-            rng = np.random.default_rng(42)
-            embs = [rng.normal(0, 1, size=(64,)).astype(np.float32) for _ in contents]
+        embs: List[np.ndarray] = []
+        bs = max(1, self.embed_batch_size)
+        for i in range(0, len(contents), bs):
+            batch = contents[i:i+bs]
+            vecs = self.embedding_model.encode(batch)
+            if len(vecs) != len(batch):
+                raise RuntimeError(
+                    "OpenFang embedding response count does not match the request: "
+                    f"expected {len(batch)}, got {len(vecs)}."
+                )
+            for vector in vecs:
+                embedding = np.array(vector, dtype=np.float32)
+                if embedding.ndim != 1 or embedding.shape[0] != self._expected_embedding_dim:
+                    actual_dim = embedding.shape[0] if embedding.ndim == 1 else "non-vector"
+                    raise RuntimeError(
+                        "OpenFang embedding response has unexpected dimension: "
+                        f"expected dimension {self._expected_embedding_dim}, got {actual_dim}."
+                    )
+                embs.append(embedding)
         for i, (text, emb) in enumerate(zip(contents, embs)):
             self.documents.append(Document(id=start_id + i, content=text, embedding=emb, metadata={}))
         self._embed_dim = int(self.documents[0].embedding.shape[0]) if self.documents else None
@@ -236,12 +252,12 @@ class MCPMRetriever:
     def initialize_simulation(self, query: str) -> bool:
         if not self.documents:
             return False
-        if self.embedding_model is None:
-            dim = self.documents[0].embedding.shape  # type: ignore
-            q = np.random.normal(0, 1, dim)
-            q = q / (np.linalg.norm(q) or 1.0)
-        else:
-            q = self.embedding_model.encode([query])[0]
+        q = self.embedding_model.encode([query])[0]
+        if len(q) != self._expected_embedding_dim:
+            raise RuntimeError(
+                "OpenFang embedding response has unexpected dimension: "
+                f"expected dimension {self._expected_embedding_dim}, got {len(q)}."
+            )
         self._current_query_embedding = np.array(q, dtype=np.float32)
         self.spawn_agents(self._current_query_embedding)
         self.pheromone_trails = {}
@@ -266,30 +282,20 @@ class MCPMRetriever:
     def search(self, query: str, top_k: int = 10) -> Dict[str, Any]:
         if not self.documents:
             return {"results": []}
-        # Fast path: if embedding model available, use direct cosine search
-        # (bypasses slow MCMP simulation for large indices)
-        if self.embedding_model is not None:
-            return self.search_direct(query, top_k)
-        # Fallback: MCMP simulation (requires embedding model for query encoding)
-        if self._current_query_embedding is None:
-            self.initialize_simulation(query)
-            self.step(min(5, self.max_iterations))
-        ranked = sorted(self.documents, key=lambda d: d.relevance_score, reverse=True)[:int(top_k)]
-        return {"results": [
-            {"content": d.content, "metadata": d.metadata, "relevance_score": float(d.relevance_score)}
-            for d in ranked
-        ]}
+        return self.search_direct(query, top_k)
 
     def search_direct(self, query: str, top_k: int = 10) -> Dict[str, Any]:
         """Fast direct cosine search — no MCMP simulation needed.
         Uses FAISS if available, otherwise brute-force numpy."""
         if not self.documents:
             return {"results": []}
-        if self.embedding_model is None:
-            _logger.warning("search_direct: no embedding model, cannot encode query")
-            return {"results": []}
-
         q = np.array(self.embedding_model.encode([query])[0], dtype=np.float32)
+        if q.ndim != 1 or q.shape[0] != self._expected_embedding_dim:
+            actual_dim = q.shape[0] if q.ndim == 1 else "non-vector"
+            raise RuntimeError(
+                "OpenFang embedding response has unexpected dimension: "
+                f"expected dimension {self._expected_embedding_dim}, got {actual_dim}."
+            )
         top_k = min(int(top_k), len(self.documents))
 
         # Try FAISS first
