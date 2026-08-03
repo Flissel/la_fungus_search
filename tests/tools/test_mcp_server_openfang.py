@@ -1,6 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import importlib
+import os
 import subprocess
 import sys
 import threading
@@ -39,9 +40,47 @@ def _forbid_popen(*_args, **_kwargs):
     raise AssertionError("subprocess.Popen requires an explicit hermetic test stub")
 
 
-def _load_mcp_server(monkeypatch, *, popen_stub=None):
+def _semantic_retriever(content):
+    document = type("Document", (), {"id": 0, "content": content})()
+
+    class FakeRetriever:
+        documents = [document]
+
+        def search_direct(self, _query, *, top_k):
+            return {
+                "results": [
+                    {"content": document.content, "relevance_score": 0.5}
+                ]
+            }
+
+    return FakeRetriever()
+
+
+def _load_mcp_server(
+    monkeypatch, *, popen_stub=None, bm25_load=None, bm25_cache_exists=None
+):
     monkeypatch.setattr(subprocess, "Popen", popen_stub or _forbid_popen)
     calls = []
+    if bm25_cache_exists is not None:
+        original_exists = os.path.exists
+        monkeypatch.setattr(
+            os.path,
+            "exists",
+            lambda path: bm25_cache_exists
+            if str(path).endswith("bm25.npz")
+            else original_exists(path),
+        )
+    bm25_module = ModuleType("embeddinggemma.bm25_lite")
+
+    class BM25Lite:
+        @staticmethod
+        def load(path):
+            if bm25_load is None:
+                raise AssertionError("BM25Lite.load requires an explicit hermetic test stub")
+            return bm25_load(path)
+
+    bm25_module.BM25Lite = BM25Lite
+    monkeypatch.setitem(sys.modules, "embeddinggemma.bm25_lite", bm25_module)
     generation = ModuleType("embeddinggemma.rag.generation")
 
     def generate_text(**kwargs):
@@ -142,6 +181,87 @@ def test_index_stats_reports_lazy_state_without_starting_loader(monkeypatch):
 
     assert "not loaded yet" in result.lower()
     assert NoStartThread.starts == 0
+
+
+def test_bm25_load_waits_for_a_hybrid_search_not_import_or_index_stats(monkeypatch):
+    loads = []
+    server, _calls = _load_mcp_server(
+        monkeypatch,
+        bm25_load=lambda path: loads.append(path),
+        bm25_cache_exists=True,
+    )
+
+    assert loads == []
+    assert "not loaded yet" in asyncio.run(server.fungus_index_stats()).lower()
+    assert loads == []
+
+
+def test_parallel_hybrid_searches_hydrate_bm25_once(monkeypatch):
+    load_started = threading.Event()
+    release_load = threading.Event()
+    loads = []
+
+    class FakeBM25:
+        doc_freq = {}
+        N = 1
+
+        def score(self, _query, *, candidate_ids):
+            return server._np.asarray(
+                [float(candidate_id) for candidate_id in candidate_ids]
+            )
+
+    def fake_load(path):
+        loads.append(path)
+        load_started.set()
+        assert release_load.wait(timeout=2)
+        return FakeBM25()
+
+    server, _calls = _load_mcp_server(monkeypatch, bm25_load=fake_load)
+    monkeypatch.setattr(server.os.path, "exists", lambda path: path == server._bm25_path)
+    monkeypatch.setattr(server, "_ensure_ready", lambda: True)
+    server._retriever = _semantic_retriever(
+        "# file: example.py | lines: 1-1\ndef search(): pass"
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(server._sync_search, "hybrid", 1, 0.65)
+        assert load_started.wait(timeout=2)
+        second = executor.submit(server._sync_search, "hybrid", 1, 0.65)
+        release_load.set()
+        first_results = first.result(timeout=2)["results"]
+        second_results = second.result(timeout=2)["results"]
+
+    assert loads == [server._bm25_path]
+    assert "_bm25_score" in first_results[0]
+    assert "_bm25_score" in second_results[0]
+
+
+@pytest.mark.parametrize(
+    ("cache_exists", "load_error", "expected_loads"),
+    [(False, False, 0), (True, True, 1)],
+    ids=["missing-cache", "load-error"],
+)
+def test_bm25_hydration_failure_is_bounded_and_falls_back_to_semantic(
+    monkeypatch, cache_exists, load_error, expected_loads
+):
+    loads = []
+
+    def fake_load(path):
+        loads.append(path)
+        if load_error:
+            raise OSError("corrupt cache")
+        raise AssertionError("missing cache must not call BM25Lite.load")
+
+    server, _calls = _load_mcp_server(monkeypatch, bm25_load=fake_load)
+    monkeypatch.setattr(server.os.path, "exists", lambda _path: cache_exists)
+    monkeypatch.setattr(server, "_ensure_ready", lambda: True)
+    server._retriever = _semantic_retriever(
+        "# file: fallback.py | lines: 1-1\ndef fallback(): pass"
+    )
+
+    assert server._sync_search("fallback", 1, 0.65)["results"]
+    assert server._sync_search("fallback", 1, 0.65)["results"]
+    assert len(loads) == expected_loads
 
 
 def test_first_retriever_query_spawns_incremental_updater_once(monkeypatch):

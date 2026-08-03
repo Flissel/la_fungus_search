@@ -74,19 +74,35 @@ import numpy as _np  # for hybrid math
 from embeddinggemma.bm25_lite import BM25Lite as _BM25Lite
 
 _bm25: _BM25Lite | None = None
-try:
-    _bm25_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        ".fungus_cache", "bm25.npz",
-    )
-    if os.path.exists(_bm25_path):
-        _bm25 = _BM25Lite.load(_bm25_path)
-        logger.info("BM25 hybrid ready: vocab=%d docs=%d", len(_bm25.doc_freq), _bm25.N)
-    else:
-        logger.info("BM25 hybrid disabled (no bm25.npz at %s)", _bm25_path)
-except Exception as e:
-    logger.warning("BM25 load failed (continuing without hybrid): %s", e)
-    _bm25 = None
+_bm25_path = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".fungus_cache", "bm25.npz",
+)
+_bm25_load_lock = _threading.Lock()
+_bm25_load_attempted = False
+_bm25_load_error: Exception | None = None
+
+
+def _ensure_bm25_loaded() -> _BM25Lite | None:
+    """Hydrate the optional BM25 cache once, at a hybrid-search boundary."""
+    global _bm25, _bm25_load_attempted, _bm25_load_error
+
+    with _bm25_load_lock:
+        if _bm25_load_attempted:
+            return _bm25
+
+        _bm25_load_attempted = True
+        if not os.path.exists(_bm25_path):
+            logger.info("BM25 hybrid disabled (no bm25.npz at %s)", _bm25_path)
+            return None
+        try:
+            _bm25 = _BM25Lite.load(_bm25_path)
+            logger.info("BM25 hybrid ready: vocab=%d docs=%d", len(_bm25.doc_freq), _bm25.N)
+        except Exception as e:
+            _bm25_load_error = e
+            _bm25 = None
+            logger.warning("BM25 load failed (continuing without hybrid): %s", e)
+        return _bm25
 
 
 def _minmax(arr: _np.ndarray) -> _np.ndarray:
@@ -346,7 +362,9 @@ def _sync_search(query: str, top_k: int, alpha: float = 0.65) -> dict:
     _ensure_ready()
     if _retriever is None or not _retriever.documents:
         return {"results": []}
-    if _bm25 is None or alpha >= 0.999:
+    if alpha >= 0.999:
+        return _retriever.search_direct(query, top_k=top_k)
+    if _ensure_bm25_loaded() is None:
         return _retriever.search_direct(query, top_k=top_k)
 
     # Step 1: fetch a wide semantic pool (top 200 by cosine).
@@ -1566,7 +1584,7 @@ async def fungus_search_multivec(query: str, top_k: int = 10,
             })
 
     # Optional fusion with Stage-4 hybrid (gives us BM25 + file-type-boost)
-    if fuse_with_hybrid and _bm25 is not None:
+    if fuse_with_hybrid and _ensure_bm25_loaded() is not None:
         hybrid_res = _sync_search(query, top_k=80, alpha=0.65)
         hybrid_pool = hybrid_res.get("results", [])
         # Build {content_key → hybrid_score}
