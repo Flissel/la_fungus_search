@@ -1,9 +1,13 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import importlib
+import subprocess
 import sys
 import threading
 from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -126,3 +130,115 @@ def test_index_stats_reports_lazy_state_without_starting_loader(monkeypatch):
 
     assert "not loaded yet" in result.lower()
     assert NoStartThread.starts == 0
+
+
+def test_first_retriever_query_spawns_incremental_updater_once(monkeypatch):
+    """A process starts the updater only for the first retriever-requiring call."""
+    spawned = []
+
+    class SuccessfulWrapper:
+        def __init__(self):
+            self.wait_timeouts = []
+
+        def wait(self, *, timeout):
+            self.wait_timeouts.append(timeout)
+            return 0
+
+    wrapper = SuccessfulWrapper()
+
+    class FakeRetriever:
+        documents = [object()]
+
+        def search_direct(self, *_args, **_kwargs):
+            return {"results": []}
+
+    def fake_popen(args, **kwargs):
+        spawned.append((args, kwargs))
+        return wrapper
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    server, _calls = _load_mcp_server(monkeypatch)
+
+    assert hasattr(server, "_start_incremental_updater_once"), (
+        "retriever-requiring queries must own a process-local lazy updater spawn"
+    )
+    monkeypatch.setattr(sys, "executable", "isolated-python")
+    monkeypatch.setattr(server, "_background_load", server._ready_event.set)
+    server._retriever = FakeRetriever()
+    server._bm25 = None
+
+    assert "not loaded yet" in asyncio.run(server.fungus_index_stats()).lower()
+    assert spawned == []
+
+    start = threading.Barrier(3)
+
+    def enter_retriever_boundary():
+        start.wait(timeout=2)
+        return server._ensure_ready(timeout=0.1)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(enter_retriever_boundary) for _value in range(2)]
+        start.wait(timeout=2)
+        assert [future.result(timeout=2) for future in futures] == [True, True]
+
+    assert asyncio.run(server.fungus_search("lazy updater")) == "No results for: lazy updater"
+
+    assert len(spawned) == 1
+    args, kwargs = spawned[0]
+    assert args == [
+        "isolated-python",
+        str(ROOT / "incremental_updater.py"),
+        "--background",
+    ]
+    assert kwargs["cwd"] == str(ROOT)
+    assert kwargs["shell"] is False
+    assert wrapper.wait_timeouts == [server._UPDATER_WRAPPER_TIMEOUT_S]
+
+
+@pytest.mark.parametrize("failure_mode", ["nonzero", "timeout", "oserror"])
+def test_retriever_query_fails_closed_when_updater_wrapper_fails(
+    monkeypatch, failure_mode
+):
+    class FailedWrapper:
+        def __init__(self):
+            self.wait_timeouts = []
+            self.terminated = False
+
+        def wait(self, *, timeout):
+            self.wait_timeouts.append(timeout)
+            if failure_mode == "timeout" and len(self.wait_timeouts) == 1:
+                raise subprocess.TimeoutExpired("incremental-updater-wrapper", timeout)
+            return 9 if failure_mode == "nonzero" else 0
+
+        def terminate(self):
+            self.terminated = True
+
+    wrapper = FailedWrapper()
+    attempts = []
+
+    def fail_popen(*args, **kwargs):
+        attempts.append((args, kwargs))
+        if failure_mode == "oserror":
+            raise OSError("blocked")
+        return wrapper
+
+    monkeypatch.setattr(subprocess, "Popen", fail_popen)
+    server, _calls = _load_mcp_server(monkeypatch)
+
+    assert hasattr(server, "_start_incremental_updater_once"), (
+        "updater spawn failures must be surfaced before retriever loading"
+    )
+
+    with pytest.raises(RuntimeError, match="incremental updater"):
+        asyncio.run(server.fungus_search("must not pretend to search"))
+    with pytest.raises(RuntimeError, match="incremental updater"):
+        asyncio.run(server.fungus_search("still fail closed"))
+
+    assert len(attempts) == 1
+    assert server._bg_thread is None
+    if failure_mode == "timeout":
+        assert wrapper.terminated is True
+        assert wrapper.wait_timeouts == [
+            server._UPDATER_WRAPPER_TIMEOUT_S,
+            server._UPDATER_WRAPPER_TERMINATE_TIMEOUT_S,
+        ]

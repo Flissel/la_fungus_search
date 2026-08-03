@@ -26,6 +26,7 @@ import logging
 import warnings
 import hashlib
 import json
+import subprocess
 
 # Ensure src/ is importable
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -156,6 +157,66 @@ def _background_load():
 
 _bg_thread: _threading.Thread | None = None
 _bg_thread_lock = _threading.Lock()
+_updater_spawn_lock = _threading.Lock()
+_updater_spawn_attempted = False
+_updater_spawn_error: Exception | None = None
+_UPDATER_WRAPPER_TIMEOUT_S = 5.0
+_UPDATER_WRAPPER_TERMINATE_TIMEOUT_S = 1.0
+
+
+def _raise_updater_spawn_failure(cause: Exception) -> None:
+    global _updater_spawn_error
+    _updater_spawn_error = cause
+    logger.error("Incremental updater launch failed; refusing retriever query: %s", cause)
+    raise RuntimeError(
+        "incremental updater could not start; retriever query refused"
+    ) from cause
+
+
+def _start_incremental_updater_once() -> None:
+    """Start the updater once per MCP process before retriever-backed work.
+
+    The updater itself owns the machine-wide OS lock.  This local guard only
+    prevents concurrent MCP queries from creating redundant detached parents.
+    A launch failure is surfaced to the query instead of silently continuing.
+    """
+    global _updater_spawn_attempted, _updater_spawn_error
+
+    with _updater_spawn_lock:
+        if _updater_spawn_attempted:
+            if _updater_spawn_error is not None:
+                raise RuntimeError(
+                    "incremental updater could not start; retriever query refused"
+                ) from _updater_spawn_error
+            return
+
+        _updater_spawn_attempted = True
+        try:
+            wrapper = subprocess.Popen(
+                [sys.executable, os.path.join(_HERE, "incremental_updater.py"), "--background"],
+                cwd=_HERE,
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            _raise_updater_spawn_failure(exc)
+
+        try:
+            return_code = wrapper.wait(timeout=_UPDATER_WRAPPER_TIMEOUT_S)
+        except subprocess.TimeoutExpired as exc:
+            try:
+                wrapper.terminate()
+                wrapper.wait(timeout=_UPDATER_WRAPPER_TERMINATE_TIMEOUT_S)
+            except (OSError, subprocess.TimeoutExpired) as cleanup_error:
+                logger.warning("Timed-out updater wrapper did not stop cleanly: %s", cleanup_error)
+            _raise_updater_spawn_failure(exc)
+
+        if return_code != 0:
+            _raise_updater_spawn_failure(
+                RuntimeError(f"incremental updater wrapper exited with code {return_code}")
+            )
 
 
 def _start_background_load() -> None:
@@ -183,6 +244,7 @@ def _ensure_ready(timeout: float = 300.0) -> bool:
     A 30s wait expired mid-load, so the FIRST search after a reconnect returned a
     false "Index empty". Search tools genuinely need the retriever, so they wait
     here; index_stats does NOT (it reports load progress non-blockingly)."""
+    _start_incremental_updater_once()
     _start_background_load()
     return _ready_event.wait(timeout=timeout)
 
