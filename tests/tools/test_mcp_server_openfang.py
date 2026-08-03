@@ -35,7 +35,12 @@ def _install_fastmcp_stub(monkeypatch):
     monkeypatch.setitem(sys.modules, "mcp.server.fastmcp", fastmcp_module)
 
 
-def _load_mcp_server(monkeypatch):
+def _forbid_popen(*_args, **_kwargs):
+    raise AssertionError("subprocess.Popen requires an explicit hermetic test stub")
+
+
+def _load_mcp_server(monkeypatch, *, popen_stub=None):
+    monkeypatch.setattr(subprocess, "Popen", popen_stub or _forbid_popen)
     calls = []
     generation = ModuleType("embeddinggemma.rag.generation")
 
@@ -101,6 +106,12 @@ def test_retriever_load_is_lazy_and_starts_once_on_first_query(monkeypatch):
     assert DeferredThread.starts == 0, "MCP import must not start the heavy retriever"
     assert server._bg_thread is None
 
+    updater_boundaries = []
+    monkeypatch.setattr(
+        server,
+        "_start_incremental_updater_once",
+        lambda: updater_boundaries.append("start"),
+    )
     monkeypatch.setattr(server, "_background_load", server._ready_event.set)
     DeferredThread.run_targets = True
 
@@ -108,6 +119,7 @@ def test_retriever_load_is_lazy_and_starts_once_on_first_query(monkeypatch):
     assert DeferredThread.starts == 1
     assert server._ensure_ready(timeout=0.1) is True
     assert DeferredThread.starts == 1
+    assert updater_boundaries == ["start", "start"]
 
 
 def test_index_stats_reports_lazy_state_without_starting_loader(monkeypatch):
@@ -156,8 +168,7 @@ def test_first_retriever_query_spawns_incremental_updater_once(monkeypatch):
         spawned.append((args, kwargs))
         return wrapper
 
-    monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    server, _calls = _load_mcp_server(monkeypatch)
+    server, _calls = _load_mcp_server(monkeypatch, popen_stub=fake_popen)
 
     assert hasattr(server, "_start_incremental_updater_once"), (
         "retriever-requiring queries must own a process-local lazy updater spawn"
@@ -222,8 +233,7 @@ def test_retriever_query_fails_closed_when_updater_wrapper_fails(
             raise OSError("blocked")
         return wrapper
 
-    monkeypatch.setattr(subprocess, "Popen", fail_popen)
-    server, _calls = _load_mcp_server(monkeypatch)
+    server, _calls = _load_mcp_server(monkeypatch, popen_stub=fail_popen)
 
     assert hasattr(server, "_start_incremental_updater_once"), (
         "updater spawn failures must be surfaced before retriever loading"
