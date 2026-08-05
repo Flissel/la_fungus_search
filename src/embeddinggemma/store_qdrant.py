@@ -23,10 +23,15 @@ BATCH = 256
 
 
 def collection_for(codebase: str) -> str:
-    """Stabiler Name pro Codebase-Pfad: lesbar vorne, kollisionssicher hinten."""
+    """Stabiler Name pro Codebase-Pfad: lesbar vorne, kollisionssicher hinten.
+
+    Voll case-gefaltet (auch im lesbaren Teil): auf Windows bezeichnen
+    "...\\Laura", "...\\laura" und "...\\LAURA" denselben Ordner, muessen
+    also auf denselben Namen abbilden. Stabilitaet geht vor Lesbarkeit der
+    Original-Schreibweise.
+    """
     norm = os.path.normcase(os.path.normpath(codebase)).replace("\\", "/").rstrip("/")
-    lesbar = os.path.normpath(codebase).replace("\\", "/").rstrip("/")
-    kurz = lesbar.rsplit("/", 1)[-1] or "root"
+    kurz = norm.rsplit("/", 1)[-1] or "root"
     sauber = "".join(c if c.isalnum() else "_" for c in kurz)
     digest = hashlib.sha1(norm.encode("utf-8")).hexdigest()[:8]
     return f"fungus_{sauber}_{digest}"

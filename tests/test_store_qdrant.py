@@ -12,13 +12,24 @@ def test_collection_name_ist_stabil():
     a = store_qdrant.collection_for("C:\\Users\\User\\Desktop\\Laura")
     b = store_qdrant.collection_for("c:/Users/User/Desktop/Laura/")
     assert a == b
-    assert a.startswith("fungus_Laura_")
+    assert a.startswith("fungus_laura_")
 
 
 def test_gleichnamige_ordner_kollidieren_nicht():
     a = store_qdrant.collection_for("C:\\a\\Laura")
     b = store_qdrant.collection_for("C:\\b\\Laura")
     assert a != b
+
+
+def test_schreibweisen_desselben_ordners_ergeben_einen_namen():
+    pfade = [
+        "C:\\Users\\User\\Desktop\\Laura",
+        "c:/Users/User/Desktop/Laura/",
+        "C:\\Users\\User\\Desktop\\laura",
+        "C:\\Users\\User\\Desktop\\LAURA",
+    ]
+    namen = {store_qdrant.collection_for(p) for p in pfade}
+    assert len(namen) == 1
 
 
 class FakeClient:

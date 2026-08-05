@@ -75,12 +75,20 @@ def stub_llama_index(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def stub_qdrant_client(monkeypatch):
-    """Provide a minimal qdrant_client stub for vectorstore tests."""
+    """Provide a minimal qdrant_client stub for vectorstore tests.
+
+    Stubs unconditionally (not only when the module is missing) via
+    monkeypatch.setitem, which remembers whatever was in sys.modules
+    before (real package, an earlier fake, or nothing) and restores
+    exactly that on teardown. That keeps this fixture's effect isolated
+    to the tests in this directory regardless of what ran earlier in the
+    same pytest session — a test elsewhere that imports the real
+    qdrant_client (e.g. to exercise real PointStruct/VectorParams) no
+    longer determines whether these tests see the real package or the
+    stub.
+    """
     root_name = "qdrant_client"
     models_name = "qdrant_client.http.models"
-
-    if root_name in sys.modules and models_name in sys.modules:
-        return
 
     root_mod = types.ModuleType(root_name)
     models_mod = types.ModuleType(models_name)
@@ -122,7 +130,7 @@ def stub_qdrant_client(monkeypatch):
     models_mod.OptimizersConfigDiff = OptimizersConfigDiff
     models_mod.ScalarQuantizationConfig = ScalarQuantizationConfig
 
-    sys.modules[root_name] = root_mod
-    sys.modules[models_name] = models_mod
+    monkeypatch.setitem(sys.modules, root_name, root_mod)
+    monkeypatch.setitem(sys.modules, models_name, models_mod)
 
 
