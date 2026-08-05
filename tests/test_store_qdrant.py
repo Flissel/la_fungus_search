@@ -33,7 +33,13 @@ def test_schreibweisen_desselben_ordners_ergeben_einen_namen():
 
 
 class FakeClient:
-    """Minimal-Double: haelt Punkte im Speicher, spricht die benutzte Qdrant-API."""
+    """Minimal-Double: haelt Punkte im Speicher, spricht die benutzte Qdrant-API.
+
+    upsert() normalisiert Vektoren auf Einheitslaenge, so wie es eine
+    echte COSINE-Collection in Qdrant beim Speichern tut (empirisch gegen
+    eine echte Instanz auf Port 6339 geprueft) - Nullvektoren bleiben
+    dabei unveraendert Null, da Qdrant sie ebenfalls nicht normiert.
+    """
 
     def __init__(self):
         self.collections: dict[str, list] = {}
@@ -60,7 +66,12 @@ class FakeClient:
         self.dims.pop(collection_name, None)
 
     def upsert(self, collection_name, points):
-        self.collections.setdefault(collection_name, []).extend(points)
+        gespeichert = self.collections.setdefault(collection_name, [])
+        for p in points:
+            vek = np.asarray(p.vector, dtype=np.float64)
+            n = float(np.linalg.norm(vek))
+            p.vector = (vek / n).tolist() if n > 0 else vek.tolist()
+            gespeichert.append(p)
 
     def scroll(self, collection_name, limit, offset=None, with_vectors=True, with_payload=True):
         punkte = self.collections.get(collection_name, [])
@@ -73,7 +84,9 @@ class FakeClient:
 def test_save_load_roundtrip():
     c = FakeClient()
     texte = ["def a(): pass", "class B: pass", "print('x')"]
-    embs = np.arange(9, dtype=np.float32).reshape(3, 3)
+    # Normen bewusst ungleich 1 (5.0, 1.0, 2.828) - deckt genau die
+    # COSINE-Normalisierung ab, die FakeClient.upsert jetzt nachbildet.
+    embs = np.array([[3.0, 4.0, 0.0], [1.0, 0.0, 0.0], [0.0, 2.0, 2.0]], dtype=np.float32)
     n = store_qdrant.save(c, "fungus_test_0000", texte, embs)
     assert n == 3
     geladen = store_qdrant.load(c, "fungus_test_0000")
@@ -87,7 +100,44 @@ def test_load_unbekannter_collection_gibt_none():
     assert store_qdrant.load(FakeClient(), "gibtsnicht") is None
 
 
+def test_load_ohne_norm_in_payload_verwendet_vektor_unveraendert():
+    """Rueckwaertskompatibel: Punkte aus einer Fassung ohne Norm-Feld
+    duerfen load() nicht abstuerzen lassen - der (unkorrigierte) Vektor
+    wird dann einfach unveraendert zurueckgegeben."""
+    from qdrant_client.http.models import PointStruct
+    c = FakeClient()
+    c.collections["alt"] = [PointStruct(id=0, vector=[0.6, 0.8, 0.0], payload={"content": "x", "idx": 0})]
+    texte, mat = store_qdrant.load(c, "alt")
+    assert texte == ["x"]
+    assert np.allclose(mat, [[0.6, 0.8, 0.0]])
+
+
 @pytest.mark.skipif(not os.environ.get("QDRANT_URL"),
                     reason="Integration nur mit laufender Instanz (QDRANT_URL setzen)")
 def test_echte_instanz_antwortet():
     assert store_qdrant.verbunden(os.environ["QDRANT_URL"]) is True
+
+
+@pytest.mark.skipif(not os.environ.get("QDRANT_URL"),
+                    reason="Integration nur mit laufender Instanz (QDRANT_URL setzen)")
+def test_echte_instanz_roundtrip_mit_normen_ungleich_1():
+    """Regressionstest gegen eine echte Instanz: Qdrant normiert COSINE-Vektoren
+    beim Speichern auf Einheitslaenge - save()/load() muessen trotzdem exakt
+    die eingegebenen (nicht normierten) Embeddings liefern."""
+    client = store_qdrant.make_client(os.environ["QDRANT_URL"])
+    name = "fungus_test_roundtrip_norm_DELETE_ME"
+    try:
+        texte = ["def a(): pass", "class B: pass", "print('x')"]
+        embs = np.array([[3.0, 4.0, 0.0], [1.0, 0.0, 0.0], [0.0, 2.0, 2.0]], dtype=np.float32)
+        n = store_qdrant.save(client, name, texte, embs)
+        assert n == 3
+        geladen = store_qdrant.load(client, name)
+        assert geladen is not None
+        texte_zurueck, embs_zurueck = geladen
+        assert texte_zurueck == texte
+        assert np.allclose(embs_zurueck, embs, atol=1e-5)
+    finally:
+        try:
+            client.delete_collection(name)
+        except Exception:
+            pass

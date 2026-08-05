@@ -65,6 +65,14 @@ def ensure(client, name: str, dim: int) -> None:
 
 
 def save(client, name: str, texts: list[str], embeddings) -> int:
+    """Speichert Texte + Embeddings in der Collection.
+
+    Qdrant normalisiert Vektoren einer COSINE-Collection beim Speichern
+    intern auf Einheitslaenge; was `scroll()`/`get_collection()` spaeter
+    zurueckgeben, ist also nicht mehr das Original. Deshalb wird pro Punkt
+    zusaetzlich die L2-Norm des Original-Embeddings in der Payload
+    abgelegt (`"norm"`) - `load()` rechnet damit zurueck.
+    """
     from qdrant_client.http.models import PointStruct
     mat = np.asarray(embeddings, dtype=np.float32)
     if mat.ndim != 2 or len(texts) != mat.shape[0]:
@@ -72,7 +80,8 @@ def save(client, name: str, texts: list[str], embeddings) -> int:
     ensure(client, name, int(mat.shape[1]))
     for start in range(0, len(texts), BATCH):
         punkte = [
-            PointStruct(id=i, vector=mat[i].tolist(), payload={"content": texts[i], "idx": i})
+            PointStruct(id=i, vector=mat[i].tolist(),
+                       payload={"content": texts[i], "idx": i, "norm": float(np.linalg.norm(mat[i]))})
             for i in range(start, min(start + BATCH, len(texts)))
         ]
         client.upsert(collection_name=name, points=punkte)
@@ -80,10 +89,23 @@ def save(client, name: str, texts: list[str], embeddings) -> int:
 
 
 def load(client, name: str):
+    """Laedt Texte + Embeddings zurueck, mit der urspruenglichen Skalierung.
+
+    Der von Qdrant gelieferte Vektor ist bei COSINE-Collections
+    normiert; er wird mit der in `save()` abgelegten Norm zurueckskaliert,
+    damit das Original-Embedding rauskommt statt der Einheitslaenge.
+    Nullvektoren brauchen keine Sonderbehandlung: Qdrant normiert einen
+    Nullvektor nicht (er bleibt [0, ..., 0]), und `vektor * 0 == 0` trifft
+    exakt das Original - keine Division, also auch kein NaN-Risiko.
+    Fehlt "norm" in der Payload (Collection aus einer Fassung vor diesem
+    Feld), wird der gelieferte Vektor unveraendert benutzt statt
+    abzustuerzen - dann bleibt die alte (unkorrigierte) Skalierung
+    bestehen, ein sauberer Fehler ist besser als eine erfundene Zahl.
+    """
     vorhanden = [c.name for c in client.get_collections().collections]
     if name not in vorhanden:
         return None
-    gesammelt: list[tuple[int, str, list]] = []
+    gesammelt: list[tuple[int, str, list, "float | None"]] = []
     offset = None
     while True:
         punkte, offset = client.scroll(collection_name=name, limit=BATCH, offset=offset,
@@ -92,7 +114,7 @@ def load(client, name: str):
             payload = getattr(p, "payload", None) or {}
             vektor = getattr(p, "vector", None)
             gesammelt.append((int(payload.get("idx", getattr(p, "id", 0))),
-                              payload.get("content", ""), vektor))
+                              payload.get("content", ""), vektor, payload.get("norm")))
         if offset is None:
             break
     if not gesammelt:
@@ -100,4 +122,7 @@ def load(client, name: str):
     gesammelt.sort(key=lambda t: t[0])
     texte = [t[1] for t in gesammelt]
     mat = np.array([t[2] for t in gesammelt], dtype=np.float32)
+    for i, (_, _, _, norm) in enumerate(gesammelt):
+        if norm is not None:
+            mat[i] = mat[i] * float(norm)
     return texte, mat
