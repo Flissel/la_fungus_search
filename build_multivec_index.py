@@ -10,8 +10,13 @@ import time
 
 sys.path.insert(0, "src")
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+CODEBASE = os.environ.get("FUNGUS_CODEBASE", os.path.normpath(os.path.join(_HERE, "..", "..")))
+
+from embeddinggemma.cachedir import resolve_for_codebase as _resolve_for_codebase
+
 BATCH_SIZE = int(os.environ.get("FUNGUS_MULTIVEC_BATCH", "32"))
-CACHE = ".fungus_cache"
+COLLECTION, CACHE = _resolve_for_codebase(_HERE, CODEBASE)
 CHUNKS_JSON = os.path.join(CACHE, "chunks.json")
 OUT = os.path.join(CACHE, "multivec.npz")
 

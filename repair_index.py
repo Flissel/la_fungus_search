@@ -23,7 +23,12 @@ import numpy as np
 
 sys.path.insert(0, "src")
 
-CACHE = ".fungus_cache"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+CODEBASE = os.environ.get("FUNGUS_CODEBASE", os.path.normpath(os.path.join(_HERE, "..", "..")))
+
+from embeddinggemma.cachedir import resolve_for_codebase as _resolve_for_codebase
+
+COLLECTION, CACHE = _resolve_for_codebase(_HERE, CODEBASE)
 NOISE_MARKERS = ("graphify-out", "graphify_out")
 _HEADER = re.compile(r"# file: (.+?) \|")
 

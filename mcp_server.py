@@ -43,11 +43,9 @@ CODEBASE = os.environ.get(
     os.path.normpath(os.path.join(_HERE, "..", "..")),
 )
 
-from embeddinggemma.cachedir import cache_dir as _cache_dir
-from embeddinggemma.store_qdrant import collection_for as _collection_for
+from embeddinggemma.cachedir import resolve_for_codebase as _resolve_for_codebase
 
-COLLECTION = _collection_for(CODEBASE) if os.environ.get("FUNGUS_STORE", "").lower() == "qdrant" else ""
-CACHE_DIR = _cache_dir(_HERE, COLLECTION)
+COLLECTION, CACHE_DIR = _resolve_for_codebase(_HERE, CODEBASE)
 
 # The reranker is independent of OpenFang embeddings and remains optional.
 RERANKER_DEVICE = os.environ.get("FUNGUS_RERANKER_DEVICE", "cpu")
