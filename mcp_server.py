@@ -42,6 +42,13 @@ CODEBASE = os.environ.get(
     "FUNGUS_CODEBASE",
     os.path.normpath(os.path.join(_HERE, "..", "..")),
 )
+
+from embeddinggemma.cachedir import cache_dir as _cache_dir
+from embeddinggemma.store_qdrant import collection_for as _collection_for
+
+COLLECTION = _collection_for(CODEBASE) if os.environ.get("FUNGUS_STORE", "").lower() == "qdrant" else ""
+CACHE_DIR = _cache_dir(_HERE, COLLECTION)
+
 # The reranker is independent of OpenFang embeddings and remains optional.
 RERANKER_DEVICE = os.environ.get("FUNGUS_RERANKER_DEVICE", "cpu")
 EXCLUDE_DIRS = [
@@ -74,10 +81,7 @@ from embeddinggemma.bm25_lite import BM25Lite as _BM25Lite
 
 _bm25: _BM25Lite | None = None
 try:
-    _bm25_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        ".fungus_cache", "bm25.npz",
-    )
+    _bm25_path = os.path.join(CACHE_DIR, "bm25.npz")
     if os.path.exists(_bm25_path):
         _bm25 = _BM25Lite.load(_bm25_path)
         logger.info("BM25 hybrid ready: vocab=%d docs=%d", len(_bm25.doc_freq), _bm25.N)
@@ -133,10 +137,7 @@ def _background_load():
         _index_meta = {"docs": 0, "dim": None, "load_time_s": 0, "source": "error"}
 
     try:
-        _mv_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            ".fungus_cache", "multivec.npz",
-        )
+        _mv_path = os.path.join(CACHE_DIR, "multivec.npz")
         if os.path.exists(_mv_path):
             from embeddinggemma.multivec import load_multivec as _load_mv
             _multivec_embs, _multivec_chunk_ids = _load_mv(_mv_path)
