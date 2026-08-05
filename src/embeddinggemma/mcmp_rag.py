@@ -121,6 +121,14 @@ class MCPMRetriever:
         if not self.documents:
             return False
         try:
+            if os.environ.get("FUNGUS_STORE", "file").lower() == "qdrant":
+                from embeddinggemma import store_qdrant
+                name = store_qdrant.collection_for(os.environ.get("FUNGUS_CODEBASE", "."))
+                mat = np.array([d.embedding for d in self.documents], dtype=np.float32)
+                n = store_qdrant.save(store_qdrant.make_client(), name,
+                                      [d.content for d in self.documents], mat)
+                _logger.info("Persistent index saved to Qdrant: %s, %d docs", name, n)
+                return True
             # Save FAISS index
             _save_faiss(self._faiss_index, self._cache_path(self._FAISS_FILE))
             # Save embeddings as compressed numpy
@@ -140,6 +148,20 @@ class MCPMRetriever:
     def load_persistent_index(self) -> bool:
         """Load FAISS index + embeddings + chunks from disk. Skips embedding computation."""
         import os, json
+        if os.environ.get("FUNGUS_STORE", "file").lower() == "qdrant":
+            from embeddinggemma import store_qdrant
+            name = store_qdrant.collection_for(os.environ.get("FUNGUS_CODEBASE", "."))
+            geladen = store_qdrant.load(store_qdrant.make_client(), name)
+            if geladen is None:
+                return False
+            texts, embs = geladen
+            self.documents = [Document(id=i, content=t, embedding=embs[i], metadata={})
+                              for i, t in enumerate(texts)]
+            self._embed_dim = int(embs.shape[1])
+            self._faiss_index = _build_faiss(embs, self._embed_dim)
+            _logger.info("Persistent index loaded from Qdrant: %s, %d docs", name, len(texts))
+            return True
+
         faiss_path = self._cache_path(self._FAISS_FILE)
         emb_path = self._cache_path(self._EMB_FILE)
         chunks_path = self._cache_path(self._CHUNKS_FILE)
