@@ -1,4 +1,9 @@
-"""Fail-closed data contracts for the offline MCMP benchmark."""
+"""Fail-closed data contracts for the offline MCMP benchmark.
+
+Flat inner-product retrieval is interpreted as cosine similarity only for
+finite, unit-normalized vectors.  The tolerance below allows float32
+rounding while rejecting vectors that are not canonical cosine inputs.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +16,9 @@ from collections.abc import Sequence
 import numpy as np
 
 
+CANONICAL_VECTOR_NORM_TOLERANCE = 1e-4
+
+
 def _validate_ids(ids: Sequence[str], *, name: str) -> None:
     if any(not isinstance(identifier, str) or not identifier for identifier in ids):
         raise ValueError(f"{name} must contain non-empty string ids")
@@ -21,6 +29,8 @@ def _validate_ids(ids: Sequence[str], *, name: str) -> None:
 def _validate_matrix(matrix: np.ndarray, *, name: str) -> None:
     if not isinstance(matrix, np.ndarray) or matrix.ndim != 2:
         raise ValueError(f"{name} must be a two-dimensional matrix")
+    if matrix.shape[0] <= 0 or matrix.shape[1] <= 0:
+        raise ValueError(f"{name} must have positive dimensions")
     if not np.issubdtype(matrix.dtype, np.number) or np.iscomplexobj(matrix):
         raise ValueError(f"{name} must contain real numeric values")
     if not np.all(np.isfinite(matrix)):
@@ -29,6 +39,12 @@ def _validate_matrix(matrix: np.ndarray, *, name: str) -> None:
         canonical_matrix = np.asarray(matrix, dtype="<f4")
     if not np.all(np.isfinite(canonical_matrix)):
         raise ValueError(f"{name} must remain finite when normalized to float32")
+    norms = np.linalg.norm(canonical_matrix.astype(np.float64), axis=1)
+    if not np.allclose(norms, 1.0, rtol=0.0, atol=CANONICAL_VECTOR_NORM_TOLERANCE):
+        raise ValueError(
+            f"{name} must be unit-normalized within "
+            f"{CANONICAL_VECTOR_NORM_TOLERANCE:g}"
+        )
 
 
 def _validate_nonnegative_integer(value: int, *, name: str) -> None:
@@ -76,9 +92,9 @@ class BenchmarkDataset:
 
         document_ids = set(self.document_ids)
         query_ids = set(self.query_ids)
+        if set(self.relevant_by_query) != query_ids:
+            raise ValueError("relevance labels must exactly match query ids")
         for query_id, relevant_ids in self.relevant_by_query.items():
-            if query_id not in query_ids:
-                raise ValueError("unknown relevant query")
             if not isinstance(relevant_ids, frozenset):
                 raise ValueError("relevant documents must be frozensets")
             unknown_ids = set(relevant_ids) - document_ids
@@ -144,6 +160,8 @@ class SearchRun:
             raise ValueError("per-query initial ids must match run query ids")
         for query_id, candidate_ids in self.per_query_candidate_ids.items():
             self._validate_candidate_ids(candidate_ids, document_ids)
+        if frozenset().union(*self.per_query_candidate_ids.values()) != self.discovered_candidate_ids:
+            raise ValueError("discovered candidates must match per-query candidate ids")
         for query_id, ranking in self.per_query_ranked_document_ids.items():
             self._validate_document_ids(ranking, document_ids, "ranked document")
         if self.per_query_initial_candidate_ids is not None:

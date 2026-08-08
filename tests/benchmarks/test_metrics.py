@@ -21,7 +21,7 @@ def literal_dataset() -> BenchmarkDataset:
         seed=7,
         document_ids=("d0", "d1", "d2"),
         document_vectors=np.asarray(
-            [[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]], dtype=np.float32
+            [[1.0, 0.0], [0.0, 1.0], [2**-0.5, 2**-0.5]], dtype=np.float32
         ),
         query_ids=("q0", "q1"),
         query_vectors=np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
@@ -109,15 +109,14 @@ def test_query_geometry_rejects_zero_norm_query_vectors() -> None:
     dataset = literal_dataset()
     dataset.query_vectors = np.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=np.float32)
 
-    with pytest.raises(ValueError, match="zero-norm query vector"):
+    with pytest.raises(ValueError, match="unit-normalized"):
         query_geometry(dataset)
 
 
-@pytest.mark.parametrize("scale", [1e38, 1e-30])
-def test_query_geometry_is_scale_stable_for_identical_nonzero_vectors(scale: float) -> None:
+def test_query_geometry_reports_zero_distance_for_identical_unit_vectors() -> None:
     dataset = literal_dataset()
     dataset.query_vectors = np.asarray(
-        [[scale, 0.0], [scale, 0.0]], dtype=np.float32
+        [[1.0, 0.0], [1.0, 0.0]], dtype=np.float32
     )
 
     geometry = query_geometry(dataset)
