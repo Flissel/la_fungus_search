@@ -60,6 +60,11 @@ def test_gate1_payload_records_forced_cpu_and_reproducibility_settings() -> None
         "exploration_bonus": None,
         "clock_mode": "fixed",
         "clock_value": 2.0,
+        "random_seed_provenance": {
+            "python_random_seed": None,
+            "numpy_random_seed": None,
+            "per_query": None,
+        },
     }
     assert payload["runs"]["D"]["execution"] == {
         "mode": "mcmp",
@@ -76,6 +81,14 @@ def test_gate1_payload_records_forced_cpu_and_reproducibility_settings() -> None
         "exploration_bonus": 0.1,
         "clock_mode": "fixed",
         "clock_value": 2.0,
+        "random_seed_provenance": {
+            "python_random_seed": 7,
+            "numpy_random_seed": 7,
+            "per_query": {
+                "q-main": {"python_random_seed": 7, "numpy_random_seed": 7},
+                "q-related": {"python_random_seed": 8, "numpy_random_seed": 8},
+            },
+        },
     }
 
 
@@ -273,6 +286,19 @@ def test_writer_rejects_reordered_score_ranked_initial_evidence(tmp_path) -> Non
     output_path = tmp_path / "reordered" / "gate1.json"
 
     with pytest.raises(ValueError, match="direct retrieval"):
+        write_gate1_result(payload, output_path)
+
+    assert not output_path.exists()
+
+
+def test_writer_rejects_forged_python_or_numpy_seed_provenance(tmp_path) -> None:
+    payload = deepcopy(run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10))
+    payload["runs"]["D"]["execution"]["random_seed_provenance"]["per_query"][
+        "q-related"
+    ]["python_random_seed"] = 99
+    output_path = tmp_path / "forged-seed-provenance.json"
+
+    with pytest.raises(ValueError, match="execution snapshot"):
         write_gate1_result(payload, output_path)
 
     assert not output_path.exists()

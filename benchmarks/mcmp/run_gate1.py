@@ -115,21 +115,25 @@ def _run_payload(
     num_agents: int,
     steps: int,
 ) -> dict[str, object]:
+    execution = _run_execution_snapshot(
+        run.method,
+        run.query_ids,
+        evidence.execution_backend,
+        seed,
+        top_k,
+        initial_k,
+        num_agents,
+        steps,
+        evidence.clock_mode,
+        evidence.clock_value,
+    )
+    if evidence.per_query_random_seeds != execution["random_seed_provenance"]["per_query"]:
+        raise ValueError("adapter random seed provenance does not match the run configuration")
     return {
         "query_ids": list(run.query_ids),
         "independent_run_count": evidence.independent_run_count,
         "execution_backend": evidence.execution_backend,
-        "execution": _run_execution_snapshot(
-            run.method,
-            evidence.execution_backend,
-            seed,
-            top_k,
-            initial_k,
-            num_agents,
-            steps,
-            evidence.clock_mode,
-            evidence.clock_value,
-        ),
+        "execution": execution,
         "raw_ids": {
             "ranked_document_ids": list(run.ranked_document_ids),
             "initial_candidate_ids": sorted(run.initial_candidate_ids),
@@ -160,6 +164,7 @@ def _run_payload(
 
 def _run_execution_snapshot(
     method: str,
+    query_ids: tuple[str, ...] | list[str],
     execution_backend: str,
     seed: int,
     top_k: int,
@@ -170,6 +175,21 @@ def _run_execution_snapshot(
     clock_value: float = DETERMINISTIC_CLOCK_VALUE,
 ) -> dict[str, object]:
     is_mcmp = method in {"C", "D"}
+    random_seed_provenance: dict[str, object] = {
+        "python_random_seed": seed if is_mcmp else None,
+        "numpy_random_seed": seed if is_mcmp else None,
+        "per_query": (
+            {
+                query_id: {
+                    "python_random_seed": seed + query_index,
+                    "numpy_random_seed": seed + query_index,
+                }
+                for query_index, query_id in enumerate(query_ids)
+            }
+            if is_mcmp
+            else None
+        ),
+    }
     return {
         "mode": "mcmp" if is_mcmp else "faiss",
         "seed": seed,
@@ -185,6 +205,7 @@ def _run_execution_snapshot(
         "exploration_bonus": EXPLORATION_BONUS if is_mcmp else None,
         "clock_mode": clock_mode,
         "clock_value": clock_value,
+        "random_seed_provenance": random_seed_provenance,
     }
 
 
@@ -345,7 +366,7 @@ def _validate_run_evidence(
         raise ValueError(f"runs.{method} did not use the required FAISS CPU backend")
     execution = _mapping(run["execution"], f"runs.{method}.execution")
     expected_execution = _run_execution_snapshot(
-        method, "faiss-cpu", seed, top_k, initial_k, num_agents, steps
+        method, query_ids, "faiss-cpu", seed, top_k, initial_k, num_agents, steps
     )
     if not _strict_equal(dict(execution), expected_execution):
         raise ValueError(f"runs.{method} execution snapshot is inconsistent")

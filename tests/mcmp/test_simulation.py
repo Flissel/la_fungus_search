@@ -1,7 +1,6 @@
 import time
 import types
 import sys
-import sys
 
 import numpy as np
 import pytest

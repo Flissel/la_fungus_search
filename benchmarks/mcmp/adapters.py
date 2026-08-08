@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import random
 import sys
 from time import perf_counter
 from collections.abc import Sequence
@@ -40,6 +41,7 @@ class AdapterEvidence:
     nearest_search_calls: int
     execution_backend: str
     per_query_initial_candidate_ids: dict[str, tuple[str, ...]]
+    per_query_random_seeds: dict[str, dict[str, int]] | None
     clock_mode: str
     clock_value: float
 
@@ -126,6 +128,7 @@ def run_faiss(
         nearest_search_calls,
         _single_execution_backend(execution_backends),
         initial_rankings,
+        None,
         DETERMINISTIC_CLOCK_MODE,
         DETERMINISTIC_CLOCK_VALUE,
     )
@@ -157,10 +160,18 @@ def run_mcmp(
     trails = 0
     nearest_search_calls = 0
     execution_backends: set[str] = set()
+    per_query_random_seeds: dict[str, dict[str, int]] = {}
+    original_python_rng_state = random.getstate()
     original_rng_state = np.random.get_state()
     try:
         for query_index, query_id in enumerate(query_ids):
-            np.random.seed(seed + query_index)
+            query_seed = seed + query_index
+            random.seed(query_seed)
+            np.random.seed(query_seed)
+            per_query_random_seeds[query_id] = {
+                "python_random_seed": query_seed,
+                "numpy_random_seed": query_seed,
+            }
             backend = MappingEmbeddingBackend(vectors)
             retriever = CountingRetriever(
                 num_agents=num_agents,
@@ -192,6 +203,7 @@ def run_mcmp(
             trails += len(retriever.pheromone_trails)
             nearest_search_calls += retriever.nearest_search_calls
     finally:
+        random.setstate(original_python_rng_state)
         np.random.set_state(original_rng_state)
 
     run = SearchRun(
@@ -215,6 +227,7 @@ def run_mcmp(
         nearest_search_calls,
         _single_execution_backend(execution_backends),
         initial_rankings,
+        per_query_random_seeds,
         DETERMINISTIC_CLOCK_MODE,
         DETERMINISTIC_CLOCK_VALUE,
     )

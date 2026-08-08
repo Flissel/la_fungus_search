@@ -96,6 +96,11 @@
         "mode": "faiss",
         "num_agents": null,
         "pheromone_decay": null,
+        "random_seed_provenance": {
+          "numpy_random_seed": null,
+          "per_query": null,
+          "python_random_seed": null
+        },
         "seed": 7,
         "steps": null,
         "top_k": 4
@@ -151,7 +156,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 4.183999997621868
+        "elapsed_ms": 0.3232000017305836
       }
     },
     "B": {
@@ -172,6 +177,11 @@
         "mode": "faiss",
         "num_agents": null,
         "pheromone_decay": null,
+        "random_seed_provenance": {
+          "numpy_random_seed": null,
+          "per_query": null,
+          "python_random_seed": null
+        },
         "seed": 7,
         "steps": null,
         "top_k": 4
@@ -187,7 +197,7 @@
         "novel_relevant_candidates": [],
         "recall_at_k": 0.5,
         "reciprocal_rank": 0.3333333333333333,
-        "unique_relevant_documents": 4
+        "unique_relevant_documents": 2
       },
       "nearest_search_calls": 2,
       "pheromone_trails": 0,
@@ -242,7 +252,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 0.8018000007723458
+        "elapsed_ms": 0.27630000113276765
       }
     },
     "C": {
@@ -270,6 +280,16 @@
         "mode": "mcmp",
         "num_agents": 24,
         "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 7,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 7,
+              "python_random_seed": 7
+            }
+          },
+          "python_random_seed": 7
+        },
         "seed": 7,
         "steps": 10,
         "top_k": 4
@@ -338,7 +358,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 1003.203600004781
+        "elapsed_ms": 670.1620000021649
       }
     },
     "D": {
@@ -368,6 +388,20 @@
         "mode": "mcmp",
         "num_agents": 24,
         "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 7,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 7,
+              "python_random_seed": 7
+            },
+            "q-related": {
+              "numpy_random_seed": 8,
+              "python_random_seed": 8
+            }
+          },
+          "python_random_seed": 7
+        },
         "seed": 7,
         "steps": 10,
         "top_k": 4
@@ -456,7 +490,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 50.57479999959469
+        "elapsed_ms": 51.265399997646455
       }
     }
   }

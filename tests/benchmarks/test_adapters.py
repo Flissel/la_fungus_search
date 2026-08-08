@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import random
 
 import numpy as np
 import pytest
 
 from benchmarks.mcmp.adapters import run_faiss, run_mcmp
+from benchmarks.mcmp import adapters as adapters_module
 from benchmarks.mcmp.fixtures import build_synthetic_dataset
 
 
@@ -54,6 +56,51 @@ def test_mcmp_seed_reproduces_rankings_visits_and_trails() -> None:
     assert first.ranked_document_ids == second.ranked_document_ids
     assert first.document_visits == second.document_visits
     assert first.pheromone_trails == second.pheromone_trails
+
+
+def test_mcmp_restores_python_and_numpy_random_state_after_independent_runs() -> None:
+    dataset = build_synthetic_dataset()
+    random.seed(101)
+    np.random.seed(202)
+    python_state = random.getstate()
+    numpy_state = np.random.get_state()
+
+    run_mcmp(
+        dataset, "D", ("q-main", "q-related"), top_k=4, initial_k=1,
+        seed=7, num_agents=2, steps=2,
+    )
+
+    assert random.getstate() == python_state
+    restored_numpy_state = np.random.get_state()
+    assert restored_numpy_state[0] == numpy_state[0]
+    assert np.array_equal(restored_numpy_state[1], numpy_state[1])
+    assert restored_numpy_state[2:] == numpy_state[2:]
+
+
+def test_mcmp_seeds_python_and_numpy_rng_for_each_query_and_records_provenance(
+    monkeypatch,
+) -> None:
+    dataset = build_synthetic_dataset()
+    observed_python_seeds: list[int] = []
+    real_seed = random.seed
+
+    def record_python_seed(value: int | None = None) -> None:
+        if value is not None:
+            observed_python_seeds.append(value)
+        real_seed(value)
+
+    monkeypatch.setattr(adapters_module.random, "seed", record_python_seed)
+
+    _run, evidence = run_mcmp(
+        dataset, "D", ("q-main", "q-related"), top_k=4, initial_k=1,
+        seed=7, num_agents=2, steps=2,
+    )
+
+    assert observed_python_seeds == [7, 8]
+    assert evidence.per_query_random_seeds == {
+        "q-main": {"python_random_seed": 7, "numpy_random_seed": 7},
+        "q-related": {"python_random_seed": 8, "numpy_random_seed": 8},
+    }
 
 
 def test_mcmp_evidence_counts_independent_runs_without_exposing_retriever() -> None:
