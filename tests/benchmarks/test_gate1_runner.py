@@ -42,6 +42,34 @@ def test_gate1_payload_records_forced_cpu_and_reproducibility_settings() -> None
     assert payload["environment"]["faiss_metric"] == "inner_product"
     assert payload["environment"]["force_cpu"] is True
     assert {run["execution_backend"] for run in payload["runs"].values()} == {"faiss-cpu"}
+    assert payload["runs"]["A"]["execution"] == {
+        "mode": "faiss",
+        "seed": 7,
+        "top_k": 4,
+        "initial_k": 1,
+        "force_cpu": True,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "execution_backend": "faiss-cpu",
+        "num_agents": None,
+        "steps": None,
+        "pheromone_decay": None,
+        "exploration_bonus": None,
+    }
+    assert payload["runs"]["D"]["execution"] == {
+        "mode": "mcmp",
+        "seed": 7,
+        "top_k": 4,
+        "initial_k": 1,
+        "force_cpu": True,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "execution_backend": "faiss-cpu",
+        "num_agents": 24,
+        "steps": 10,
+        "pheromone_decay": 0.95,
+        "exploration_bonus": 0.1,
+    }
 
 
 def test_gate1_content_is_deterministic_except_elapsed_timing() -> None:
@@ -116,4 +144,37 @@ def test_cli_maps_invalid_evidence_to_nonzero_without_writing(monkeypatch, tmp_p
         ])
 
     assert error.value.code == 2
+    assert not output_path.exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "initial_k",
+        "num_agents",
+        "visit_count",
+        "pheromone_trails",
+        "independent_run_count_bool",
+        "force_cpu_int",
+    ],
+)
+def test_writer_rejects_forged_configuration_and_execution_evidence(mutation, tmp_path) -> None:
+    payload = deepcopy(run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10))
+    if mutation == "initial_k":
+        payload["config"]["initial_k"] = 2
+    elif mutation == "num_agents":
+        payload["config"]["num_agents"] = 25
+    elif mutation == "visit_count":
+        payload["runs"]["C"]["document_visits"]["main-bridge"] = 0
+    elif mutation == "pheromone_trails":
+        payload["runs"]["C"]["pheromone_trails"] = 999
+    elif mutation == "independent_run_count_bool":
+        payload["runs"]["A"]["independent_run_count"] = True
+    else:
+        payload["execution"]["force_cpu"] = 1
+    output_path = tmp_path / mutation / "gate1.json"
+
+    with pytest.raises(ValueError):
+        write_gate1_result(payload, output_path)
+
     assert not output_path.exists()

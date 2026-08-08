@@ -82,6 +82,20 @@
       "candidate_comparisons": 8,
       "candidate_overlap": {},
       "document_visits": {},
+      "execution": {
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": null,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 1,
+        "mode": "faiss",
+        "num_agents": null,
+        "pheromone_decay": null,
+        "seed": 7,
+        "steps": null,
+        "top_k": 4
+      },
       "execution_backend": "faiss-cpu",
       "independent_run_count": 1,
       "mcmp_steps": 0,
@@ -128,7 +142,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 0.31820000003790483
+        "elapsed_ms": 0.3096000000368804
       }
     },
     "B": {
@@ -137,6 +151,20 @@
         "q-main|q-related": 0.0
       },
       "document_visits": {},
+      "execution": {
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": null,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 1,
+        "mode": "faiss",
+        "num_agents": null,
+        "pheromone_decay": null,
+        "seed": 7,
+        "steps": null,
+        "top_k": 4
+      },
       "execution_backend": "faiss-cpu",
       "independent_run_count": 2,
       "mcmp_steps": 0,
@@ -195,7 +223,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 0.2623999971547164
+        "elapsed_ms": 0.36670000554295257
       }
     },
     "C": {
@@ -210,6 +238,20 @@
         "related-near": 0,
         "related-top": 0,
         "z-distractor": 0
+      },
+      "execution": {
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 1,
+        "mode": "mcmp",
+        "num_agents": 24,
+        "pheromone_decay": 0.95,
+        "seed": 7,
+        "steps": 10,
+        "top_k": 4
       },
       "execution_backend": "faiss-cpu",
       "independent_run_count": 1,
@@ -270,7 +312,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 705.85829999618
+        "elapsed_ms": 699.1513999964809
       }
     },
     "D": {
@@ -287,6 +329,20 @@
         "related-near": 45,
         "related-top": 0,
         "z-distractor": 0
+      },
+      "execution": {
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 1,
+        "mode": "mcmp",
+        "num_agents": 24,
+        "pheromone_decay": 0.95,
+        "seed": 7,
+        "steps": 10,
+        "top_k": 4
       },
       "execution_backend": "faiss-cpu",
       "independent_run_count": 2,
@@ -364,7 +420,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 48.34359999949811
+        "elapsed_ms": 50.628799996047746
       }
     }
   }

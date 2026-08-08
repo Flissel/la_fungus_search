@@ -52,7 +52,9 @@ def run_gate1(
                 num_agents,
                 steps,
             )
-        runs[method] = _run_payload(dataset, run, evidence, top_k)
+        runs[method] = _run_payload(
+            dataset, run, evidence, seed, top_k, initial_k, num_agents, steps
+        )
 
     payload: dict[str, object] = {
         "config": {
@@ -100,12 +102,28 @@ def write_gate1_result(payload: dict[str, object], path: Path) -> None:
 
 
 def _run_payload(
-    dataset: BenchmarkDataset, run: SearchRun, evidence: AdapterEvidence, top_k: int
+    dataset: BenchmarkDataset,
+    run: SearchRun,
+    evidence: AdapterEvidence,
+    seed: int,
+    top_k: int,
+    initial_k: int,
+    num_agents: int,
+    steps: int,
 ) -> dict[str, object]:
     return {
         "query_ids": list(run.query_ids),
         "independent_run_count": evidence.independent_run_count,
         "execution_backend": evidence.execution_backend,
+        "execution": _run_execution_snapshot(
+            run.method,
+            evidence.execution_backend,
+            seed,
+            top_k,
+            initial_k,
+            num_agents,
+            steps,
+        ),
         "raw_ids": {
             "ranked_document_ids": list(run.ranked_document_ids),
             "initial_candidate_ids": sorted(run.initial_candidate_ids),
@@ -127,6 +145,32 @@ def _run_payload(
         "mcmp_steps": run.mcmp_steps,
         "document_visits": dict(sorted(run.document_visits.items())),
         "pheromone_trails": run.pheromone_trails,
+    }
+
+
+def _run_execution_snapshot(
+    method: str,
+    execution_backend: str,
+    seed: int,
+    top_k: int,
+    initial_k: int,
+    num_agents: int,
+    steps: int,
+) -> dict[str, object]:
+    is_mcmp = method in {"C", "D"}
+    return {
+        "mode": "mcmp" if is_mcmp else "faiss",
+        "seed": seed,
+        "top_k": top_k,
+        "initial_k": initial_k,
+        "force_cpu": True,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "execution_backend": execution_backend,
+        "num_agents": num_agents if is_mcmp else None,
+        "steps": steps if is_mcmp else None,
+        "pheromone_decay": PHEROMONE_DECAY if is_mcmp else None,
+        "exploration_bonus": EXPLORATION_BONUS if is_mcmp else None,
     }
 
 
@@ -178,14 +222,16 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
     _require_keys(config, {"seed", "top_k", "initial_k", "num_agents", "steps"}, "config")
     for name in ("seed", "top_k", "initial_k", "num_agents", "steps"):
         _positive_int(config[name], name, allow_zero=name == "seed")
+    if _integer(config["initial_k"], "initial_k") > _integer(config["top_k"], "top_k"):
+        raise ValueError("initial_k must not exceed top_k")
     execution = _mapping(payload["execution"], "execution")
-    if dict(execution) != {
+    if not _strict_equal(dict(execution), {
         "force_cpu": True,
         "faiss_factory": "Flat",
         "faiss_metric": "inner_product",
         "pheromone_decay": PHEROMONE_DECAY,
         "exploration_bonus": EXPLORATION_BONUS,
-    }:
+    }):
         raise ValueError("execution settings are incomplete or inconsistent")
 
     dataset = build_synthetic_dataset(_integer(config["seed"], "seed"))
@@ -199,15 +245,15 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
         "document_vector_shape": list(dataset.document_vectors.shape),
         "query_vector_shape": list(dataset.query_vectors.shape),
     }
-    if dict(dataset_payload) != expected_dataset:
+    if not _strict_equal(dict(dataset_payload), expected_dataset):
         raise ValueError("dataset evidence does not match the configured seed")
 
     environment = _mapping(payload["environment"], "environment")
     expected_environment = _environment_payload()
-    if dict(environment) != expected_environment:
+    if not _strict_equal(dict(environment), expected_environment):
         raise ValueError("environment provenance is incomplete or inconsistent")
     geometry = _mapping(payload["query_geometry"], "query_geometry")
-    if dict(geometry) != query_geometry(dataset):
+    if not _strict_equal(dict(geometry), query_geometry(dataset)):
         raise ValueError("query geometry does not match the dataset")
 
     runs = _mapping(payload["runs"], "runs")
@@ -219,7 +265,10 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
             dataset,
             method,
             query_ids,
+            _integer(config["seed"], "seed"),
             _integer(config["top_k"], "top_k"),
+            _integer(config["initial_k"], "initial_k"),
+            _integer(config["num_agents"], "num_agents"),
             _integer(config["steps"], "steps"),
         )
 
@@ -242,14 +291,28 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
 
 
 def _validate_run_evidence(
-    run: Mapping[str, object], dataset: BenchmarkDataset, method: str, query_ids: tuple[str, ...], top_k: int, steps: int
+    run: Mapping[str, object],
+    dataset: BenchmarkDataset,
+    method: str,
+    query_ids: tuple[str, ...],
+    seed: int,
+    top_k: int,
+    initial_k: int,
+    num_agents: int,
+    steps: int,
 ) -> None:
-    required = {"query_ids", "independent_run_count", "execution_backend", "raw_ids", "metrics", "candidate_overlap", "timing", "candidate_comparisons", "nearest_search_calls", "mcmp_steps", "document_visits", "pheromone_trails"}
+    required = {"query_ids", "independent_run_count", "execution_backend", "execution", "raw_ids", "metrics", "candidate_overlap", "timing", "candidate_comparisons", "nearest_search_calls", "mcmp_steps", "document_visits", "pheromone_trails"}
     _require_keys(run, required, f"runs.{method}")
-    if run["query_ids"] != list(query_ids) or run["independent_run_count"] != len(query_ids):
+    if not _strict_equal(run["query_ids"], list(query_ids)) or _integer(run["independent_run_count"], "independent_run_count") != len(query_ids):
         raise ValueError(f"runs.{method} has incorrect query cardinality")
-    if run["execution_backend"] != "faiss-cpu":
+    if type(run["execution_backend"]) is not str or run["execution_backend"] != "faiss-cpu":
         raise ValueError(f"runs.{method} did not use the required FAISS CPU backend")
+    execution = _mapping(run["execution"], f"runs.{method}.execution")
+    expected_execution = _run_execution_snapshot(
+        method, "faiss-cpu", seed, top_k, initial_k, num_agents, steps
+    )
+    if not _strict_equal(dict(execution), expected_execution):
+        raise ValueError(f"runs.{method} execution snapshot is inconsistent")
     raw_ids = _mapping(run["raw_ids"], f"runs.{method}.raw_ids")
     _require_keys(raw_ids, {"ranked_document_ids", "initial_candidate_ids", "discovered_candidate_ids", "per_query_candidate_ids", "per_query_ranked_document_ids"}, f"runs.{method}.raw_ids")
     documents = set(dataset.document_ids)
@@ -282,7 +345,7 @@ def _validate_run_evidence(
     _require_keys(metrics, {"recall_at_k", "reciprocal_rank", "mrr", "ndcg_at_k", "unique_relevant_documents", "candidate_count", "novel_candidates", "novel_relevant_candidates"}, f"runs.{method}.metrics")
     for name in ("recall_at_k", "reciprocal_rank", "mrr", "ndcg_at_k"):
         _finite_number(metrics[name], name)
-    if metrics["candidate_count"] != len(discovered) or not set(_string_list(metrics["novel_candidates"], "novel_candidates")) <= set(discovered) or not set(_string_list(metrics["novel_relevant_candidates"], "novel_relevant_candidates")) <= documents:
+    if _integer(metrics["unique_relevant_documents"], "unique_relevant_documents") < 0 or _integer(metrics["candidate_count"], "candidate_count") != len(discovered) or not set(_string_list(metrics["novel_candidates"], "novel_candidates")) <= set(discovered) or not set(_string_list(metrics["novel_relevant_candidates"], "novel_relevant_candidates")) <= documents:
         raise ValueError(f"runs.{method} has inconsistent metrics")
     overlap = _mapping(run["candidate_overlap"], f"runs.{method}.candidate_overlap")
     if set(overlap) != ({"q-main|q-related"} if len(query_ids) == 2 else set()):
@@ -300,16 +363,29 @@ def _validate_run_evidence(
     if candidate_comparisons != nearest_search_calls * len(dataset.document_ids):
         raise ValueError("candidate comparisons do not match nearest-search evidence")
     expected_steps = 0 if method in {"A", "B"} else steps
-    if run["mcmp_steps"] != expected_steps:
+    if _integer(run["mcmp_steps"], "mcmp_steps") != expected_steps:
         raise ValueError(f"runs.{method} has incorrect mcmp steps")
     visits = _mapping(run["document_visits"], f"runs.{method}.document_visits")
     if method in {"A", "B"} and visits:
         raise ValueError(f"runs.{method} must not report MCMP visits")
     if method in {"C", "D"} and set(visits) != documents:
         raise ValueError(f"runs.{method} must report every document visit count")
-    for value in visits.values():
-        _positive_int(value, "document visit", allow_zero=True)
-    _positive_int(run["pheromone_trails"], "pheromone_trails", allow_zero=True)
+    visit_counts = {
+        document_id: _positive_int(value, "document visit", allow_zero=True)
+        for document_id, value in visits.items()
+    }
+    pheromone_trails = _positive_int(run["pheromone_trails"], "pheromone_trails", allow_zero=True)
+    total_visits = sum(visit_counts.values())
+    if method in {"A", "B"}:
+        if total_visits != 0 or pheromone_trails != 0:
+            raise ValueError(f"runs.{method} must have zero MCMP state")
+    else:
+        if total_visits != num_agents * steps * len(query_ids):
+            raise ValueError(f"runs.{method} visit total does not match execution snapshot")
+        if frozenset(document_id for document_id, count in visit_counts.items() if count > 0) != frozenset(discovered):
+            raise ValueError(f"runs.{method} discovery does not match positive visit counts")
+        if pheromone_trails > total_visits:
+            raise ValueError(f"runs.{method} pheromone trails exceed total visits")
     reconstructed = SearchRun(
         method=method,
         query_ids=query_ids,
@@ -321,12 +397,12 @@ def _validate_run_evidence(
         elapsed_ms=_finite_number(timing["elapsed_ms"], "elapsed_ms"),
         candidate_comparisons=candidate_comparisons,
         mcmp_steps=_integer(run["mcmp_steps"], "mcmp_steps"),
-        document_visits={document_id: _integer(value, "document visit") for document_id, value in visits.items()},
-        pheromone_trails=_integer(run["pheromone_trails"], "pheromone_trails"),
+        document_visits=visit_counts,
+        pheromone_trails=pheromone_trails,
     )
-    if dict(metrics) != evaluate_run(dataset, reconstructed, top_k):
+    if not _strict_equal(dict(metrics), evaluate_run(dataset, reconstructed, top_k)):
         raise ValueError(f"runs.{method} metrics do not match raw evidence")
-    if dict(overlap) != candidate_overlap(reconstructed):
+    if not _strict_equal(dict(overlap), candidate_overlap(reconstructed)):
         raise ValueError(f"runs.{method} candidate overlap does not match raw evidence")
 
 
@@ -336,7 +412,7 @@ def _validate_comparison(comparison: Mapping[str, object], left: Mapping[str, ob
     right_raw = _mapping(right["raw_ids"], "right raw ids")
     right_metrics = _mapping(right["metrics"], "right metrics")
     left_metrics = _mapping(left["metrics"], "left metrics")
-    if comparison["ranked_document_ids_equal"] != (left_raw["ranked_document_ids"] == right_raw["ranked_document_ids"]) or comparison["novel_relevant_candidates"] != right_metrics["novel_relevant_candidates"]:
+    if type(comparison["ranked_document_ids_equal"]) is not bool or comparison["ranked_document_ids_equal"] != (left_raw["ranked_document_ids"] == right_raw["ranked_document_ids"]) or not _strict_equal(comparison["novel_relevant_candidates"], right_metrics["novel_relevant_candidates"]):
         raise ValueError("comparison does not match run evidence")
     for name, metric in (("recall_at_k_delta", "recall_at_k"), ("mrr_delta", "mrr"), ("ndcg_at_k_delta", "ndcg_at_k")):
         if not math.isclose(_finite_number(comparison[name], name), _finite_number(right_metrics[metric], metric) - _finite_number(left_metrics[metric], metric), rel_tol=0.0, abs_tol=1e-15):
@@ -355,13 +431,13 @@ def _mapping(value: object, label: str) -> Mapping[str, object]:
 
 
 def _string_list(value: object, label: str) -> list[str]:
-    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+    if type(value) is not list or any(type(item) is not str for item in value):
         raise ValueError(f"{label} must be a list of strings")
     return value
 
 
 def _integer(value: object, label: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if type(value) is not int:
         raise ValueError(f"{label} must be an integer")
     return value
 
@@ -374,9 +450,24 @@ def _positive_int(value: object, label: str, *, allow_zero: bool) -> int:
 
 
 def _finite_number(value: object, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if type(value) is not float or not math.isfinite(value):
         raise ValueError(f"{label} must be finite")
     return float(value)
+
+
+def _strict_equal(actual: object, expected: object) -> bool:
+    """Compare persisted JSON values without Python's bool/int coercion."""
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return set(actual) == set(expected) and all(
+            _strict_equal(actual[key], expected[key]) for key in expected
+        )
+    if isinstance(expected, list):
+        return len(actual) == len(expected) and all(
+            _strict_equal(left, right) for left, right in zip(actual, expected, strict=True)
+        )
+    return actual == expected
 
 
 def main(argv: list[str] | None = None) -> int:
