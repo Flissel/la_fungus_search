@@ -101,6 +101,21 @@ def test_query_geometry_rejects_zero_norm_query_vectors() -> None:
         query_geometry(dataset)
 
 
+@pytest.mark.parametrize("scale", [1e38, 1e-30])
+def test_query_geometry_is_scale_stable_for_identical_nonzero_vectors(scale: float) -> None:
+    dataset = literal_dataset()
+    dataset.query_vectors = np.asarray(
+        [[scale, 0.0], [scale, 0.0]], dtype=np.float32
+    )
+
+    geometry = query_geometry(dataset)
+
+    assert np.isfinite(geometry["mean_cosine_distance"])
+    assert np.isfinite(geometry["max_cosine_distance"])
+    assert geometry["mean_cosine_distance"] == pytest.approx(0.0)
+    assert geometry["max_cosine_distance"] == pytest.approx(0.0)
+
+
 def test_evaluate_run_averages_reciprocal_rank_over_each_querys_own_labels() -> None:
     run = SearchRun(
         method="literal",

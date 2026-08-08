@@ -71,11 +71,12 @@ def evaluate_run(dataset: BenchmarkDataset, run: SearchRun, k: int) -> dict[str,
 def query_geometry(dataset: BenchmarkDataset) -> dict[str, float]:
     """Summarize pairwise cosine distance between benchmark query vectors."""
     dataset.validate()
-    if np.any(np.linalg.norm(dataset.query_vectors, axis=1) == 0.0):
+    query_vectors = np.asarray(dataset.query_vectors, dtype=np.float64)
+    if np.any(np.linalg.norm(query_vectors, axis=1) == 0.0):
         raise ValueError("zero-norm query vector")
     distances = [
         _cosine_distance(left, right)
-        for left, right in combinations(dataset.query_vectors, 2)
+        for left, right in combinations(query_vectors, 2)
     ]
     if not distances:
         return {"mean_cosine_distance": 0.0, "max_cosine_distance": 0.0}
@@ -100,7 +101,10 @@ def _cosine_distance(left: np.ndarray, right: np.ndarray) -> float:
     denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
     if denominator == 0.0:
         raise ValueError("zero-norm query vector")
-    return float(1.0 - np.dot(left, right) / denominator)
+    distance = float(1.0 - np.dot(left, right) / denominator)
+    if not math.isfinite(distance):
+        raise ValueError("non-finite cosine distance")
+    return distance
 
 
 def _validate_k(k: object) -> int:
