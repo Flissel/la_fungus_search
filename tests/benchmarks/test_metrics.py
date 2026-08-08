@@ -76,6 +76,18 @@ def test_evaluate_run_counts_all_discovered_candidates_separately_from_novel_one
     assert metrics["novel_relevant_candidates"] == ["d2"]
 
 
+def test_evaluate_run_counts_only_relevant_documents_retrieved_in_ranked_results() -> None:
+    run = replace(
+        literal_run(),
+        ranked_document_ids=("d0", "d1"),
+        per_query_ranked_document_ids={"q0": ("d0", "d1")},
+    )
+
+    metrics = evaluate_run(literal_dataset(), run, k=2)
+
+    assert metrics["unique_relevant_documents"] == 1
+
+
 @pytest.mark.parametrize("k", [0, -1, True, 1.5])
 def test_ranking_metrics_reject_nonpositive_or_noninteger_k(k: object) -> None:
     with pytest.raises(ValueError, match="positive integer"):

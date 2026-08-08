@@ -61,7 +61,7 @@ def evaluate_run(dataset: BenchmarkDataset, run: SearchRun, k: int) -> dict[str,
             else 0.0
         ),
         "ndcg_at_k": ndcg_at_k(run.ranked_document_ids, relevant, k),
-        "unique_relevant_documents": len(relevant),
+        "unique_relevant_documents": len(set(ranked) & relevant),
         "candidate_count": len(run.discovered_candidate_ids),
         "novel_candidates": novel_candidates,
         "novel_relevant_candidates": novel_relevant_candidates,
