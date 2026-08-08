@@ -127,6 +127,12 @@ def _run_payload(
         "raw_ids": {
             "ranked_document_ids": list(run.ranked_document_ids),
             "initial_candidate_ids": sorted(run.initial_candidate_ids),
+            "per_query_initial_candidate_ids": {
+                query_id: sorted(candidate_ids)
+                for query_id, candidate_ids in sorted(
+                    (run.per_query_initial_candidate_ids or {}).items()
+                )
+            },
             "discovered_candidate_ids": sorted(run.discovered_candidate_ids),
             "per_query_candidate_ids": {
                 query_id: sorted(candidate_ids)
@@ -197,6 +203,26 @@ def _comparison_payload(runs: dict[str, dict[str, object]]) -> dict[str, dict[st
         "A_vs_C": _compare_runs(runs["A"], runs["C"]),
         "B_vs_D": _compare_runs(runs["B"], runs["D"]),
     }
+
+
+def _direct_initial_candidates(
+    dataset: BenchmarkDataset, query_id: str, initial_k: int
+) -> list[str]:
+    """Recompute the CPU Flat inner-product initial ranking from fixture data."""
+    query_index = list(dataset.query_ids).index(query_id)
+    query_vector = dataset.query_vectors[query_index]
+    scores = {
+        document_id: float(np.dot(document_vector, query_vector))
+        for document_id, document_vector in zip(
+            dataset.document_ids, dataset.document_vectors, strict=True
+        )
+    }
+    return [
+        document_id
+        for document_id, _score in sorted(
+            scores.items(), key=lambda item: (-item[1], item[0])
+        )[:initial_k]
+    ]
 
 
 def _compare_runs(left: dict[str, object], right: dict[str, object]) -> dict[str, object]:
@@ -314,13 +340,30 @@ def _validate_run_evidence(
     if not _strict_equal(dict(execution), expected_execution):
         raise ValueError(f"runs.{method} execution snapshot is inconsistent")
     raw_ids = _mapping(run["raw_ids"], f"runs.{method}.raw_ids")
-    _require_keys(raw_ids, {"ranked_document_ids", "initial_candidate_ids", "discovered_candidate_ids", "per_query_candidate_ids", "per_query_ranked_document_ids"}, f"runs.{method}.raw_ids")
+    _require_keys(raw_ids, {"ranked_document_ids", "initial_candidate_ids", "per_query_initial_candidate_ids", "discovered_candidate_ids", "per_query_candidate_ids", "per_query_ranked_document_ids"}, f"runs.{method}.raw_ids")
     documents = set(dataset.document_ids)
     ranked = _string_list(raw_ids["ranked_document_ids"], "ranked_document_ids")
     initial = _string_list(raw_ids["initial_candidate_ids"], "initial_candidate_ids")
     discovered = _string_list(raw_ids["discovered_candidate_ids"], "discovered_candidate_ids")
-    if len(ranked) > top_k or any(len(set(values)) != len(values) for values in (ranked, initial, discovered)) or not set(ranked) <= documents or not set(initial) <= documents or not set(discovered) <= documents:
+    if len(ranked) != top_k or any(len(set(values)) != len(values) for values in (ranked, initial, discovered)) or not set(ranked) <= documents or not set(initial) <= documents or not set(discovered) <= documents:
         raise ValueError(f"runs.{method} contains invalid raw document ids")
+    per_query_initials = _mapping(
+        raw_ids["per_query_initial_candidate_ids"],
+        f"runs.{method}.per_query_initial_candidate_ids",
+    )
+    if list(per_query_initials) != list(query_ids):
+        raise ValueError(f"runs.{method} initial candidates do not match query ids")
+    parsed_initials: dict[str, frozenset[str]] = {}
+    for query_id, values in per_query_initials.items():
+        identifiers = _string_list(values, "per-query initial candidate ids")
+        if len(identifiers) != initial_k or len(set(identifiers)) != len(identifiers) or not set(identifiers) <= documents:
+            raise ValueError(f"runs.{method} has invalid per-query initial candidates")
+        expected_initial = _direct_initial_candidates(dataset, query_id, initial_k)
+        if not _strict_equal(identifiers, expected_initial):
+            raise ValueError(f"runs.{method} initial candidates do not match direct retrieval")
+        parsed_initials[query_id] = frozenset(identifiers)
+    if frozenset().union(*parsed_initials.values()) != frozenset(initial):
+        raise ValueError(f"runs.{method} initial candidates do not match per-query evidence")
     per_query_candidates: dict[str, frozenset[str]] = {}
     per_query_rankings: dict[str, tuple[str, ...]] = {}
     for key in ("per_query_candidate_ids", "per_query_ranked_document_ids"):
@@ -339,8 +382,8 @@ def _validate_run_evidence(
         raise ValueError(f"runs.{method} discovered candidates do not match per-query evidence")
     if method in {"A", "B"} and frozenset(initial) != frozenset(discovered):
         raise ValueError(f"runs.{method} baseline candidates must not be novel")
-    if any(len(ranking) > top_k for ranking in per_query_rankings.values()):
-        raise ValueError(f"runs.{method} per-query rankings exceed top_k")
+    if any(len(ranking) != top_k for ranking in per_query_rankings.values()):
+        raise ValueError(f"runs.{method} per-query rankings must equal top_k")
     metrics = _mapping(run["metrics"], f"runs.{method}.metrics")
     _require_keys(metrics, {"recall_at_k", "reciprocal_rank", "mrr", "ndcg_at_k", "unique_relevant_documents", "candidate_count", "novel_candidates", "novel_relevant_candidates"}, f"runs.{method}.metrics")
     for name in ("recall_at_k", "reciprocal_rank", "mrr", "ndcg_at_k"):
@@ -399,6 +442,7 @@ def _validate_run_evidence(
         mcmp_steps=_integer(run["mcmp_steps"], "mcmp_steps"),
         document_visits=visit_counts,
         pheromone_trails=pheromone_trails,
+        per_query_initial_candidate_ids=parsed_initials,
     )
     if not _strict_equal(dict(metrics), evaluate_run(dataset, reconstructed, top_k)):
         raise ValueError(f"runs.{method} metrics do not match raw evidence")
@@ -415,7 +459,7 @@ def _validate_comparison(comparison: Mapping[str, object], left: Mapping[str, ob
     if type(comparison["ranked_document_ids_equal"]) is not bool or comparison["ranked_document_ids_equal"] != (left_raw["ranked_document_ids"] == right_raw["ranked_document_ids"]) or not _strict_equal(comparison["novel_relevant_candidates"], right_metrics["novel_relevant_candidates"]):
         raise ValueError("comparison does not match run evidence")
     for name, metric in (("recall_at_k_delta", "recall_at_k"), ("mrr_delta", "mrr"), ("ndcg_at_k_delta", "ndcg_at_k")):
-        if not math.isclose(_finite_number(comparison[name], name), _finite_number(right_metrics[metric], metric) - _finite_number(left_metrics[metric], metric), rel_tol=0.0, abs_tol=1e-15):
+        if _finite_number(comparison[name], name) != _finite_number(right_metrics[metric], metric) - _finite_number(left_metrics[metric], metric):
             raise ValueError("comparison metric delta is inconsistent")
 
 

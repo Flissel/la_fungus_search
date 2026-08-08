@@ -116,6 +116,7 @@ class SearchRun:
     mcmp_steps: int
     document_visits: dict[str, int]
     pheromone_trails: int
+    per_query_initial_candidate_ids: dict[str, frozenset[str]] | None = None
 
     def validate(self, dataset: BenchmarkDataset) -> None:
         dataset.validate()
@@ -137,10 +138,17 @@ class SearchRun:
             raise ValueError("per-query candidate ids must match run query ids")
         if set(self.per_query_ranked_document_ids) != expected_query_ids:
             raise ValueError("per-query ranked ids must match run query ids")
+        if self.per_query_initial_candidate_ids is not None and set(
+            self.per_query_initial_candidate_ids
+        ) != expected_query_ids:
+            raise ValueError("per-query initial ids must match run query ids")
         for query_id, candidate_ids in self.per_query_candidate_ids.items():
             self._validate_candidate_ids(candidate_ids, document_ids)
         for query_id, ranking in self.per_query_ranked_document_ids.items():
             self._validate_document_ids(ranking, document_ids, "ranked document")
+        if self.per_query_initial_candidate_ids is not None:
+            for candidate_ids in self.per_query_initial_candidate_ids.values():
+                self._validate_candidate_ids(candidate_ids, document_ids)
 
         for document_id, visits in self.document_visits.items():
             if document_id not in document_ids:

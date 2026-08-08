@@ -178,3 +178,40 @@ def test_writer_rejects_forged_configuration_and_execution_evidence(mutation, tm
         write_gate1_result(payload, output_path)
 
     assert not output_path.exists()
+
+
+def test_gate1_persists_actual_per_query_initial_candidates() -> None:
+    payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10)
+
+    assert payload["runs"]["C"]["raw_ids"]["per_query_initial_candidate_ids"] == {
+        "q-main": ["main-top"],
+    }
+    assert payload["runs"]["D"]["raw_ids"]["per_query_initial_candidate_ids"] == {
+        "q-main": ["main-top"],
+        "q-related": ["related-top"],
+    }
+
+
+@pytest.mark.parametrize("mutation", ["initial_k", "top_k", "forged_c_initials", "comparison_delta"])
+def test_writer_rejects_self_consistent_raw_binding_forgery(mutation, tmp_path) -> None:
+    payload = deepcopy(run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10))
+    if mutation == "initial_k":
+        payload["config"]["initial_k"] = 2
+        for run in payload["runs"].values():
+            run["execution"]["initial_k"] = 2
+    elif mutation == "top_k":
+        payload["config"]["top_k"] = 5
+        for run in payload["runs"].values():
+            run["execution"]["top_k"] = 5
+    elif mutation == "forged_c_initials":
+        raw_ids = payload["runs"]["C"]["raw_ids"]
+        raw_ids["per_query_initial_candidate_ids"]["q-main"] = ["opposite"]
+        raw_ids["initial_candidate_ids"] = ["opposite"]
+    else:
+        payload["comparisons"]["A_vs_C"]["mrr_delta"] += 5e-16
+    output_path = tmp_path / mutation / "gate1.json"
+
+    with pytest.raises(ValueError):
+        write_gate1_result(payload, output_path)
+
+    assert not output_path.exists()

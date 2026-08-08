@@ -102,6 +102,7 @@ def run_faiss(
         mcmp_steps=0,
         document_visits={},
         pheromone_trails=0,
+        per_query_initial_candidate_ids=candidates,
     )
     run.validate(dataset)
     return run, AdapterEvidence(
@@ -182,6 +183,7 @@ def run_mcmp(
         mcmp_steps=steps,
         document_visits=visits,
         pheromone_trails=trails,
+        per_query_initial_candidate_ids=initial_candidates,
     )
     run.validate(dataset)
     return run, AdapterEvidence(

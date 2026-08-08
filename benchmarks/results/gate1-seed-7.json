@@ -126,6 +126,11 @@
             "main-top"
           ]
         },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-top"
+          ]
+        },
         "per_query_ranked_document_ids": {
           "q-main": [
             "main-top",
@@ -142,7 +147,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 0.3096000000368804
+        "elapsed_ms": 0.3254000039305538
       }
     },
     "B": {
@@ -201,6 +206,14 @@
             "related-top"
           ]
         },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-top"
+          ],
+          "q-related": [
+            "related-top"
+          ]
+        },
         "per_query_ranked_document_ids": {
           "q-main": [
             "main-top",
@@ -223,7 +236,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 0.36670000554295257
+        "elapsed_ms": 0.25349999486934394
       }
     },
     "C": {
@@ -296,6 +309,11 @@
             "related-bridge"
           ]
         },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-top"
+          ]
+        },
         "per_query_ranked_document_ids": {
           "q-main": [
             "main-near",
@@ -312,7 +330,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 699.1513999964809
+        "elapsed_ms": 729.3629999985569
       }
     },
     "D": {
@@ -398,6 +416,14 @@
             "related-near"
           ]
         },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-top"
+          ],
+          "q-related": [
+            "related-top"
+          ]
+        },
         "per_query_ranked_document_ids": {
           "q-main": [
             "main-near",
@@ -420,7 +446,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 50.628799996047746
+        "elapsed_ms": 49.77669999789214
       }
     }
   }
