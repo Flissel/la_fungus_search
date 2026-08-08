@@ -65,8 +65,11 @@ def test_search_run_rejects_complex_elapsed_time() -> None:
 
 def test_dataset_rejects_vectors_that_overflow_float32_digest() -> None:
     dataset = valid_dataset()
+    overflowing_float32_value = 2.0 * float(np.finfo(np.float32).max)
+    assert np.isfinite(overflowing_float32_value)
+    assert overflowing_float32_value > float(np.finfo(np.float32).max)
     dataset.document_vectors = np.asarray(
-        [[2 * np.finfo(np.float32).max, 0.0], [0.0, 1.0]], dtype=np.float64
+        [[overflowing_float32_value, 0.0], [0.0, 1.0]], dtype=np.float64
     )
 
     with pytest.raises(ValueError, match="float32"):
