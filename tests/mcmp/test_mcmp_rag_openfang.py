@@ -1,4 +1,5 @@
 import json
+import random
 
 import numpy as np
 import pytest
@@ -96,10 +97,11 @@ def test_persistent_index_with_non_matrix_embeddings_requires_rebuild(monkeypatc
 
 
 def test_faiss_neighbours_report_inner_product_as_cosine_similarity(monkeypatch):
-    pytest.importorskip("faiss")
+    faiss = pytest.importorskip("faiss")
     import embeddinggemma.mcmp_rag as mcmp_rag
-    from embeddinggemma.mcmp import indexing
 
+    random.seed(0)
+    np.random.seed(0)
     monkeypatch.setattr(mcmp_rag, "load_embedding_backend", lambda: (object(), 2))
 
     embeddings = np.array(
@@ -115,7 +117,11 @@ def test_faiss_neighbours_report_inner_product_as_cosine_similarity(monkeypatch)
         mcmp_rag.Document(id=index, content=f"document-{index}", embedding=vector)
         for index, vector in enumerate(embeddings)
     ]
-    retriever._faiss_index = indexing.build_faiss_index(embeddings, dim=2)
+    cpu_index = faiss.IndexFlatIP(2)
+    normalized_embeddings = embeddings.copy()
+    faiss.normalize_L2(normalized_embeddings)
+    cpu_index.add(normalized_embeddings)
+    retriever._faiss_index = cpu_index
 
     neighbours = retriever.find_nearest_documents(
         np.array([1.0, 0.0], dtype=np.float32),

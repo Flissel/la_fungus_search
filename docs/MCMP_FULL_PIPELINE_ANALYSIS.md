@@ -134,6 +134,22 @@ This path is sequential inside one background thread. It is not a comparison
 of multiple query trajectories and it does not expose the set of documents
 discovered beyond a separately captured initial direct-search set.
 
+### Sharded MCMP paths that discard simulation results
+
+`ui/reports.py` partitions a corpus into shards. For each shard it clears and
+loads the retriever, calls `initialize_simulation(q)`, executes the configured
+number of `step(1)` calls, then invokes `retr.search(q, ...)`. Because `search`
+delegates to `search_direct()`, the item records added to the report are direct
+retrieval results, not the just-computed simulation ranking. The code does
+execute MCMP per shard, but discards its returned ranking before aggregating.
+
+The realtime server's `POST /jobs/start` background job has the same shape:
+it creates one `MCPMRetriever` per shard, initializes and steps MCMP, then
+extends its aggregate with `retr.search(q, top_k=5)`. It therefore executes
+sharded MCMP but returns direct-retrieval results for every shard. Neither path
+forms a shared colony across shards or preserves simulation results as the
+reported result set.
+
 ## Path C: multi-query mechanisms
 
 ### LLM-generated UI queries
