@@ -103,6 +103,47 @@ def test_mcmp_seeds_python_and_numpy_rng_for_each_query_and_records_provenance(
     }
 
 
+def test_mcmp_seeds_numpy_rng_for_each_independent_query(monkeypatch) -> None:
+    dataset = build_synthetic_dataset()
+    observed_numpy_seeds: list[int] = []
+    real_seed = np.random.seed
+
+    def record_numpy_seed(value: int) -> None:
+        observed_numpy_seeds.append(value)
+        real_seed(value)
+
+    monkeypatch.setattr(adapters_module.np.random, "seed", record_numpy_seed)
+
+    run_mcmp(
+        dataset, "D", ("q-main", "q-related"), top_k=4, initial_k=1,
+        seed=7, num_agents=2, steps=2,
+    )
+
+    assert observed_numpy_seeds == [7, 8]
+
+
+def test_mcmp_same_seed_results_do_not_depend_on_caller_numpy_state() -> None:
+    dataset = build_synthetic_dataset()
+    original_numpy_state = np.random.get_state()
+    try:
+        np.random.seed(101)
+        first, _first_evidence = run_mcmp(
+            dataset, "D", ("q-main", "q-related"), top_k=4, initial_k=1,
+            seed=7, num_agents=2, steps=2,
+        )
+        np.random.seed(202)
+        second, _second_evidence = run_mcmp(
+            dataset, "D", ("q-main", "q-related"), top_k=4, initial_k=1,
+            seed=7, num_agents=2, steps=2,
+        )
+    finally:
+        np.random.set_state(original_numpy_state)
+
+    assert first.ranked_document_ids == second.ranked_document_ids
+    assert first.document_visits == second.document_visits
+    assert first.pheromone_trails == second.pheromone_trails
+
+
 def test_mcmp_evidence_counts_independent_runs_without_exposing_retriever() -> None:
     dataset = build_synthetic_dataset()
 

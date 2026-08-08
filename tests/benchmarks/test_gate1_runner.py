@@ -291,12 +291,28 @@ def test_writer_rejects_reordered_score_ranked_initial_evidence(tmp_path) -> Non
     assert not output_path.exists()
 
 
-def test_writer_rejects_forged_python_or_numpy_seed_provenance(tmp_path) -> None:
+def test_writer_rejects_forged_python_seed_provenance(tmp_path) -> None:
     payload = deepcopy(run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10))
     payload["runs"]["D"]["execution"]["random_seed_provenance"]["per_query"][
         "q-related"
     ]["python_random_seed"] = 99
     output_path = tmp_path / "forged-seed-provenance.json"
+
+    with pytest.raises(ValueError, match="execution snapshot"):
+        write_gate1_result(payload, output_path)
+
+    assert not output_path.exists()
+
+
+@pytest.mark.parametrize("location", ["base", "per_query"])
+def test_writer_rejects_forged_numpy_seed_provenance(location: str, tmp_path) -> None:
+    payload = deepcopy(run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10))
+    provenance = payload["runs"]["D"]["execution"]["random_seed_provenance"]
+    if location == "base":
+        provenance["numpy_random_seed"] = 99
+    else:
+        provenance["per_query"]["q-related"]["numpy_random_seed"] = 99
+    output_path = tmp_path / f"forged-numpy-seed-{location}.json"
 
     with pytest.raises(ValueError, match="execution snapshot"):
         write_gate1_result(payload, output_path)
