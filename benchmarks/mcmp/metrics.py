@@ -12,6 +12,7 @@ from benchmarks.mcmp.contracts import BenchmarkDataset, SearchRun
 
 
 def reciprocal_rank(ranked: Sequence[str], relevant: frozenset[str], k: int) -> float:
+    k = _validate_k(k)
     for rank, document_id in enumerate(ranked[:k], start=1):
         if document_id in relevant:
             return 1.0 / rank
@@ -19,6 +20,7 @@ def reciprocal_rank(ranked: Sequence[str], relevant: frozenset[str], k: int) -> 
 
 
 def ndcg_at_k(ranked: Sequence[str], relevant: frozenset[str], k: int) -> float:
+    k = _validate_k(k)
     dcg = sum(
         1.0 / math.log2(rank + 1)
         for rank, document_id in enumerate(ranked[:k], start=1)
@@ -31,6 +33,7 @@ def ndcg_at_k(ranked: Sequence[str], relevant: frozenset[str], k: int) -> float:
 
 def evaluate_run(dataset: BenchmarkDataset, run: SearchRun, k: int) -> dict[str, object]:
     """Evaluate one fused ranking and its per-query ranking outcomes."""
+    k = _validate_k(k)
     dataset.validate()
     run.validate(dataset)
     relevant = frozenset().union(
@@ -59,7 +62,7 @@ def evaluate_run(dataset: BenchmarkDataset, run: SearchRun, k: int) -> dict[str,
         ),
         "ndcg_at_k": ndcg_at_k(run.ranked_document_ids, relevant, k),
         "unique_relevant_documents": len(relevant),
-        "candidate_count": len(novel_candidates),
+        "candidate_count": len(run.discovered_candidate_ids),
         "novel_candidates": novel_candidates,
         "novel_relevant_candidates": novel_relevant_candidates,
     }
@@ -68,6 +71,8 @@ def evaluate_run(dataset: BenchmarkDataset, run: SearchRun, k: int) -> dict[str,
 def query_geometry(dataset: BenchmarkDataset) -> dict[str, float]:
     """Summarize pairwise cosine distance between benchmark query vectors."""
     dataset.validate()
+    if np.any(np.linalg.norm(dataset.query_vectors, axis=1) == 0.0):
+        raise ValueError("zero-norm query vector")
     distances = [
         _cosine_distance(left, right)
         for left, right in combinations(dataset.query_vectors, 2)
@@ -94,5 +99,11 @@ def candidate_overlap(run: SearchRun) -> dict[str, float]:
 def _cosine_distance(left: np.ndarray, right: np.ndarray) -> float:
     denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
     if denominator == 0.0:
-        return 0.0
+        raise ValueError("zero-norm query vector")
     return float(1.0 - np.dot(left, right) / denominator)
+
+
+def _validate_k(k: object) -> int:
+    if isinstance(k, bool) or not isinstance(k, (int, np.integer)) or k <= 0:
+        raise ValueError("k must be a positive integer")
+    return int(k)
