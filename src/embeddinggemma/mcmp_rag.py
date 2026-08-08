@@ -186,10 +186,12 @@ class MCPMRetriever:
             ]
             self._embed_dim = cached_dim
             # Load FAISS index
-            self._faiss_index = _load_faiss(faiss_path, gpu=True)
+            self._faiss_index = _load_faiss(faiss_path, gpu=not self.force_cpu)
             if self._faiss_index is None:
                 # Rebuild from cached embeddings (fast, no re-embedding needed)
-                self._faiss_index = _build_faiss(embs, self._embed_dim)
+                self._faiss_index = _build_faiss(
+                    embs, self._embed_dim, force_cpu=self.force_cpu
+                )
 
             _logger.info("Persistent index loaded: %d docs, %d dim", len(self.documents), self._embed_dim)
             return True
