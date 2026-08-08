@@ -433,14 +433,12 @@ class MCPMRetriever:
         # Fast path: use FAISS index if available (O(log n) vs O(n))
         if self._faiss_index is not None:
             try:
-                distances, indices = _faiss_search(self._faiss_index, pos.squeeze(), k)
+                similarities, indices = _faiss_search(self._faiss_index, pos.squeeze(), k)
                 results = []
-                for i, dist in zip(indices, distances):
+                for i, similarity in zip(indices, similarities):
                     i = int(i)
                     if 0 <= i < len(self.documents):
-                        # FAISS L2 distance → approximate cosine similarity
-                        sim = max(0.0, 1.0 - float(dist) / 2.0)
-                        results.append((self.documents[i], sim))
+                        results.append((self.documents[i], float(similarity)))
                 return results
             except Exception:
                 pass  # Fall through to brute-force

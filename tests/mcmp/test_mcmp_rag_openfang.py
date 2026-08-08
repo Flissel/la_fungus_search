@@ -93,3 +93,36 @@ def test_persistent_index_with_non_matrix_embeddings_requires_rebuild(monkeypatc
 
     with pytest.raises(RuntimeError, match="rebuild required.*two-dimensional"):
         retriever.load_persistent_index()
+
+
+def test_faiss_neighbours_report_inner_product_as_cosine_similarity(monkeypatch):
+    pytest.importorskip("faiss")
+    import embeddinggemma.mcmp_rag as mcmp_rag
+    from embeddinggemma.mcmp import indexing
+
+    monkeypatch.setattr(mcmp_rag, "load_embedding_backend", lambda: (object(), 2))
+
+    embeddings = np.array(
+        [
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [-1.0, 0.0],
+        ],
+        dtype=np.float32,
+    )
+    retriever = mcmp_rag.MCPMRetriever()
+    retriever.documents = [
+        mcmp_rag.Document(id=index, content=f"document-{index}", embedding=vector)
+        for index, vector in enumerate(embeddings)
+    ]
+    retriever._faiss_index = indexing.build_faiss_index(embeddings, dim=2)
+
+    neighbours = retriever.find_nearest_documents(
+        np.array([1.0, 0.0], dtype=np.float32),
+        k=3,
+    )
+
+    assert [document.id for document, _similarity in neighbours] == [0, 1, 2]
+    assert [similarity for _document, similarity in neighbours] == pytest.approx(
+        [1.0, 0.0, -1.0]
+    )
