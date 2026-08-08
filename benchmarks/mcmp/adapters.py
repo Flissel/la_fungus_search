@@ -58,8 +58,7 @@ def run_faiss(
     initial_k: int,
 ) -> tuple[SearchRun, AdapterEvidence]:
     """Run normalized inner-product retrieval independently for each query."""
-    dataset.validate()
-    _validate_query_ids(dataset, query_ids)
+    _validate_run_inputs(dataset, method, query_ids, {"A", "B"}, top_k, initial_k)
     started = perf_counter()
     vectors = _vector_mapping(dataset)
     candidates: dict[str, frozenset[str]] = {}
@@ -111,8 +110,10 @@ def run_mcmp(
     steps: int,
 ) -> tuple[SearchRun, AdapterEvidence]:
     """Run a fresh, seeded MCMP simulation for every benchmark query."""
-    dataset.validate()
-    _validate_query_ids(dataset, query_ids)
+    _validate_run_inputs(dataset, method, query_ids, {"C", "D"}, top_k, initial_k)
+    _validate_positive_integer(num_agents, name="num_agents")
+    _validate_positive_integer(steps, name="steps")
+    _validate_seed(seed, query_count=len(query_ids))
     started = perf_counter()
     vectors = _vector_mapping(dataset)
     initial_candidates: dict[str, frozenset[str]] = {}
@@ -193,8 +194,42 @@ def _fuse(score_maps: Sequence[dict[str, float]], top_k: int) -> tuple[str, ...]
     return _rank(scores, top_k)
 
 
-def _validate_query_ids(dataset: BenchmarkDataset, query_ids: Sequence[str]) -> None:
-    if not query_ids:
-        raise ValueError("query ids must not be empty")
+def _validate_run_inputs(
+    dataset: BenchmarkDataset,
+    method: str,
+    query_ids: Sequence[str],
+    allowed_methods: set[str],
+    top_k: int,
+    initial_k: int,
+) -> None:
+    dataset.validate()
+    if method not in allowed_methods:
+        raise ValueError(f"method must be one of {sorted(allowed_methods)}")
+    expected_query_count = 1 if method in {"A", "C"} else 2
+    if len(query_ids) != expected_query_count:
+        raise ValueError(f"method {method} requires exactly {expected_query_count} query ids")
+    if len(set(query_ids)) != len(query_ids):
+        raise ValueError("query ids must be unique")
     if any(query_id not in dataset.query_ids for query_id in query_ids):
         raise ValueError("unknown query id")
+    if set(dataset.document_ids) & set(dataset.query_ids):
+        raise ValueError("document and query ids must be disjoint")
+    _validate_positive_integer(top_k, name="top_k")
+    _validate_positive_integer(initial_k, name="initial_k")
+    document_count = len(dataset.document_ids)
+    if top_k > document_count:
+        raise ValueError("top_k must not exceed document count")
+    if initial_k > top_k:
+        raise ValueError("initial_k must not exceed top_k")
+
+
+def _validate_positive_integer(value: object, *, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+
+
+def _validate_seed(seed: object, *, query_count: int) -> None:
+    if isinstance(seed, bool) or not isinstance(seed, (int, np.integer)):
+        raise ValueError("seed must be an integer")
+    if seed < 0 or seed > (2**32 - query_count):
+        raise ValueError("seed is outside the supported NumPy range")
