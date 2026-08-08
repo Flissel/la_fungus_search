@@ -11,6 +11,25 @@ def test_build_faiss_index_returns_none_when_unavailable(monkeypatch):
     assert idx is None
 
 
+def test_force_cpu_index_never_calls_gpu_helpers_when_gpu_is_available(monkeypatch):
+    from embeddinggemma.mcmp import indexing
+
+    if not indexing._FAISS_OK:
+        pytest.skip("FAISS is unavailable")
+
+    def gpu_helper_called(*args, **kwargs):
+        raise AssertionError("GPU helper must not be called for force_cpu=True")
+
+    monkeypatch.setattr(indexing.faiss, "get_num_gpus", lambda: 1, raising=False)
+    monkeypatch.setattr(indexing.faiss, "StandardGpuResources", gpu_helper_called, raising=False)
+    monkeypatch.setattr(indexing.faiss, "index_cpu_to_all_gpus", gpu_helper_called, raising=False)
+
+    embs = np.random.RandomState(0).randn(10, 8).astype(np.float32)
+    index = indexing.build_faiss_index(embs, dim=8, force_cpu=True)
+
+    assert index is not None
+
+
 def test_cosine_similarities_cpu_basic():
     from embeddinggemma.mcmp import indexing
 

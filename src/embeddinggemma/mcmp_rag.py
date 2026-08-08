@@ -8,9 +8,10 @@ delegating all core functionality to the refactored `embeddinggemma.mcmp.*`.
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Optional, Set, Any
+from typing import List, Dict, Tuple, Optional, Set, Any, Callable
 import logging
 import os
+import time
 import warnings
 import numpy as np
 
@@ -69,7 +70,10 @@ class MCPMRetriever:
                  pheromone_decay: float = 0.95,
                  exploration_bonus: float = 0.1,
                  embed_batch_size: int = 128,
-                 build_faiss_after_add: bool = True):
+                 build_faiss_after_add: bool = True,
+                 force_cpu: bool = False,
+                 embedding_backend: Optional[Tuple[Any, int]] = None,
+                 time_source: Callable[[], float] | None = None):
         warnings.warn(
             "MCPMRetriever is deprecated as a facade. Internals are under embeddinggemma.mcmp.*",
             DeprecationWarning,
@@ -81,7 +85,12 @@ class MCPMRetriever:
         self.exploration_bonus = float(exploration_bonus)
         self.embed_batch_size = int(embed_batch_size)
         self.build_faiss_after_add = bool(build_faiss_after_add)
-        self.embedding_model, self._expected_embedding_dim = load_embedding_backend()
+        self.force_cpu = bool(force_cpu)
+        self.time_source = time.time if time_source is None else time_source
+        if embedding_backend is None:
+            self.embedding_model, self._expected_embedding_dim = load_embedding_backend()
+        else:
+            self.embedding_model, self._expected_embedding_dim = embedding_backend
 
         self.documents: List[Document] = []
         self.agents: List[Agent] = []
@@ -177,10 +186,12 @@ class MCPMRetriever:
             ]
             self._embed_dim = cached_dim
             # Load FAISS index
-            self._faiss_index = _load_faiss(faiss_path, gpu=True)
+            self._faiss_index = _load_faiss(faiss_path, gpu=not self.force_cpu)
             if self._faiss_index is None:
                 # Rebuild from cached embeddings (fast, no re-embedding needed)
-                self._faiss_index = _build_faiss(embs, self._embed_dim)
+                self._faiss_index = _build_faiss(
+                    embs, self._embed_dim, force_cpu=self.force_cpu
+                )
 
             _logger.info("Persistent index loaded: %d docs, %d dim", len(self.documents), self._embed_dim)
             return True
@@ -222,7 +233,9 @@ class MCPMRetriever:
         if self.build_faiss_after_add and self._embed_dim:
             try:
                 mat = np.array([d.embedding for d in self.documents], dtype=np.float32)
-                self._faiss_index = _build_faiss(mat, int(self._embed_dim))
+                self._faiss_index = _build_faiss(
+                    mat, int(self._embed_dim), force_cpu=self.force_cpu
+                )
             except Exception as e:
                 _logger.warning("FAISS index build failed: %s", e)
                 self._faiss_index = None
@@ -433,14 +446,12 @@ class MCPMRetriever:
         # Fast path: use FAISS index if available (O(log n) vs O(n))
         if self._faiss_index is not None:
             try:
-                distances, indices = _faiss_search(self._faiss_index, pos.squeeze(), k)
+                similarities, indices = _faiss_search(self._faiss_index, pos.squeeze(), k)
                 results = []
-                for i, dist in zip(indices, distances):
+                for i, similarity in zip(indices, similarities):
                     i = int(i)
                     if 0 <= i < len(self.documents):
-                        # FAISS L2 distance → approximate cosine similarity
-                        sim = max(0.0, 1.0 - float(dist) / 2.0)
-                        results.append((self.documents[i], sim))
+                        results.append((self.documents[i], float(similarity)))
                 return results
             except Exception:
                 pass  # Fall through to brute-force
