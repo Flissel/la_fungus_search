@@ -69,7 +69,8 @@ class MCPMRetriever:
                  pheromone_decay: float = 0.95,
                  exploration_bonus: float = 0.1,
                  embed_batch_size: int = 128,
-                 build_faiss_after_add: bool = True):
+                 build_faiss_after_add: bool = True,
+                 embedding_backend: Optional[Tuple[Any, int]] = None):
         warnings.warn(
             "MCPMRetriever is deprecated as a facade. Internals are under embeddinggemma.mcmp.*",
             DeprecationWarning,
@@ -81,7 +82,10 @@ class MCPMRetriever:
         self.exploration_bonus = float(exploration_bonus)
         self.embed_batch_size = int(embed_batch_size)
         self.build_faiss_after_add = bool(build_faiss_after_add)
-        self.embedding_model, self._expected_embedding_dim = load_embedding_backend()
+        if embedding_backend is None:
+            self.embedding_model, self._expected_embedding_dim = load_embedding_backend()
+        else:
+            self.embedding_model, self._expected_embedding_dim = embedding_backend
 
         self.documents: List[Document] = []
         self.agents: List[Agent] = []

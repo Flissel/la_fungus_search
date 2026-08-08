@@ -132,3 +132,13 @@ def test_faiss_neighbours_report_inner_product_as_cosine_similarity(monkeypatch)
     assert [similarity for _document, similarity in neighbours] == pytest.approx(
         [1.0, 0.0, -1.0]
     )
+
+
+def test_retriever_accepts_explicit_embedding_backend():
+    import embeddinggemma.mcmp_rag as mcmp_rag
+
+    backend = object()
+    retriever = mcmp_rag.MCPMRetriever(embedding_backend=(backend, 3))
+
+    assert retriever.embedding_model is backend
+    assert retriever._expected_embedding_dim == 3
