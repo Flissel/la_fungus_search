@@ -20,6 +20,16 @@ from embeddinggemma.mcmp_rag import MCPMRetriever
 
 PHEROMONE_DECAY = 0.95
 EXPLORATION_BONUS = 0.1
+DETERMINISTIC_CLOCK_MODE = "fixed"
+DETERMINISTIC_CLOCK_VALUE = 2.0
+
+
+@dataclass(frozen=True)
+class FixedClock:
+    value: float
+
+    def __call__(self) -> float:
+        return self.value
 
 
 @dataclass(frozen=True)
@@ -30,6 +40,8 @@ class AdapterEvidence:
     nearest_search_calls: int
     execution_backend: str
     per_query_initial_candidate_ids: dict[str, tuple[str, ...]]
+    clock_mode: str
+    clock_value: float
 
 
 class MappingEmbeddingBackend:
@@ -80,6 +92,7 @@ def run_faiss(
             build_faiss_after_add=True,
             force_cpu=True,
             embedding_backend=(backend, dataset.document_vectors.shape[1]),
+            time_source=FixedClock(DETERMINISTIC_CLOCK_VALUE),
         )
         retriever.add_documents(list(dataset.document_ids), cache=False)
         execution_backends.add(_execution_backend(retriever))
@@ -113,6 +126,8 @@ def run_faiss(
         nearest_search_calls,
         _single_execution_backend(execution_backends),
         initial_rankings,
+        DETERMINISTIC_CLOCK_MODE,
+        DETERMINISTIC_CLOCK_VALUE,
     )
 
 
@@ -155,6 +170,7 @@ def run_mcmp(
                 build_faiss_after_add=True,
                 force_cpu=True,
                 embedding_backend=(backend, dataset.document_vectors.shape[1]),
+                time_source=FixedClock(DETERMINISTIC_CLOCK_VALUE),
             )
             retriever.add_documents(list(dataset.document_ids), cache=False)
             execution_backends.add(_execution_backend(retriever))
@@ -199,6 +215,8 @@ def run_mcmp(
         nearest_search_calls,
         _single_execution_backend(execution_backends),
         initial_rankings,
+        DETERMINISTIC_CLOCK_MODE,
+        DETERMINISTIC_CLOCK_VALUE,
     )
 
 

@@ -8,9 +8,10 @@ delegating all core functionality to the refactored `embeddinggemma.mcmp.*`.
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Optional, Set, Any
+from typing import List, Dict, Tuple, Optional, Set, Any, Callable
 import logging
 import os
+import time
 import warnings
 import numpy as np
 
@@ -71,7 +72,8 @@ class MCPMRetriever:
                  embed_batch_size: int = 128,
                  build_faiss_after_add: bool = True,
                  force_cpu: bool = False,
-                 embedding_backend: Optional[Tuple[Any, int]] = None):
+                 embedding_backend: Optional[Tuple[Any, int]] = None,
+                 time_source: Callable[[], float] | None = None):
         warnings.warn(
             "MCPMRetriever is deprecated as a facade. Internals are under embeddinggemma.mcmp.*",
             DeprecationWarning,
@@ -84,6 +86,7 @@ class MCPMRetriever:
         self.embed_batch_size = int(embed_batch_size)
         self.build_faiss_after_add = bool(build_faiss_after_add)
         self.force_cpu = bool(force_cpu)
+        self.time_source = time.time if time_source is None else time_source
         if embedding_backend is None:
             self.embedding_model, self._expected_embedding_dim = load_embedding_backend()
         else:

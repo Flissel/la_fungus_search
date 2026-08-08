@@ -14,6 +14,8 @@ import numpy as np
 from benchmarks.mcmp.adapters import (
     EXPLORATION_BONUS,
     PHEROMONE_DECAY,
+    DETERMINISTIC_CLOCK_MODE,
+    DETERMINISTIC_CLOCK_VALUE,
     AdapterEvidence,
     run_faiss,
     run_mcmp,
@@ -79,6 +81,8 @@ def run_gate1(
             "faiss_metric": "inner_product",
             "pheromone_decay": PHEROMONE_DECAY,
             "exploration_bonus": EXPLORATION_BONUS,
+            "clock_mode": DETERMINISTIC_CLOCK_MODE,
+            "clock_value": DETERMINISTIC_CLOCK_VALUE,
         },
         "query_geometry": query_geometry(dataset),
         "runs": runs,
@@ -123,6 +127,8 @@ def _run_payload(
             initial_k,
             num_agents,
             steps,
+            evidence.clock_mode,
+            evidence.clock_value,
         ),
         "raw_ids": {
             "ranked_document_ids": list(run.ranked_document_ids),
@@ -160,6 +166,8 @@ def _run_execution_snapshot(
     initial_k: int,
     num_agents: int,
     steps: int,
+    clock_mode: str = DETERMINISTIC_CLOCK_MODE,
+    clock_value: float = DETERMINISTIC_CLOCK_VALUE,
 ) -> dict[str, object]:
     is_mcmp = method in {"C", "D"}
     return {
@@ -175,6 +183,8 @@ def _run_execution_snapshot(
         "steps": steps if is_mcmp else None,
         "pheromone_decay": PHEROMONE_DECAY if is_mcmp else None,
         "exploration_bonus": EXPLORATION_BONUS if is_mcmp else None,
+        "clock_mode": clock_mode,
+        "clock_value": clock_value,
     }
 
 
@@ -255,6 +265,8 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
         "faiss_metric": "inner_product",
         "pheromone_decay": PHEROMONE_DECAY,
         "exploration_bonus": EXPLORATION_BONUS,
+        "clock_mode": DETERMINISTIC_CLOCK_MODE,
+        "clock_value": DETERMINISTIC_CLOCK_VALUE,
     }):
         raise ValueError("execution settings are incomplete or inconsistent")
 

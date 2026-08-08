@@ -67,6 +67,8 @@
     "python_version": "3.11.0"
   },
   "execution": {
+    "clock_mode": "fixed",
+    "clock_value": 2.0,
     "exploration_bonus": 0.1,
     "faiss_factory": "Flat",
     "faiss_metric": "inner_product",
@@ -83,6 +85,8 @@
       "candidate_overlap": {},
       "document_visits": {},
       "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
         "execution_backend": "faiss-cpu",
         "exploration_bonus": null,
         "faiss_factory": "Flat",
@@ -147,7 +151,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 0.31709999893791974
+        "elapsed_ms": 4.183999997621868
       }
     },
     "B": {
@@ -157,6 +161,8 @@
       },
       "document_visits": {},
       "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
         "execution_backend": "faiss-cpu",
         "exploration_bonus": null,
         "faiss_factory": "Flat",
@@ -236,7 +242,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 0.25910000113071874
+        "elapsed_ms": 0.8018000007723458
       }
     },
     "C": {
@@ -253,6 +259,8 @@
         "z-distractor": 0
       },
       "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
         "execution_backend": "faiss-cpu",
         "exploration_bonus": 0.1,
         "faiss_factory": "Flat",
@@ -330,7 +338,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 704.6107999995002
+        "elapsed_ms": 1003.203600004781
       }
     },
     "D": {
@@ -349,6 +357,8 @@
         "z-distractor": 0
       },
       "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
         "execution_backend": "faiss-cpu",
         "exploration_bonus": 0.1,
         "faiss_factory": "Flat",
@@ -446,7 +456,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 48.97319999872707
+        "elapsed_ms": 50.57479999959469
       }
     }
   }

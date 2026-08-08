@@ -4,6 +4,7 @@ import sys
 import sys
 
 import numpy as np
+import pytest
 
 
 class DummyDoc:
@@ -127,5 +128,30 @@ def test_update_document_relevance_force_cpu_skips_cuda_probe(monkeypatch):
     assert retr.documents[0].relevance_score == max(
         document.relevance_score for document in retr.documents
     )
+
+
+def test_retriever_defaults_to_real_time_source() -> None:
+    from embeddinggemma.mcmp_rag import MCPMRetriever
+
+    with pytest.warns(DeprecationWarning):
+        retriever = MCPMRetriever(embedding_backend=(object(), 3))
+
+    assert retriever.time_source is time.time
+
+
+def test_injected_time_source_controls_visit_and_recency_bonus() -> None:
+    from embeddinggemma.mcmp import simulation as sim
+
+    retr = DummyRetriever()
+    retr.force_cpu = True
+    retr.time_source = lambda: 2.0
+    agent = DummyAgent(0, [1.0, 0.0, 0.0], [0.0, 0.0, 0.0], 0.1)
+
+    sim.deposit_pheromones(retr, agent)
+    sim.update_document_relevance(retr, np.array([1.0, 0.0, 0.0], dtype=float))
+
+    assert retr.documents[0].last_visited == 2.0
+    assert retr.documents[0].relevance_score == pytest.approx(1.2)
+    assert retr.documents[1].relevance_score == pytest.approx(0.0)
 
 

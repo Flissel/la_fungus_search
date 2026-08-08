@@ -13,6 +13,11 @@ if not _logger.handlers:
 _logger.setLevel(logging.INFO)
 
 
+def _now(retr: Any) -> float:
+    source = getattr(retr, "time_source", None)
+    return float(time.time() if source is None else source())
+
+
 def spawn_agents(retr: Any, query_embedding: np.ndarray) -> None:
     _logger.info("spawn_agents: start | num_agents=%d", getattr(retr, 'num_agents', -1))
     retr.agents = []
@@ -96,7 +101,7 @@ def deposit_pheromones(retr: Any, agent: Any) -> None:
         return
     current_doc = current_docs[0][0]
     current_doc.visit_count += 1
-    current_doc.last_visited = time.time()
+    current_doc.last_visited = _now(retr)
     agent.visited_docs.add(current_doc.id)
     for prev_doc_id in list(agent.visited_docs)[-3:]:
         if prev_doc_id != current_doc.id:
@@ -152,7 +157,7 @@ def update_document_relevance(retr: Any, query_embedding: np.ndarray) -> None:
     for i, doc in enumerate(retr.documents):
         query_sim = float(sims[i])
         visit_bonus = min(doc.visit_count * 0.1, 0.5)
-        time_bonus = 0.1 if time.time() - doc.last_visited < 1.0 else 0.0
+        time_bonus = 0.1 if _now(retr) - doc.last_visited < 1.0 else 0.0
         kw_bonus = 0.0
         if retr.kw_lambda and retr.kw_terms and getattr(doc, 'content', None):
             try:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,6 +38,8 @@ def test_gate1_payload_records_forced_cpu_and_reproducibility_settings() -> None
 
     assert payload["execution"]["pheromone_decay"] == 0.95
     assert payload["execution"]["exploration_bonus"] == 0.1
+    assert payload["execution"]["clock_mode"] == "fixed"
+    assert payload["execution"]["clock_value"] == 2.0
     assert payload["environment"]["execution_backend"] == "faiss-cpu"
     assert payload["environment"]["faiss_factory"] == "Flat"
     assert payload["environment"]["faiss_metric"] == "inner_product"
@@ -55,6 +58,8 @@ def test_gate1_payload_records_forced_cpu_and_reproducibility_settings() -> None
         "steps": None,
         "pheromone_decay": None,
         "exploration_bonus": None,
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
     }
     assert payload["runs"]["D"]["execution"] == {
         "mode": "mcmp",
@@ -69,17 +74,36 @@ def test_gate1_payload_records_forced_cpu_and_reproducibility_settings() -> None
         "steps": 10,
         "pheromone_decay": 0.95,
         "exploration_bonus": 0.1,
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
     }
 
 
 def test_gate1_content_is_deterministic_except_elapsed_timing() -> None:
-    first = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10)
-    second = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10)
-    for payload in (first, second):
+    payloads = [
+        run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10)
+        for _ in range(8)
+    ]
+    for payload in payloads:
         for run in payload["runs"].values():
             del run["timing"]["elapsed_ms"]
 
-    assert first == second
+    assert payloads[1:] == [payloads[0]] * 7
+
+
+def test_gate1_deterministic_path_does_not_read_wall_clock(monkeypatch) -> None:
+    from embeddinggemma.mcmp import simulation
+
+    def forbidden_wall_clock() -> float:
+        raise AssertionError("deterministic benchmark must not read wall clock")
+
+    monkeypatch.setattr(
+        simulation, "time", SimpleNamespace(time=forbidden_wall_clock)
+    )
+
+    payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10)
+
+    assert payload["execution"]["clock_mode"] == "fixed"
 
 
 def test_writer_rejects_incomplete_or_inconsistent_evidence_before_creating_nested_path(tmp_path) -> None:
@@ -156,6 +180,7 @@ def test_cli_maps_invalid_evidence_to_nonzero_without_writing(monkeypatch, tmp_p
         "pheromone_trails",
         "independent_run_count_bool",
         "force_cpu_int",
+        "clock_value",
     ],
 )
 def test_writer_rejects_forged_configuration_and_execution_evidence(mutation, tmp_path) -> None:
@@ -170,6 +195,8 @@ def test_writer_rejects_forged_configuration_and_execution_evidence(mutation, tm
         payload["runs"]["C"]["pheromone_trails"] = 999
     elif mutation == "independent_run_count_bool":
         payload["runs"]["A"]["independent_run_count"] = True
+    elif mutation == "clock_value":
+        payload["runs"]["C"]["execution"]["clock_value"] = 3.0
     else:
         payload["execution"]["force_cpu"] = 1
     output_path = tmp_path / mutation / "gate1.json"
