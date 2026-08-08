@@ -18,12 +18,17 @@ if str(_SRC_DIR) not in sys.path:
 from embeddinggemma.mcmp_rag import MCPMRetriever
 
 
+PHEROMONE_DECAY = 0.95
+EXPLORATION_BONUS = 0.1
+
+
 @dataclass(frozen=True)
 class AdapterEvidence:
     """Adapter-level facts which are not part of a retrieval result."""
 
     independent_run_count: int
     nearest_search_calls: int
+    execution_backend: str
 
 
 class MappingEmbeddingBackend:
@@ -65,14 +70,17 @@ def run_faiss(
     rankings: dict[str, Sequence[str]] = {}
     score_maps: list[dict[str, float]] = []
     nearest_search_calls = 0
+    execution_backends: set[str] = set()
 
     for query_id in query_ids:
         backend = MappingEmbeddingBackend(vectors)
         retriever = CountingRetriever(
             build_faiss_after_add=True,
+            force_cpu=True,
             embedding_backend=(backend, dataset.document_vectors.shape[1]),
         )
         retriever.add_documents(list(dataset.document_ids), cache=False)
+        execution_backends.add(_execution_backend(retriever))
         neighbours = retriever.find_nearest_documents(vectors[query_id], k=len(dataset.document_ids))
         scores = {document.content: float(score) for document, score in neighbours}
         ordered = _rank(scores, top_k)
@@ -96,7 +104,9 @@ def run_faiss(
         pheromone_trails=0,
     )
     run.validate(dataset)
-    return run, AdapterEvidence(1, nearest_search_calls)
+    return run, AdapterEvidence(
+        len(query_ids), nearest_search_calls, _single_execution_backend(execution_backends)
+    )
 
 
 def run_mcmp(
@@ -123,6 +133,7 @@ def run_mcmp(
     visits: dict[str, int] = {document_id: 0 for document_id in dataset.document_ids}
     trails = 0
     nearest_search_calls = 0
+    execution_backends: set[str] = set()
     original_rng_state = np.random.get_state()
     try:
         for query_index, query_id in enumerate(query_ids):
@@ -131,10 +142,14 @@ def run_mcmp(
             retriever = CountingRetriever(
                 num_agents=num_agents,
                 max_iterations=steps,
+                pheromone_decay=PHEROMONE_DECAY,
+                exploration_bonus=EXPLORATION_BONUS,
                 build_faiss_after_add=True,
+                force_cpu=True,
                 embedding_backend=(backend, dataset.document_vectors.shape[1]),
             )
             retriever.add_documents(list(dataset.document_ids), cache=False)
+            execution_backends.add(_execution_backend(retriever))
             initial = retriever.find_nearest_documents(vectors[query_id], k=len(dataset.document_ids))
             initial_scores = {document.content: float(score) for document, score in initial}
             initial_candidates[query_id] = frozenset(_rank(initial_scores, initial_k))
@@ -169,7 +184,19 @@ def run_mcmp(
         pheromone_trails=trails,
     )
     run.validate(dataset)
-    return run, AdapterEvidence(len(query_ids), nearest_search_calls)
+    return run, AdapterEvidence(
+        len(query_ids), nearest_search_calls, _single_execution_backend(execution_backends)
+    )
+
+
+def _execution_backend(retriever: CountingRetriever) -> str:
+    return "faiss-cpu" if retriever._faiss_index is not None else "numpy-cpu-fallback"
+
+
+def _single_execution_backend(backends: set[str]) -> str:
+    if len(backends) != 1:
+        raise RuntimeError("benchmark execution backend changed within a run")
+    return next(iter(backends))
 
 
 def _vector_mapping(dataset: BenchmarkDataset) -> dict[str, np.ndarray]:

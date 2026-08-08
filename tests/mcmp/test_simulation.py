@@ -1,6 +1,8 @@
 import time
 import types
 import sys
+import sys
+
 import numpy as np
 
 
@@ -102,5 +104,28 @@ def test_update_document_relevance_cpu_path(monkeypatch):
     # Nearest doc aligned with query should have highest score
     scores = [d.relevance_score for d in retr.documents]
     assert scores[0] == max(scores)
+
+
+def test_update_document_relevance_force_cpu_skips_cuda_probe(monkeypatch):
+    from embeddinggemma.mcmp import simulation as sim
+
+    retr = DummyRetriever()
+    retr.force_cpu = True
+    query = np.array([1.0, 0.0, 0.0], dtype=float)
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            raise AssertionError("CUDA probe must not run")
+
+    class FakeTorch:
+        cuda = FakeCuda()
+
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch())
+
+    sim.update_document_relevance(retr, query)
+
+    assert retr.documents[0].relevance_score == max(
+        document.relevance_score for document in retr.documents
+    )
 
 

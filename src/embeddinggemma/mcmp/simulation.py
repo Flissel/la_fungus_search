@@ -133,7 +133,7 @@ def update_document_relevance(retr: Any, query_embedding: np.ndarray) -> None:
     except Exception:
         torch = None  # type: ignore
         _TORCH_OK = False
-    if _TORCH_OK and torch.cuda.is_available():
+    if not getattr(retr, "force_cpu", False) and _TORCH_OK and torch.cuda.is_available():
         with torch.no_grad():
             if retr._doc_emb_torch_norm is None:
                 if retr._doc_emb_torch is None:

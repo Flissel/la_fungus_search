@@ -22,7 +22,7 @@ def test_faiss_ranks_main_query_by_inner_product() -> None:
 def test_multi_query_faiss_preserves_each_query_candidates_and_rankings() -> None:
     dataset = build_synthetic_dataset()
 
-    run, _evidence = run_faiss(
+    run, evidence = run_faiss(
         dataset, "B", ("q-main", "q-related"), top_k=4, initial_k=1
     )
 
@@ -32,6 +32,7 @@ def test_multi_query_faiss_preserves_each_query_candidates_and_rankings() -> Non
     }
     assert run.per_query_ranked_document_ids["q-main"][0] == "main-top"
     assert run.per_query_ranked_document_ids["q-related"][0] == "related-top"
+    assert evidence.independent_run_count == 2
 
 
 def test_mcmp_seed_reproduces_rankings_visits_and_trails() -> None:

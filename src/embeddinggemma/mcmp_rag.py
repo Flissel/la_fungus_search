@@ -70,6 +70,7 @@ class MCPMRetriever:
                  exploration_bonus: float = 0.1,
                  embed_batch_size: int = 128,
                  build_faiss_after_add: bool = True,
+                 force_cpu: bool = False,
                  embedding_backend: Optional[Tuple[Any, int]] = None):
         warnings.warn(
             "MCPMRetriever is deprecated as a facade. Internals are under embeddinggemma.mcmp.*",
@@ -82,6 +83,7 @@ class MCPMRetriever:
         self.exploration_bonus = float(exploration_bonus)
         self.embed_batch_size = int(embed_batch_size)
         self.build_faiss_after_add = bool(build_faiss_after_add)
+        self.force_cpu = bool(force_cpu)
         if embedding_backend is None:
             self.embedding_model, self._expected_embedding_dim = load_embedding_backend()
         else:
@@ -226,7 +228,9 @@ class MCPMRetriever:
         if self.build_faiss_after_add and self._embed_dim:
             try:
                 mat = np.array([d.embedding for d in self.documents], dtype=np.float32)
-                self._faiss_index = _build_faiss(mat, int(self._embed_dim))
+                self._faiss_index = _build_faiss(
+                    mat, int(self._embed_dim), force_cpu=self.force_cpu
+                )
             except Exception as e:
                 _logger.warning("FAISS index build failed: %s", e)
                 self._faiss_index = None

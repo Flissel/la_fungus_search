@@ -21,7 +21,7 @@ def _l2_normalize_rows(mat: np.ndarray) -> np.ndarray:
     return mat / n
 
 
-def build_faiss_index(embs: np.ndarray, dim: int) -> Optional[object]:
+def build_faiss_index(embs: np.ndarray, dim: int, force_cpu: bool = False) -> Optional[object]:
     _logger.info("build_faiss_index: dim=%d docs=%d faiss=%s", dim, int(embs.shape[0]), str(_FAISS_OK))
     if not _FAISS_OK:
         return None
@@ -30,20 +30,23 @@ def build_faiss_index(embs: np.ndarray, dim: int) -> Optional[object]:
     factory = "Flat" if n_docs < 4096 else "IVF4096,Flat"
     # Create index (cosine via inner product; caller should pass L2-normalized vectors if needed)
     index = faiss.index_factory(dim, factory, faiss.METRIC_INNER_PRODUCT)
-    # GPU diagnostics and move if possible
-    try:
-        gpu_count = int(getattr(faiss, 'get_num_gpus', lambda: 0)())
-    except Exception:
-        gpu_count = 0
-    if gpu_count > 0:
-        try:
-            _ = faiss.StandardGpuResources()
-            index = faiss.index_cpu_to_all_gpus(index)
-            _logger.info("build_faiss_index: faiss_gpus=%d using_gpu=True", gpu_count)
-        except Exception as e:
-            _logger.warning("build_faiss_index: failed to move index to GPU (faiss_gpus=%d): %s", gpu_count, e)
+    # Benchmarks can opt into CPU-only execution without changing runtime defaults.
+    if force_cpu:
+        _logger.info("build_faiss_index: force_cpu=True using_gpu=False")
     else:
-        _logger.info("build_faiss_index: faiss_gpus=0 using_gpu=False")
+        try:
+            gpu_count = int(getattr(faiss, 'get_num_gpus', lambda: 0)())
+        except Exception:
+            gpu_count = 0
+        if gpu_count > 0:
+            try:
+                _ = faiss.StandardGpuResources()
+                index = faiss.index_cpu_to_all_gpus(index)
+                _logger.info("build_faiss_index: faiss_gpus=%d using_gpu=True", gpu_count)
+            except Exception as e:
+                _logger.warning("build_faiss_index: failed to move index to GPU (faiss_gpus=%d): %s", gpu_count, e)
+        else:
+            _logger.info("build_faiss_index: faiss_gpus=0 using_gpu=False")
     # Normalize embeddings for cosine-like behavior with inner product
     embs = embs.astype(np.float32, copy=False)
     embs_n = _l2_normalize_rows(embs)

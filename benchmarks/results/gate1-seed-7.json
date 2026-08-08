@@ -58,10 +58,20 @@
     ]
   },
   "environment": {
-    "cpu_mode": "cpu",
+    "execution_backend": "faiss-cpu",
+    "faiss_factory": "Flat",
+    "faiss_metric": "inner_product",
     "faiss_version": "1.12.0",
+    "force_cpu": true,
     "numpy_version": "1.26.4",
     "python_version": "3.11.0"
+  },
+  "execution": {
+    "exploration_bonus": 0.1,
+    "faiss_factory": "Flat",
+    "faiss_metric": "inner_product",
+    "force_cpu": true,
+    "pheromone_decay": 0.95
   },
   "query_geometry": {
     "max_cosine_distance": 1.0014523560107358,
@@ -72,6 +82,7 @@
       "candidate_comparisons": 8,
       "candidate_overlap": {},
       "document_visits": {},
+      "execution_backend": "faiss-cpu",
       "independent_run_count": 1,
       "mcmp_steps": 0,
       "metrics": {
@@ -117,7 +128,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 0.32840000494616106
+        "elapsed_ms": 0.31820000003790483
       }
     },
     "B": {
@@ -126,7 +137,8 @@
         "q-main|q-related": 0.0
       },
       "document_visits": {},
-      "independent_run_count": 1,
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 2,
       "mcmp_steps": 0,
       "metrics": {
         "candidate_count": 2,
@@ -183,7 +195,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 0.2734000008786097
+        "elapsed_ms": 0.2623999971547164
       }
     },
     "C": {
@@ -199,6 +211,7 @@
         "related-top": 0,
         "z-distractor": 0
       },
+      "execution_backend": "faiss-cpu",
       "independent_run_count": 1,
       "mcmp_steps": 10,
       "metrics": {
@@ -257,7 +270,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 714.89190000284
+        "elapsed_ms": 705.85829999618
       }
     },
     "D": {
@@ -275,6 +288,7 @@
         "related-top": 0,
         "z-distractor": 0
       },
+      "execution_backend": "faiss-cpu",
       "independent_run_count": 2,
       "mcmp_steps": 10,
       "metrics": {
@@ -350,7 +364,7 @@
         ]
       },
       "timing": {
-        "elapsed_ms": 49.00450000423007
+        "elapsed_ms": 48.34359999949811
       }
     }
   }
