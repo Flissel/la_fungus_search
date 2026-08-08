@@ -128,10 +128,8 @@ def _run_payload(
             "ranked_document_ids": list(run.ranked_document_ids),
             "initial_candidate_ids": sorted(run.initial_candidate_ids),
             "per_query_initial_candidate_ids": {
-                query_id: sorted(candidate_ids)
-                for query_id, candidate_ids in sorted(
-                    (run.per_query_initial_candidate_ids or {}).items()
-                )
+                query_id: list(candidate_ids)
+                for query_id, candidate_ids in evidence.per_query_initial_candidate_ids.items()
             },
             "discovered_candidate_ids": sorted(run.discovered_candidate_ids),
             "per_query_candidate_ids": {

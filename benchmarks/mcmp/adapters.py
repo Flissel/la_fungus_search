@@ -29,6 +29,7 @@ class AdapterEvidence:
     independent_run_count: int
     nearest_search_calls: int
     execution_backend: str
+    per_query_initial_candidate_ids: dict[str, tuple[str, ...]]
 
 
 class MappingEmbeddingBackend:
@@ -67,6 +68,7 @@ def run_faiss(
     started = perf_counter()
     vectors = _vector_mapping(dataset)
     candidates: dict[str, frozenset[str]] = {}
+    initial_rankings: dict[str, tuple[str, ...]] = {}
     rankings: dict[str, Sequence[str]] = {}
     score_maps: list[dict[str, float]] = []
     nearest_search_calls = 0
@@ -85,7 +87,8 @@ def run_faiss(
         scores = {document.content: float(score) for document, score in neighbours}
         ordered = _rank(scores, top_k)
         rankings[query_id] = ordered
-        candidates[query_id] = frozenset(_rank(scores, initial_k))
+        initial_rankings[query_id] = _rank(scores, initial_k)
+        candidates[query_id] = frozenset(initial_rankings[query_id])
         score_maps.append(scores)
         nearest_search_calls += retriever.nearest_search_calls
 
@@ -106,7 +109,10 @@ def run_faiss(
     )
     run.validate(dataset)
     return run, AdapterEvidence(
-        len(query_ids), nearest_search_calls, _single_execution_backend(execution_backends)
+        len(query_ids),
+        nearest_search_calls,
+        _single_execution_backend(execution_backends),
+        initial_rankings,
     )
 
 
@@ -128,6 +134,7 @@ def run_mcmp(
     started = perf_counter()
     vectors = _vector_mapping(dataset)
     initial_candidates: dict[str, frozenset[str]] = {}
+    initial_rankings: dict[str, tuple[str, ...]] = {}
     discovered_candidates: dict[str, frozenset[str]] = {}
     rankings: dict[str, Sequence[str]] = {}
     score_maps: list[dict[str, float]] = []
@@ -153,7 +160,8 @@ def run_mcmp(
             execution_backends.add(_execution_backend(retriever))
             initial = retriever.find_nearest_documents(vectors[query_id], k=len(dataset.document_ids))
             initial_scores = {document.content: float(score) for document, score in initial}
-            initial_candidates[query_id] = frozenset(_rank(initial_scores, initial_k))
+            initial_rankings[query_id] = _rank(initial_scores, initial_k)
+            initial_candidates[query_id] = frozenset(initial_rankings[query_id])
             retriever.initialize_simulation(query_id)
             retriever.step(steps)
 
@@ -187,7 +195,10 @@ def run_mcmp(
     )
     run.validate(dataset)
     return run, AdapterEvidence(
-        len(query_ids), nearest_search_calls, _single_execution_backend(execution_backends)
+        len(query_ids),
+        nearest_search_calls,
+        _single_execution_backend(execution_backends),
+        initial_rankings,
     )
 
 
