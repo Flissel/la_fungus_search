@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import numpy as np
 import pytest
 
 from benchmarks.mcmp.adapters import run_faiss, run_mcmp
@@ -162,3 +163,33 @@ def test_adapter_rejects_document_query_identifier_collisions() -> None:
 
     with pytest.raises(ValueError, match="document and query ids must be disjoint"):
         run_faiss(colliding, "A", ("main-top",), top_k=4, initial_k=1)
+
+
+@pytest.mark.parametrize(
+    ("method", "query_ids", "seed"),
+    [
+        ("C", ("q-main",), np.uint64(2**32 - 1)),
+        ("D", ("q-main", "q-related"), np.uint64(2**32 - 2)),
+    ],
+)
+def test_mcmp_accepts_safe_uint64_seed_deterministically(
+    method: str, query_ids: tuple[str, ...], seed: np.uint64
+) -> None:
+    dataset = build_synthetic_dataset()
+    arguments = dict(
+        dataset=dataset,
+        method=method,
+        query_ids=query_ids,
+        top_k=4,
+        initial_k=1,
+        seed=seed,
+        num_agents=1,
+        steps=1,
+    )
+
+    first, _first_evidence = run_mcmp(**arguments)
+    second, _second_evidence = run_mcmp(**arguments)
+
+    assert first.ranked_document_ids == second.ranked_document_ids
+    assert first.document_visits == second.document_visits
+    assert first.pheromone_trails == second.pheromone_trails

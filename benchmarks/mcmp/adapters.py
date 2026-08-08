@@ -113,7 +113,7 @@ def run_mcmp(
     _validate_run_inputs(dataset, method, query_ids, {"C", "D"}, top_k, initial_k)
     _validate_positive_integer(num_agents, name="num_agents")
     _validate_positive_integer(steps, name="steps")
-    _validate_seed(seed, query_count=len(query_ids))
+    seed = _validate_seed(seed, query_count=len(query_ids))
     started = perf_counter()
     vectors = _vector_mapping(dataset)
     initial_candidates: dict[str, frozenset[str]] = {}
@@ -228,8 +228,10 @@ def _validate_positive_integer(value: object, *, name: str) -> None:
         raise ValueError(f"{name} must be a positive integer")
 
 
-def _validate_seed(seed: object, *, query_count: int) -> None:
+def _validate_seed(seed: object, *, query_count: int) -> int:
     if isinstance(seed, bool) or not isinstance(seed, (int, np.integer)):
         raise ValueError("seed must be an integer")
-    if seed < 0 or seed > (2**32 - query_count):
+    normalized_seed = int(seed)
+    if normalized_seed < 0 or normalized_seed > (2**32 - query_count):
         raise ValueError("seed is outside the supported NumPy range")
+    return normalized_seed
