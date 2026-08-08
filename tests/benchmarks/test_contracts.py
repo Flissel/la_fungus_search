@@ -19,7 +19,7 @@ def valid_dataset() -> BenchmarkDataset:
 
 
 def valid_run(
-    *, ranked_document_ids: tuple[str, ...] = ("d0",)
+    *, ranked_document_ids: tuple[str, ...] = ("d0",), elapsed_ms: float = 1.0
 ) -> SearchRun:
     return SearchRun(
         method="literal",
@@ -29,7 +29,7 @@ def valid_run(
         discovered_candidate_ids=frozenset(),
         per_query_candidate_ids={"q0": frozenset({"d0"})},
         per_query_ranked_document_ids={"q0": ranked_document_ids},
-        elapsed_ms=1.0,
+        elapsed_ms=elapsed_ms,
         candidate_comparisons=1,
         mcmp_steps=0,
         document_visits={"d0": 1},
@@ -54,3 +54,20 @@ def test_search_run_rejects_unknown_ranked_document() -> None:
 
     with pytest.raises(ValueError, match="unknown ranked document"):
         run.validate(valid_dataset())
+
+
+def test_search_run_rejects_complex_elapsed_time() -> None:
+    run = valid_run(elapsed_ms=np.complex128(1 + 0j))
+
+    with pytest.raises(ValueError, match="elapsed_ms"):
+        run.validate(valid_dataset())
+
+
+def test_dataset_rejects_vectors_that_overflow_float32_digest() -> None:
+    dataset = valid_dataset()
+    dataset.document_vectors = np.asarray(
+        [[2 * np.finfo(np.float32).max, 0.0], [0.0, 1.0]], dtype=np.float64
+    )
+
+    with pytest.raises(ValueError, match="float32"):
+        dataset.validate()

@@ -25,6 +25,10 @@ def _validate_matrix(matrix: np.ndarray, *, name: str) -> None:
         raise ValueError(f"{name} must contain real numeric values")
     if not np.all(np.isfinite(matrix)):
         raise ValueError(f"{name} must contain only finite values")
+    with np.errstate(over="ignore", invalid="ignore"):
+        canonical_matrix = np.asarray(matrix, dtype="<f4")
+    if not np.all(np.isfinite(canonical_matrix)):
+        raise ValueError(f"{name} must remain finite when normalized to float32")
 
 
 def _validate_nonnegative_integer(value: int, *, name: str) -> None:
@@ -142,7 +146,9 @@ class SearchRun:
             if document_id not in document_ids:
                 raise ValueError("unknown visited document")
             _validate_nonnegative_integer(visits, name="document visits")
-        if not isinstance(self.elapsed_ms, (int, float, np.number)) or isinstance(self.elapsed_ms, bool):
+        if not isinstance(
+            self.elapsed_ms, (int, float, np.integer, np.floating)
+        ) or isinstance(self.elapsed_ms, (bool, np.bool_)):
             raise ValueError("elapsed_ms must be finite and nonnegative")
         if not math.isfinite(float(self.elapsed_ms)) or self.elapsed_ms < 0:
             raise ValueError("elapsed_ms must be finite and nonnegative")
