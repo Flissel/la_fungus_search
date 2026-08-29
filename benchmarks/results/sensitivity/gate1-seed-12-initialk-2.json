@@ -1,0 +1,507 @@
+{
+  "comparisons": {
+    "A_vs_C": {
+      "mrr_delta": 0.5,
+      "ndcg_at_k_delta": 0.3065735963827292,
+      "novel_relevant_candidates": [
+        "main-bridge"
+      ],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.0
+    },
+    "B_vs_D": {
+      "mrr_delta": 0.5,
+      "ndcg_at_k_delta": 0.6366824387328316,
+      "novel_relevant_candidates": [
+        "main-bridge",
+        "related-bridge"
+      ],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.5
+    }
+  },
+  "conclusion": "novel_relevant_observed",
+  "config": {
+    "initial_k": 2,
+    "num_agents": 24,
+    "seed": 12,
+    "steps": 10,
+    "top_k": 4
+  },
+  "dataset": {
+    "digest": "c23043142c750f33257c5cab1643388bdfde60b4afb2e29dfe0bd9ced6e5dcb1",
+    "document_ids": [
+      "main-top",
+      "main-near",
+      "main-bridge",
+      "related-top",
+      "related-near",
+      "related-bridge",
+      "z-distractor",
+      "opposite"
+    ],
+    "document_vector_shape": [
+      8,
+      3
+    ],
+    "id": "synthetic-mcmp-v1",
+    "query_ids": [
+      "q-main",
+      "q-related"
+    ],
+    "query_vector_shape": [
+      2,
+      3
+    ]
+  },
+  "environment": {
+    "execution_backend": "faiss-cpu",
+    "faiss_factory": "Flat",
+    "faiss_metric": "inner_product",
+    "faiss_version": "1.15.0",
+    "force_cpu": true,
+    "numpy_version": "2.4.6",
+    "python_version": "3.11.0"
+  },
+  "execution": {
+    "clock_mode": "fixed",
+    "clock_value": 2.0,
+    "exploration_bonus": 0.1,
+    "faiss_factory": "Flat",
+    "faiss_metric": "inner_product",
+    "force_cpu": true,
+    "pheromone_decay": 0.95
+  },
+  "query_geometry": {
+    "max_cosine_distance": 1.0026428988064338,
+    "mean_cosine_distance": 1.0026428988064338
+  },
+  "runs": {
+    "A": {
+      "candidate_comparisons": 8,
+      "candidate_overlap": {},
+      "document_visits": {},
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": null,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 2,
+        "mode": "faiss",
+        "num_agents": null,
+        "pheromone_decay": null,
+        "random_seed_provenance": {
+          "numpy_random_seed": null,
+          "per_query": null,
+          "python_random_seed": null
+        },
+        "seed": 12,
+        "steps": null,
+        "top_k": 4
+      },
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 1,
+      "mcmp_steps": 0,
+      "metrics": {
+        "candidate_count": 2,
+        "mrr": 0.5,
+        "ndcg_at_k": 0.6934264036172708,
+        "novel_candidates": [],
+        "novel_relevant_candidates": [],
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 0.5,
+        "unique_relevant_documents": 2
+      },
+      "nearest_search_calls": 1,
+      "pheromone_trails": 0,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "main-near",
+          "main-top"
+        ],
+        "initial_candidate_ids": [
+          "main-near",
+          "main-top"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "main-near",
+            "main-top"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-top",
+            "main-near"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "main-top",
+            "main-near",
+            "main-bridge",
+            "related-bridge"
+          ]
+        },
+        "ranked_document_ids": [
+          "main-top",
+          "main-near",
+          "main-bridge",
+          "related-bridge"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 0.38520000816788524
+      }
+    },
+    "B": {
+      "candidate_comparisons": 16,
+      "candidate_overlap": {
+        "q-main|q-related": 0.0
+      },
+      "document_visits": {},
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": null,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 2,
+        "mode": "faiss",
+        "num_agents": null,
+        "pheromone_decay": null,
+        "random_seed_provenance": {
+          "numpy_random_seed": null,
+          "per_query": null,
+          "python_random_seed": null
+        },
+        "seed": 12,
+        "steps": null,
+        "top_k": 4
+      },
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 2,
+      "mcmp_steps": 0,
+      "metrics": {
+        "candidate_count": 4,
+        "mrr": 0.5,
+        "ndcg_at_k": 0.36331756126716835,
+        "novel_candidates": [],
+        "novel_relevant_candidates": [],
+        "recall_at_k": 0.5,
+        "reciprocal_rank": 0.3333333333333333,
+        "unique_relevant_documents": 2
+      },
+      "nearest_search_calls": 2,
+      "pheromone_trails": 0,
+      "query_ids": [
+        "q-main",
+        "q-related"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "main-near",
+          "main-top",
+          "related-near",
+          "related-top"
+        ],
+        "initial_candidate_ids": [
+          "main-near",
+          "main-top",
+          "related-near",
+          "related-top"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "main-near",
+            "main-top"
+          ],
+          "q-related": [
+            "related-near",
+            "related-top"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-top",
+            "main-near"
+          ],
+          "q-related": [
+            "related-top",
+            "related-near"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "main-top",
+            "main-near",
+            "main-bridge",
+            "related-bridge"
+          ],
+          "q-related": [
+            "related-top",
+            "related-near",
+            "related-bridge",
+            "main-bridge"
+          ]
+        },
+        "ranked_document_ids": [
+          "main-top",
+          "related-top",
+          "related-near",
+          "main-near"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 0.2640999882714823
+      }
+    },
+    "C": {
+      "candidate_comparisons": 5568,
+      "candidate_overlap": {},
+      "document_visits": {
+        "main-bridge": 177,
+        "main-near": 58,
+        "main-top": 2,
+        "opposite": 0,
+        "related-bridge": 3,
+        "related-near": 0,
+        "related-top": 0,
+        "z-distractor": 0
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 2,
+        "mode": "mcmp",
+        "num_agents": 24,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 12,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 12,
+              "python_random_seed": 12
+            }
+          },
+          "python_random_seed": 12
+        },
+        "seed": 12,
+        "steps": 10,
+        "top_k": 4
+      },
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 1,
+      "mcmp_steps": 10,
+      "metrics": {
+        "candidate_count": 4,
+        "mrr": 1.0,
+        "ndcg_at_k": 1.0,
+        "novel_candidates": [
+          "main-bridge",
+          "related-bridge"
+        ],
+        "novel_relevant_candidates": [
+          "main-bridge"
+        ],
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "unique_relevant_documents": 2
+      },
+      "nearest_search_calls": 696,
+      "pheromone_trails": 5,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "main-bridge",
+          "main-near",
+          "main-top",
+          "related-bridge"
+        ],
+        "initial_candidate_ids": [
+          "main-near",
+          "main-top"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "main-bridge",
+            "main-near",
+            "main-top",
+            "related-bridge"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-top",
+            "main-near"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "main-near",
+            "main-bridge",
+            "main-top",
+            "related-bridge"
+          ]
+        },
+        "ranked_document_ids": [
+          "main-near",
+          "main-bridge",
+          "main-top",
+          "related-bridge"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 666.1819000000833
+      }
+    },
+    "D": {
+      "candidate_comparisons": 11136,
+      "candidate_overlap": {
+        "q-main|q-related": 0.16666666666666666
+      },
+      "document_visits": {
+        "main-bridge": 177,
+        "main-near": 58,
+        "main-top": 2,
+        "opposite": 0,
+        "related-bridge": 170,
+        "related-near": 71,
+        "related-top": 2,
+        "z-distractor": 0
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 2,
+        "mode": "mcmp",
+        "num_agents": 24,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 12,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 12,
+              "python_random_seed": 12
+            },
+            "q-related": {
+              "numpy_random_seed": 13,
+              "python_random_seed": 13
+            }
+          },
+          "python_random_seed": 12
+        },
+        "seed": 12,
+        "steps": 10,
+        "top_k": 4
+      },
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 2,
+      "mcmp_steps": 10,
+      "metrics": {
+        "candidate_count": 6,
+        "mrr": 1.0,
+        "ndcg_at_k": 1.0,
+        "novel_candidates": [
+          "main-bridge",
+          "related-bridge"
+        ],
+        "novel_relevant_candidates": [
+          "main-bridge",
+          "related-bridge"
+        ],
+        "recall_at_k": 1.0,
+        "reciprocal_rank": 1.0,
+        "unique_relevant_documents": 4
+      },
+      "nearest_search_calls": 1392,
+      "pheromone_trails": 8,
+      "query_ids": [
+        "q-main",
+        "q-related"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "main-bridge",
+          "main-near",
+          "main-top",
+          "related-bridge",
+          "related-near",
+          "related-top"
+        ],
+        "initial_candidate_ids": [
+          "main-near",
+          "main-top",
+          "related-near",
+          "related-top"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "main-bridge",
+            "main-near",
+            "main-top",
+            "related-bridge"
+          ],
+          "q-related": [
+            "related-bridge",
+            "related-near",
+            "related-top"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-top",
+            "main-near"
+          ],
+          "q-related": [
+            "related-top",
+            "related-near"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "main-near",
+            "main-bridge",
+            "main-top",
+            "related-bridge"
+          ],
+          "q-related": [
+            "related-near",
+            "related-bridge",
+            "related-top",
+            "main-bridge"
+          ]
+        },
+        "ranked_document_ids": [
+          "related-near",
+          "main-near",
+          "main-bridge",
+          "related-bridge"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 43.334799993317574
+      }
+    }
+  }
+}
