@@ -148,8 +148,22 @@ no change.
 
 The evidence JSON gains `dataset.fixture`, holding the registry key, and a
 `runs.E` block. The replay validator treats a missing `fixture` as `"legacy"` and
-a missing `runs.E` as a legacy payload, so the 60 committed evidence files
-continue to validate unchanged. New payloads must carry both.
+a missing `runs.E` as a legacy payload. New payloads must carry both.
+
+**Correction, verified empirically.** An earlier draft of this section claimed the
+60 committed evidence files "continue to validate unchanged". That claim is wrong
+and was not caused by this amendment: `validate_gate1_evidence` compares
+`environment` strictly against `_environment_payload()` of the *running*
+interpreter, so any payload generated under different NumPy or FAISS versions
+already fails replay validation today. `benchmarks/results/gate1-seed-7.json`
+(NumPy 1.26.4, FAISS 1.12.0) fails in a NumPy 2.4.6 / FAISS 1.15.0 environment,
+while files generated in that environment pass. Gate 1 evidence is therefore not
+portable across machines — a pre-existing property recorded here, not fixed here.
+
+The achievable guarantee for this amendment is narrower and is what the tests must
+assert: **the schema change introduces no new failure mode for legacy payloads.** A
+legacy payload generated in the current environment must still validate after the
+change, and must not fail because `dataset.fixture` or `runs.E` is absent.
 
 ## Data flow
 
