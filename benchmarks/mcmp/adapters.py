@@ -290,8 +290,8 @@ def _validate_run_inputs(
     document_count = len(dataset.document_ids)
     if top_k > document_count:
         raise ValueError("top_k must not exceed document count")
-    if initial_k > top_k:
-        raise ValueError("initial_k must not exceed top_k")
+    if initial_k > document_count:
+        raise ValueError("initial_k must not exceed document count")
 
 
 def _validate_positive_integer(value: object, *, name: str) -> None:

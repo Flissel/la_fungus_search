@@ -200,7 +200,7 @@ def test_adapters_reject_mislabeled_or_wrong_cardinality_ablation_runs(
         {"top_k": 9},
         {"initial_k": 0},
         {"initial_k": True},
-        {"initial_k": 5},
+        {"initial_k": 9},
         {"steps": 0},
         {"steps": True},
         {"num_agents": 0},
@@ -282,3 +282,19 @@ def test_mcmp_accepts_safe_uint64_seed_deterministically(
     assert first.ranked_document_ids == second.ranked_document_ids
     assert first.document_visits == second.document_visits
     assert first.pheromone_trails == second.pheromone_trails
+
+
+def test_run_faiss_accepts_initial_k_greater_than_top_k() -> None:
+    dataset = build_synthetic_dataset()
+
+    run, _evidence = run_faiss(dataset, "A", ("q-main",), top_k=2, initial_k=5)
+
+    assert len(run.per_query_ranked_document_ids["q-main"]) == 2
+    assert len(run.per_query_initial_candidate_ids["q-main"]) == 5
+
+
+def test_run_faiss_rejects_initial_k_above_document_count() -> None:
+    dataset = build_synthetic_dataset()
+
+    with pytest.raises(ValueError, match="initial_k must not exceed document count"):
+        run_faiss(dataset, "A", ("q-main",), top_k=8, initial_k=9)

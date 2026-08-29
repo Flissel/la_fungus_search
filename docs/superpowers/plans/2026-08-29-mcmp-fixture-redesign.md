@@ -46,7 +46,15 @@
 - Consumes: nothing.
 - Produces: `run_faiss` and `run_mcmp` accept `initial_k > top_k`; both reject `initial_k > len(dataset.document_ids)` with the message `initial_k must not exceed document count`.
 
-No existing test asserts the old rejection — `grep -rn "must not exceed top_k" tests/` returns nothing — so nothing needs deleting.
+**Correction, found during execution.** This plan originally claimed no existing
+test asserts the old rejection, based on `grep -rn "must not exceed top_k" tests/`
+returning nothing. That grep was too narrow. `test_adapters.py` parametrizes
+`test_mcmp_rejects_invalid_scalar_parameters_before_execution` with
+`{"initial_k": 5}` against `top_k=4`, which relied on the removed guard without
+naming its message. Under the new bound, `initial_k=5` is legal on an 8-document
+fixture, so that parameter must become `{"initial_k": 9}` — still invalid, and
+mirroring the `{"top_k": 9}` case already present. This preserves the test's
+intent rather than weakening it.
 
 The new document-count bound is also what satisfies the spec's Failure handling
 requirement that method E fail closed when the requested pool is larger than the

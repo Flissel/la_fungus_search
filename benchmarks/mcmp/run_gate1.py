@@ -277,8 +277,6 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
     _require_keys(config, {"seed", "top_k", "initial_k", "num_agents", "steps"}, "config")
     for name in ("seed", "top_k", "initial_k", "num_agents", "steps"):
         _positive_int(config[name], name, allow_zero=name == "seed")
-    if _integer(config["initial_k"], "initial_k") > _integer(config["top_k"], "top_k"):
-        raise ValueError("initial_k must not exceed top_k")
     execution = _mapping(payload["execution"], "execution")
     if not _strict_equal(dict(execution), {
         "force_cpu": True,
