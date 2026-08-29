@@ -445,7 +445,7 @@ FIXTURES = {
 
     .venv\Scripts\python.exe -m pytest tests -q --disable-warnings --import-mode=importlib
 
-Expected: 177 passed, 2 skipped, 0 failures.
+Expected: 178 passed, 2 skipped, 0 failures. (The plan originally said 177; the registry-selection test added during self-review was not counted.)
 
 - [ ] **Step 6: Smoke-run the fixture end to end**
 
@@ -622,7 +622,7 @@ FIXTURES = {
 
     .venv\Scripts\python.exe -m pytest tests -q --disable-warnings --import-mode=importlib
 
-Expected: 181 passed, 2 skipped, 0 failures.
+Expected: 182 passed, 2 skipped, 0 failures.
 
 If `test_manifold_relevant_documents_rank_below_the_default_top_k` fails, the distractor cosine band overlaps the chain tail. Do not weaken the test. Widen `MANIFOLD_DISTRACTOR_COSINE_RANGE` upward, or raise `MANIFOLD_TOTAL_ANGLE`, and re-run — the invariant is the point of the fixture.
 
@@ -755,7 +755,7 @@ The pool ranking is computed on a full-corpus retriever, then a fresh retriever 
 
     .venv\Scripts\python.exe -m pytest tests -q --disable-warnings --import-mode=importlib
 
-Expected: 183 passed, 2 skipped, 0 failures.
+Expected: 184 passed, 2 skipped, 0 failures.
 
 - [ ] **Step 6: Commit**
 
@@ -913,7 +913,7 @@ and replace the comparisons check:
 
     .venv\Scripts\python.exe -m pytest tests -q --disable-warnings --import-mode=importlib
 
-Expected: 186 passed, 2 skipped, 0 failures.
+Expected: 187 passed, 2 skipped, 0 failures.
 
 - [ ] **Step 8: Confirm no new failure mode for legacy evidence**
 
@@ -930,6 +930,24 @@ git commit -m "feat: report pool-restricted MCMP alongside A-D"
 ```
 
 ---
+
+## Note for the evidence step: choosing `top_k` on the neutral fixture
+
+Measured after Task 3, across seeds 1-12 and both queries (24 query cases), on the
+fixture alone without any retrieval method:
+
+| `top_k` | mean recall | range | query cases at recall 0 |
+|---|---|---|---|
+| 4 | 0.177 | 0.00-0.50 | 12 / 24 |
+| 8 | 0.427 | 0.00-0.75 | 1 / 24 |
+| 16 | 1.000 | 1.00-1.00 | 0 / 24 |
+
+This is a property of the fixture, not a result about MCMP. `top_k = 4` leaves half
+the query cases at zero, which compresses the range methods can differ over;
+`top_k = 16` is saturated by construction, because all relevant documents are drawn
+from the top 16. **Run the neutral fixture at `top_k = 8`** unless there is a reason
+not to. A seed-7 smoke run at `top_k = 4` returning recall 0.000 for every method is
+expected and is not a defect.
 
 ## Out of scope for this plan
 

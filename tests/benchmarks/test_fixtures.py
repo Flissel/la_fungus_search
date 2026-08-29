@@ -100,3 +100,65 @@ def test_synthetic_dataset_does_not_advance_legacy_global_rng() -> None:
         np.testing.assert_array_equal(np.random.random(3), expected)
     finally:
         np.random.set_state(original_state)
+
+
+from benchmarks.mcmp.fixtures import build_dataset, build_neutral_dataset
+
+
+def _relevant_ranks(dataset, query_id: str) -> tuple[int, ...]:
+    query_index = dataset.query_ids.index(query_id)
+    similarities = dataset.document_vectors @ dataset.query_vectors[query_index]
+    order = np.argsort(-similarities)
+    relevant = dataset.relevant_by_query[query_id]
+    return tuple(
+        rank
+        for rank, index in enumerate(order, start=1)
+        if dataset.document_ids[index] in relevant
+    )
+
+
+def test_neutral_dataset_has_expected_shape_and_validates() -> None:
+    dataset = build_neutral_dataset(7)
+
+    assert dataset.dataset_id == "neutral-mcmp-v1"
+    assert dataset.document_vectors.shape == (64, 16)
+    assert dataset.query_vectors.shape == (2, 16)
+    assert dataset.query_ids == ("q-main", "q-related")
+    assert dataset.document_ids[0] == "doc-00"
+    assert dataset.document_ids[-1] == "doc-63"
+    assert dataset.document_vectors.dtype == np.float32
+    assert np.allclose(np.linalg.norm(dataset.document_vectors, axis=1), 1.0, atol=1e-4)
+    dataset.validate()
+
+
+def test_neutral_relevance_is_drawn_from_the_similarity_top_16() -> None:
+    dataset = build_neutral_dataset(7)
+
+    for query_id in dataset.query_ids:
+        ranks = _relevant_ranks(dataset, query_id)
+        assert len(ranks) == 4
+        assert max(ranks) <= 16
+
+
+def test_neutral_relevant_ranks_vary_across_seeds() -> None:
+    observed = {
+        _relevant_ranks(build_neutral_dataset(seed), query_id)
+        for seed in range(1, 13)
+        for query_id in ("q-main", "q-related")
+    }
+
+    assert len(observed) > 1
+
+
+def test_neutral_dataset_is_deterministic_per_seed() -> None:
+    first = build_neutral_dataset(3)
+    second = build_neutral_dataset(3)
+
+    assert first.digest() == second.digest()
+    assert first.relevant_by_query == second.relevant_by_query
+    assert first.digest() != build_neutral_dataset(4).digest()
+
+
+def test_registry_selects_the_requested_builder() -> None:
+    assert build_dataset("neutral", 7).dataset_id == "neutral-mcmp-v1"
+    assert build_dataset("legacy", 7).dataset_id == "synthetic-mcmp-v1"

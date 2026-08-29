@@ -49,8 +49,53 @@ def build_synthetic_dataset(seed: int = 7) -> BenchmarkDataset:
     return dataset
 
 
+NEUTRAL_DOCUMENT_COUNT = 64
+NEUTRAL_DIMENSIONS = 16
+NEUTRAL_RELEVANT_PER_QUERY = 4
+NEUTRAL_CANDIDATE_DEPTH = 16
+
+
+def _unit_rows(matrix: np.ndarray) -> np.ndarray:
+    return (matrix / np.linalg.norm(matrix, axis=1, keepdims=True)).astype(np.float32)
+
+
+def build_neutral_dataset(seed: int = 7) -> BenchmarkDataset:
+    """Build a control fixture whose relevance is not a fixed function of rank."""
+    rng = np.random.default_rng(seed)
+    documents = _unit_rows(
+        rng.normal(size=(NEUTRAL_DOCUMENT_COUNT, NEUTRAL_DIMENSIONS))
+    )
+    queries = _unit_rows(rng.normal(size=(2, NEUTRAL_DIMENSIONS)))
+    document_ids = tuple(f"doc-{index:02d}" for index in range(NEUTRAL_DOCUMENT_COUNT))
+    query_ids = ("q-main", "q-related")
+
+    relevant_by_query: dict[str, frozenset[str]] = {}
+    for query_index, query_id in enumerate(query_ids):
+        similarities = documents @ queries[query_index]
+        candidates = np.argsort(-similarities)[:NEUTRAL_CANDIDATE_DEPTH]
+        chosen = rng.choice(
+            candidates, size=NEUTRAL_RELEVANT_PER_QUERY, replace=False
+        )
+        relevant_by_query[query_id] = frozenset(
+            document_ids[int(index)] for index in chosen
+        )
+
+    dataset = BenchmarkDataset(
+        dataset_id="neutral-mcmp-v1",
+        seed=seed,
+        document_ids=document_ids,
+        document_vectors=documents,
+        query_ids=query_ids,
+        query_vectors=queries,
+        relevant_by_query=relevant_by_query,
+    )
+    dataset.validate()
+    return dataset
+
+
 FIXTURES = {
     "legacy": build_synthetic_dataset,
+    "neutral": build_neutral_dataset,
 }
 
 
