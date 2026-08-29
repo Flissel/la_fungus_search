@@ -17,7 +17,7 @@ from benchmarks.mcmp.run_gate1 import (
 def test_gate1_runner_orchestrates_fixed_ablation_and_round_trips_evidence(tmp_path) -> None:
     payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10)
 
-    assert list(payload["runs"]) == ["A", "B", "C", "D"]
+    assert list(payload["runs"]) == ["A", "B", "C", "D", "E"]
     assert payload["config"] == {
         "seed": 7,
         "top_k": 4,
@@ -167,9 +167,9 @@ def test_writer_persists_full_schema_with_sorted_format_and_final_newline(tmp_pa
     assert text.endswith("\n")
     assert text.startswith('{\n  "comparisons"')
     assert reloaded == payload
-    assert list(reloaded["runs"]) == ["A", "B", "C", "D"]
+    assert list(reloaded["runs"]) == ["A", "B", "C", "D", "E"]
     assert reloaded["runs"]["D"]["independent_run_count"] == 2
-    assert reloaded["comparisons"].keys() == {"A_vs_C", "B_vs_D"}
+    assert reloaded["comparisons"].keys() == {"A_vs_C", "B_vs_D", "A_vs_E", "C_vs_E"}
     for run in reloaded["runs"].values():
         assert {"raw_ids", "metrics", "timing", "candidate_comparisons", "nearest_search_calls", "document_visits", "pheromone_trails"} <= run.keys()
 
@@ -337,6 +337,34 @@ def test_unknown_fixture_names_the_valid_keys() -> None:
 
 def test_validator_accepts_a_legacy_payload_without_a_fixture_key() -> None:
     payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=4, steps=2)
+    del payload["dataset"]["fixture"]
+
+    validate_gate1_evidence(payload)
+
+
+def test_method_e_ranks_only_pool_documents() -> None:
+    payload = run_gate1(seed=7, top_k=2, initial_k=3, num_agents=4, steps=2)
+
+    pool = set(payload["runs"]["E"]["raw_ids"]["initial_candidate_ids"])
+    assert set(payload["runs"]["E"]["raw_ids"]["ranked_document_ids"]) <= pool
+
+
+def test_conclusion_ignores_method_e() -> None:
+    payload = run_gate1(seed=7, top_k=4, initial_k=4, num_agents=4, steps=2)
+    novel = sum(
+        len(payload["runs"][method]["metrics"]["novel_relevant_candidates"])
+        for method in ("C", "D")
+    )
+
+    expected = "novel_relevant_observed" if novel else "no_novel_relevant_observed"
+    assert payload["conclusion"] == expected
+
+
+def test_validator_accepts_a_legacy_four_run_payload() -> None:
+    payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=4, steps=2)
+    del payload["runs"]["E"]
+    del payload["comparisons"]["A_vs_E"]
+    del payload["comparisons"]["C_vs_E"]
     del payload["dataset"]["fixture"]
 
     validate_gate1_evidence(payload)

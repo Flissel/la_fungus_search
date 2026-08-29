@@ -909,6 +909,24 @@ and replace the comparisons check:
     for name, left, right in expected_pairs:
 ```
 
+**Corrections, found during execution.** Wiring E into the runner needed two
+changes this plan did not anticipate. Both are in `run_gate1.py`:
+
+1. **Method sets that meant "is this MCMP" excluded E.** `_run_execution_snapshot`
+   had `is_mcmp = method in {"C", "D"}`, so E was described as a FAISS run with
+   `random_seed_provenance.per_query = None` while the adapter reported real
+   per-query seeds — failing with `adapter random seed provenance does not match
+   the run configuration`. The document-visit coverage check had the same set. Both
+   become `{"C", "D", "E"}`. The `{"A", "B"}` sets are correct as they stand, since
+   E is MCMP-like.
+2. **E cannot return more documents than its pool holds.** Two checks assert
+   `len(...) == top_k` — the raw-id check and the per-query ranking check. For E the
+   ceiling is the pool, so both must compare against
+   `min(top_k, initial_k) if method == "E" else top_k`. Without this, any run with
+   `initial_k < top_k` fails with `runs.E contains invalid raw document ids`. This
+   is a structural property of E, not a defect: E is only fully meaningful when
+   `initial_k >= top_k`, which is the regime this whole amendment exists to enable.
+
 - [ ] **Step 7: Verify GREEN**
 
     .venv\Scripts\python.exe -m pytest tests -q --disable-warnings --import-mode=importlib

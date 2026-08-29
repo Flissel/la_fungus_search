@@ -30,6 +30,7 @@ _RUN_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("B", ("q-main", "q-related")),
     ("C", ("q-main",)),
     ("D", ("q-main", "q-related")),
+    ("E", ("q-main",)),
 )
 
 
@@ -58,6 +59,7 @@ def run_gate1(
                 seed,
                 num_agents,
                 steps,
+                pool_only=method == "E",
             )
         runs[method] = _run_payload(
             dataset, run, evidence, seed, top_k, initial_k, num_agents, steps
@@ -180,7 +182,7 @@ def _run_execution_snapshot(
     clock_mode: str = DETERMINISTIC_CLOCK_MODE,
     clock_value: float = DETERMINISTIC_CLOCK_VALUE,
 ) -> dict[str, object]:
-    is_mcmp = method in {"C", "D"}
+    is_mcmp = method in {"C", "D", "E"}
     random_seed_provenance: dict[str, object] = {
         "python_random_seed": seed if is_mcmp else None,
         "numpy_random_seed": seed if is_mcmp else None,
@@ -234,10 +236,14 @@ def _environment_payload() -> dict[str, object]:
 
 
 def _comparison_payload(runs: dict[str, dict[str, object]]) -> dict[str, dict[str, object]]:
-    return {
+    comparisons = {
         "A_vs_C": _compare_runs(runs["A"], runs["C"]),
         "B_vs_D": _compare_runs(runs["B"], runs["D"]),
     }
+    if "E" in runs:
+        comparisons["A_vs_E"] = _compare_runs(runs["A"], runs["E"])
+        comparisons["C_vs_E"] = _compare_runs(runs["C"], runs["E"])
+    return comparisons
 
 
 def _direct_initial_candidates(
@@ -326,9 +332,12 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
         raise ValueError("query geometry does not match the dataset")
 
     runs = _mapping(payload["runs"], "runs")
-    if list(runs) != ["A", "B", "C", "D"]:
-        raise ValueError("runs must be ordered A-D")
+    if list(runs) not in (["A", "B", "C", "D"], ["A", "B", "C", "D", "E"]):
+        raise ValueError("runs must be ordered A-D, optionally followed by E")
+    present = set(runs)
     for method, query_ids in _RUN_SPECS:
+        if method not in present:
+            continue
         _validate_run_evidence(
             _mapping(runs[method], f"runs.{method}"),
             dataset,
@@ -342,9 +351,14 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
         )
 
     comparisons = _mapping(payload["comparisons"], "comparisons")
-    if list(comparisons) != ["A_vs_C", "B_vs_D"]:
-        raise ValueError("comparisons must cover A_vs_C and B_vs_D")
-    for name, left, right in (("A_vs_C", "A", "C"), ("B_vs_D", "B", "D")):
+    expected_pairs = (
+        (("A_vs_C", "A", "C"), ("B_vs_D", "B", "D"), ("A_vs_E", "A", "E"), ("C_vs_E", "C", "E"))
+        if "E" in present
+        else (("A_vs_C", "A", "C"), ("B_vs_D", "B", "D"))
+    )
+    if list(comparisons) != [name for name, _left, _right in expected_pairs]:
+        raise ValueError("comparisons must match the runs present")
+    for name, left, right in expected_pairs:
         _validate_comparison(
             _mapping(comparisons[name], f"comparisons.{name}"),
             _mapping(runs[left], f"runs.{left}"),
@@ -388,7 +402,10 @@ def _validate_run_evidence(
     ranked = _string_list(raw_ids["ranked_document_ids"], "ranked_document_ids")
     initial = _string_list(raw_ids["initial_candidate_ids"], "initial_candidate_ids")
     discovered = _string_list(raw_ids["discovered_candidate_ids"], "discovered_candidate_ids")
-    if len(ranked) != top_k or any(len(set(values)) != len(values) for values in (ranked, initial, discovered)) or not set(ranked) <= documents or not set(initial) <= documents or not set(discovered) <= documents:
+    # Method E reranks only its FAISS pool, so it cannot return more documents than
+    # the pool holds. Every other method ranks against the full corpus.
+    expected_ranked_count = min(top_k, initial_k) if method == "E" else top_k
+    if len(ranked) != expected_ranked_count or any(len(set(values)) != len(values) for values in (ranked, initial, discovered)) or not set(ranked) <= documents or not set(initial) <= documents or not set(discovered) <= documents:
         raise ValueError(f"runs.{method} contains invalid raw document ids")
     per_query_initials = _mapping(
         raw_ids["per_query_initial_candidate_ids"],
@@ -425,7 +442,7 @@ def _validate_run_evidence(
         raise ValueError(f"runs.{method} discovered candidates do not match per-query evidence")
     if method in {"A", "B"} and frozenset(initial) != frozenset(discovered):
         raise ValueError(f"runs.{method} baseline candidates must not be novel")
-    if any(len(ranking) != top_k for ranking in per_query_rankings.values()):
+    if any(len(ranking) != expected_ranked_count for ranking in per_query_rankings.values()):
         raise ValueError(f"runs.{method} per-query rankings must equal top_k")
     metrics = _mapping(run["metrics"], f"runs.{method}.metrics")
     _require_keys(metrics, {"recall_at_k", "reciprocal_rank", "mrr", "ndcg_at_k", "unique_relevant_documents", "candidate_count", "novel_candidates", "novel_relevant_candidates"}, f"runs.{method}.metrics")
@@ -454,7 +471,7 @@ def _validate_run_evidence(
     visits = _mapping(run["document_visits"], f"runs.{method}.document_visits")
     if method in {"A", "B"} and visits:
         raise ValueError(f"runs.{method} must not report MCMP visits")
-    if method in {"C", "D"} and set(visits) != documents:
+    if method in {"C", "D", "E"} and set(visits) != documents:
         raise ValueError(f"runs.{method} must report every document visit count")
     visit_counts = {
         document_id: _positive_int(value, "document visit", allow_zero=True)
