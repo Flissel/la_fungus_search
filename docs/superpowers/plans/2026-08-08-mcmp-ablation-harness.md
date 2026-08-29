@@ -1,5 +1,15 @@
 # MCMP Ablation Harness Implementation Plan
 
+> **Status (2026-08-29):** Tasks 1-6 are implemented and merged into `main`; all
+> their artifacts exist and `pytest tests/benchmarks tests/mcmp` reports 133
+> passed, 2 skipped. The step checkboxes below were never ticked and are left
+> unticked on purpose — the outcomes are verified, the individual RED/GREEN steps
+> are not independently attested.
+>
+> **Task 7 is done.** Its result is `docs/MCMP_TIG_C004_REPORT.md`, which applies
+> the decision rule and concludes: do not proceed to Gate 2, query colonies or
+> TIG C004 on the current evidence. Read that report before acting on this plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
 
 **Goal:** Build a deterministic offline Gate-1 harness that compares Single/Multi Query with FAISS/MCMP and records whether MCMP discovers relevant candidates outside the initial FAISS set.
