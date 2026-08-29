@@ -232,10 +232,19 @@ In `validate_gate1_evidence`, replace `dataset = build_synthetic_dataset(_intege
     dataset = build_dataset(fixture, _integer(config["seed"], "seed"))
 ```
 
-Delete the later duplicate `dataset_payload = _mapping(payload["dataset"], "dataset")` line. Change the `_require_keys` call for the dataset block to keep the six original keys required, and build the expected mapping tolerantly:
+Delete the later duplicate `dataset_payload = _mapping(payload["dataset"], "dataset")` line.
+
+**Correction, found during execution.** `_require_keys` compares with
+`set(mapping) != expected`, so it rejects *extra* keys, not just missing ones.
+Keeping the six original keys required therefore fails on every new payload with
+`dataset has incomplete or unexpected keys`. The required set must depend on
+whether `fixture` is present, which is also what makes both payload shapes valid:
 
 ```python
-    _require_keys(dataset_payload, {"id", "digest", "document_ids", "query_ids", "document_vector_shape", "query_vector_shape"}, "dataset")
+    required_dataset_keys = {"id", "digest", "document_ids", "query_ids", "document_vector_shape", "query_vector_shape"}
+    if "fixture" in dataset_payload:
+        required_dataset_keys = required_dataset_keys | {"fixture"}
+    _require_keys(dataset_payload, required_dataset_keys, "dataset")
     expected_dataset = {
         "id": dataset.dataset_id,
         "digest": dataset.digest(),

@@ -7,7 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from benchmarks.mcmp import run_gate1 as gate1_module
-from benchmarks.mcmp.run_gate1 import run_gate1, write_gate1_result
+from benchmarks.mcmp.run_gate1 import (
+    run_gate1,
+    validate_gate1_evidence,
+    write_gate1_result,
+)
 
 
 def test_gate1_runner_orchestrates_fixed_ablation_and_round_trips_evidence(tmp_path) -> None:
@@ -318,3 +322,21 @@ def test_writer_rejects_forged_numpy_seed_provenance(location: str, tmp_path) ->
         write_gate1_result(payload, output_path)
 
     assert not output_path.exists()
+
+
+def test_payload_records_the_fixture_key() -> None:
+    payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=4, steps=2)
+
+    assert payload["dataset"]["fixture"] == "legacy"
+
+
+def test_unknown_fixture_names_the_valid_keys() -> None:
+    with pytest.raises(ValueError, match="unknown fixture 'nope'"):
+        run_gate1(seed=7, top_k=4, initial_k=1, num_agents=4, steps=2, fixture="nope")
+
+
+def test_validator_accepts_a_legacy_payload_without_a_fixture_key() -> None:
+    payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=4, steps=2)
+    del payload["dataset"]["fixture"]
+
+    validate_gate1_evidence(payload)

@@ -47,3 +47,17 @@ def build_synthetic_dataset(seed: int = 7) -> BenchmarkDataset:
     )
     dataset.validate()
     return dataset
+
+
+FIXTURES = {
+    "legacy": build_synthetic_dataset,
+}
+
+
+def build_dataset(fixture: str, seed: int) -> BenchmarkDataset:
+    """Build a benchmark dataset by registry key, failing closed on unknown keys."""
+    if fixture not in FIXTURES:
+        raise ValueError(
+            f"unknown fixture {fixture!r}; valid keys are {sorted(FIXTURES)}"
+        )
+    return FIXTURES[fixture](seed)

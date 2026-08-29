@@ -21,7 +21,7 @@ from benchmarks.mcmp.adapters import (
     run_mcmp,
 )
 from benchmarks.mcmp.contracts import BenchmarkDataset, SearchRun
-from benchmarks.mcmp.fixtures import build_synthetic_dataset
+from benchmarks.mcmp.fixtures import FIXTURES, build_dataset
 from benchmarks.mcmp.metrics import candidate_overlap, evaluate_run, query_geometry
 
 
@@ -34,10 +34,15 @@ _RUN_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 def run_gate1(
-    seed: int, top_k: int, initial_k: int, num_agents: int, steps: int
+    seed: int,
+    top_k: int,
+    initial_k: int,
+    num_agents: int,
+    steps: int,
+    fixture: str = "legacy",
 ) -> dict[str, object]:
     """Run the fixed A-D offline ablation and return its complete evidence."""
-    dataset = build_synthetic_dataset(seed)
+    dataset = build_dataset(fixture, seed)
     runs: dict[str, dict[str, object]] = {}
 
     for method, query_ids in _RUN_SPECS:
@@ -67,6 +72,7 @@ def run_gate1(
             "steps": steps,
         },
         "dataset": {
+            "fixture": fixture,
             "id": dataset.dataset_id,
             "digest": dataset.digest(),
             "document_ids": list(dataset.document_ids),
@@ -289,9 +295,15 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
     }):
         raise ValueError("execution settings are incomplete or inconsistent")
 
-    dataset = build_synthetic_dataset(_integer(config["seed"], "seed"))
     dataset_payload = _mapping(payload["dataset"], "dataset")
-    _require_keys(dataset_payload, {"id", "digest", "document_ids", "query_ids", "document_vector_shape", "query_vector_shape"}, "dataset")
+    fixture = dataset_payload.get("fixture", "legacy")
+    if not isinstance(fixture, str):
+        raise ValueError("dataset.fixture must be a string")
+    dataset = build_dataset(fixture, _integer(config["seed"], "seed"))
+    required_dataset_keys = {"id", "digest", "document_ids", "query_ids", "document_vector_shape", "query_vector_shape"}
+    if "fixture" in dataset_payload:
+        required_dataset_keys = required_dataset_keys | {"fixture"}
+    _require_keys(dataset_payload, required_dataset_keys, "dataset")
     expected_dataset = {
         "id": dataset.dataset_id,
         "digest": dataset.digest(),
@@ -300,6 +312,8 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
         "document_vector_shape": list(dataset.document_vectors.shape),
         "query_vector_shape": list(dataset.query_vectors.shape),
     }
+    if "fixture" in dataset_payload:
+        expected_dataset["fixture"] = fixture
     if not _strict_equal(dict(dataset_payload), expected_dataset):
         raise ValueError("dataset evidence does not match the configured seed")
 
@@ -551,8 +565,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--num-agents", type=int, required=True)
     parser.add_argument("--steps", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--fixture", choices=sorted(FIXTURES), default="legacy")
     args = parser.parse_args(argv)
-    payload = run_gate1(args.seed, args.top_k, args.initial_k, args.num_agents, args.steps)
+    payload = run_gate1(
+        args.seed, args.top_k, args.initial_k, args.num_agents, args.steps, args.fixture
+    )
     try:
         write_gate1_result(payload, args.output)
     except ValueError as error:
