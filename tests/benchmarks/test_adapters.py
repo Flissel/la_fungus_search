@@ -298,3 +298,29 @@ def test_run_faiss_rejects_initial_k_above_document_count() -> None:
 
     with pytest.raises(ValueError, match="initial_k must not exceed document count"):
         run_faiss(dataset, "A", ("q-main",), top_k=8, initial_k=9)
+
+
+def test_method_e_restricts_mcmp_to_the_faiss_pool() -> None:
+    dataset = build_synthetic_dataset()
+
+    run, _evidence = run_mcmp(
+        dataset, "E", ("q-main",), top_k=2, initial_k=3,
+        seed=7, num_agents=4, steps=2, pool_only=True,
+    )
+
+    pool = run.per_query_initial_candidate_ids["q-main"]
+    assert len(pool) == 3
+    assert run.per_query_candidate_ids["q-main"] <= pool
+    assert set(run.per_query_ranked_document_ids["q-main"]) <= pool
+
+
+def test_method_e_is_deterministic_for_a_fixed_seed() -> None:
+    dataset = build_synthetic_dataset()
+    kwargs = dict(
+        top_k=2, initial_k=3, seed=7, num_agents=4, steps=2, pool_only=True
+    )
+
+    first, _ = run_mcmp(dataset, "E", ("q-main",), **kwargs)
+    second, _ = run_mcmp(dataset, "E", ("q-main",), **kwargs)
+
+    assert first.ranked_document_ids == second.ranked_document_ids

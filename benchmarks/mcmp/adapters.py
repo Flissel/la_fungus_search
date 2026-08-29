@@ -143,9 +143,10 @@ def run_mcmp(
     seed: int,
     num_agents: int,
     steps: int,
+    pool_only: bool = False,
 ) -> tuple[SearchRun, AdapterEvidence]:
     """Run a fresh, seeded MCMP simulation for every benchmark query."""
-    _validate_run_inputs(dataset, method, query_ids, {"C", "D"}, top_k, initial_k)
+    _validate_run_inputs(dataset, method, query_ids, {"C", "D", "E"}, top_k, initial_k)
     _validate_positive_integer(num_agents, name="num_agents")
     _validate_positive_integer(steps, name="steps")
     seed = _validate_seed(seed, query_count=len(query_ids))
@@ -189,6 +190,24 @@ def run_mcmp(
             initial_scores = {document.content: float(score) for document, score in initial}
             initial_rankings[query_id] = _rank(initial_scores, initial_k)
             initial_candidates[query_id] = frozenset(initial_rankings[query_id])
+            if pool_only:
+                # Method E reranks only the FAISS pool. The pool is formed on a
+                # full-corpus retriever, whose search calls are banked here before
+                # a second retriever is built over the pool alone.
+                nearest_search_calls += retriever.nearest_search_calls
+                backend = MappingEmbeddingBackend(vectors)
+                retriever = CountingRetriever(
+                    num_agents=num_agents,
+                    max_iterations=steps,
+                    pheromone_decay=PHEROMONE_DECAY,
+                    exploration_bonus=EXPLORATION_BONUS,
+                    build_faiss_after_add=True,
+                    force_cpu=True,
+                    embedding_backend=(backend, dataset.document_vectors.shape[1]),
+                    time_source=FixedClock(DETERMINISTIC_CLOCK_VALUE),
+                )
+                retriever.add_documents(list(initial_rankings[query_id]), cache=False)
+                execution_backends.add(_execution_backend(retriever))
             retriever.initialize_simulation(query_id)
             retriever.step(steps)
 
@@ -276,7 +295,7 @@ def _validate_run_inputs(
     dataset.validate()
     if method not in allowed_methods:
         raise ValueError(f"method must be one of {sorted(allowed_methods)}")
-    expected_query_count = 1 if method in {"A", "C"} else 2
+    expected_query_count = 1 if method in {"A", "C", "E"} else 2
     if len(query_ids) != expected_query_count:
         raise ValueError(f"method {method} requires exactly {expected_query_count} query ids")
     if len(set(query_ids)) != len(query_ids):

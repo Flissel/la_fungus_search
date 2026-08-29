@@ -949,6 +949,28 @@ from the top 16. **Run the neutral fixture at `top_k = 8`** unless there is a re
 not to. A seed-7 smoke run at `top_k = 4` returning recall 0.000 for every method is
 expected and is not a defect.
 
+## Note for the evidence step: method E's reported cost is an upper bound
+
+Found during Task 5. `SearchRun.candidate_comparisons` is computed as
+`nearest_search_calls * len(dataset.document_ids)`, and the replay validator
+enforces exactly that identity at `benchmarks/mcmp/run_gate1.py:449`. For A-D the
+retriever always holds the full corpus, so the identity is exact. **For E it is
+not:** E's second retriever holds only `initial_k` documents, so each of its search
+calls scans `initial_k` rather than the whole corpus, and the reported figure
+overstates E's true cost by roughly `len(corpus) / initial_k` — an 8x overstatement
+on a 64-document fixture at `initial_k = 8`.
+
+The identity was kept rather than made per-retriever, because changing it is a spec
+change: it would require relaxing the validator invariant, and that invariant is
+what makes forged cost evidence detectable. **Consequence for the evidence review:
+E's `candidate_comparisons` may be compared against A-D as an upper bound only, and
+no cost claim about E may be stated as exact.** E's primary purpose — separating
+which documents the walk can reach from how the pool is reranked — is unaffected,
+since that rests on the candidate sets, not on the cost figure.
+
+Fixing this properly means per-retriever cost accounting plus a matching validator
+change. That is a follow-up requiring approval, not an evidence-run adjustment.
+
 ## Note for the evidence step: what a manifold seed sweep does and does not show
 
 Measured after Task 4. The construction works as designed at seed 7 for `q-main`:
