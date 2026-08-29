@@ -967,6 +967,19 @@ from the top 16. **Run the neutral fixture at `top_k = 8`** unless there is a re
 not to. A seed-7 smoke run at `top_k = 4` returning recall 0.000 for every method is
 expected and is not a defect.
 
+## Note for the evidence step: E's novelty count is structurally always zero
+
+E's candidate pool *is* its initial candidate set, and it can only visit documents
+inside that pool. `novel = discovered - initial` is therefore empty by construction,
+in every run, on every fixture. A post-implementation smoke run confirms
+`novel_relevant_candidates` is 0 for E on legacy, neutral and manifold alike.
+
+This is correct and is the point of E: it is the no-discovery control. **Do not
+report E's zero as a finding about MCMP.** E's informative comparisons are
+`A_vs_E` (what reranking a pool buys over ranking it by similarity) and `C_vs_E`
+(what walking outside the pool buys over reranking inside it) — both on recall,
+MRR and nDCG, not on novelty.
+
 ## Note for the evidence step: method E's reported cost is an upper bound
 
 Found during Task 5. `SearchRun.candidate_comparisons` is computed as
