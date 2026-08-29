@@ -8,9 +8,19 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Section 8 is an addendum** recording the re-baseline run
-> (`initial_k = top_k`) that section 5 recommended. It sharpens the diagnosis and
-> does not reverse the decision. Read it together with section 5.
+> **Read section 9 first — it carries the current decision.**
+>
+> This document was written in three rounds and is kept whole rather than rewritten,
+> so the reasoning stays auditable.
+>
+> - **Sections 1-7** review Codex's original Gate 1 evidence on the legacy fixture.
+>   Decision at the time: do not proceed to Gate 2.
+> - **Section 8** records the re-baseline at `initial_k = top_k`. It sharpened the
+>   diagnosis and did not reverse that decision.
+> - **Section 9** reviews Gate 1 re-run on the redesigned fixtures, which added a
+>   neutral control and a method that isolates MCMP's walk from its reranking.
+>   **It revises the decision: Gate 2 is now justified.** Sections 5 and 8.5 remain
+>   correct about the legacy fixture; they are superseded, not retracted.
 
 ---
 
@@ -323,3 +333,149 @@ No harness or production code was modified. `initial_k > top_k` was attempted an
 refused by the existing contract; it was not worked around. Section 8.2 is a read-only
 computation over the existing fixture. No Gate 2 run, no TIG C004 implementation,
 no MCP server, LLM, OpenFang, Docker or GPU involvement.
+
+---
+
+## 9. Gate 1 on the redesigned fixtures
+
+Run after the fixture redesign
+(`docs/superpowers/specs/2026-08-29-mcmp-fixture-redesign-design.md`). This is the
+first Gate 1 round in which a control exists and in which MCMP's walk can be
+separated from its reranking.
+
+**Declared design, fixed before execution:** fixtures `neutral` and `manifold`;
+seeds 1-12; two budget regimes per fixture, `top_k = initial_k = 8` (matched) and
+`top_k = 8, initial_k = 16` (retrieve-then-rerank); `num_agents 24`, `steps 10`
+unchanged for comparability. 48 runs, all reported, none discarded. Evidence:
+`benchmarks/results/gate1-v2/`.
+
+Methods: A Single+FAISS, B Multi+FAISS, C Single+MCMP over the full corpus,
+D Multi+MCMP, E Single+MCMP restricted to the FAISS pool.
+
+### 9.1 Facts: the neutral control
+
+Means over 12 seeds at `top_k = initial_k = 8`:
+
+| Method | recall@8 | MRR | nDCG@8 | comparisons |
+|---|---|---|---|---|
+| A | **0.438** | **0.433** | **0.341** | 64 |
+| B | 0.243 | 0.380 | 0.249 | 128 |
+| C | 0.417 | 0.404 | 0.322 | 43 936 |
+| D | 0.234 | 0.345 | 0.240 | 88 267 |
+| E | **0.438** | 0.418 | 0.339 | 44 213 |
+
+Paired per seed, C against A: recall better in 3 seeds, worse in 2, tied in 7.
+MRR better in 2, **worse in 5**, tied in 5.
+
+At `initial_k = 16` the picture is unchanged for A-D; E falls to recall 0.396.
+The conclusion field moves from 5/12 `novel_relevant_observed` at `initial_k = 8`
+to 12/12 `no_novel_relevant_observed` at `initial_k = 16`.
+
+### 9.2 Facts: the manifold fixture
+
+Means over 12 seeds, identical at `initial_k = 8` and `initial_k = 16`:
+
+| Method | recall@8 | MRR | nDCG@8 | comparisons |
+|---|---|---|---|---|
+| A | 0.000 | 0.000 | 0.000 | 64 |
+| B | 0.000 | 0.000 | 0.000 | 128 |
+| C | **0.222** | 0.117 | 0.114 | 44 544 |
+| D | 0.000 | 0.143 | 0.000 | 89 088 |
+| E | 0.000 | 0.000 | 0.000 | 44 544 |
+
+Per seed, C is the only method with nonzero recall. It ranks a relevant document in
+its top-8 in **8 of 12 seeds**, and reaches one into its candidate set in **9 of 12**.
+
+In every seed where C succeeds, the document it reaches is `main-chain-6` — and
+only `main-chain-6`. `main-chain-7` and `main-chain-8` are never reached in any of
+the 24 manifold runs.
+
+D's recall of 0.000 alongside MRR 0.143 is a fusion-budget effect: its per-query
+ranking for `q-main` does contain `main-chain-6`, but the fused top-8 is filled by
+chain links 1-5 of both chains.
+
+### 9.3 Interpretation
+
+Interpretation, not measurement.
+
+1. **The control works, and MCMP shows no advantage on it.** On the neutral fixture
+   MCMP is not better than plain FAISS on recall (3 better / 2 worse / 7 tied) and
+   is slightly worse on ranking (2 better / 5 worse / 5 tied), at 686x the
+   comparisons. This is the outcome the control was built to be able to show, and
+   it is the first time Gate 1 has been able to show it at all. Note also that at
+   `initial_k = 8` five neutral seeds report `novel_relevant_observed` while C's
+   recall is *below* A's: **novelty and retrieval quality are not the same thing,**
+   and the conclusion field tracks only the former.
+
+2. **On the manifold fixture there is a real effect, and it is attributable.**
+   C reaches a relevant document that A, B and E never reach. E is the load-bearing
+   comparison: it runs identical MCMP machinery with identical parameters and
+   differs only in being confined to the FAISS pool, and it scores 0.000 in all 24
+   manifold runs. The difference between C and E is therefore attributable to the
+   walk leaving the pool, not to MCMP's reranking. This is the first
+   mechanism-attributable positive result Gate 1 has produced.
+
+3. **The effect's magnitude is one rank band, not manifold traversal.** C reaches
+   `main-chain-6` and never `main-chain-7` or `main-chain-8`. Chain link 6 sits at
+   cosine 0.517, just below the distractor band at 0.55-0.75; links 7 and 8 sit at
+   0.364 and 0.199. So the walk penetrates roughly one similarity band past what
+   FAISS retrieves, and does not follow the chain to its end. This is the same
+   magnitude the Task 7 review measured on the legacy fixture, where MCMP reached
+   exactly one rank position beyond the pool. Two different fixtures, one
+   consistent mechanism.
+
+4. **The cost is unchanged and remains the dominant fact.** 44 544 comparisons
+   against 64, a factor of ~696, to recover on average 0.67 of 3 relevant documents
+   in 8 of 12 seeds. E's figure is an upper bound by the accounting caveat recorded
+   in the plan and is not cited as exact here.
+
+5. **`initial_k` is inert on the manifold fixture.** The 8 and 16 regimes give
+   identical A-E numbers, because C searches the whole corpus regardless and E's
+   pool never contains chain link 6 at either depth. Deepening the retrieval pool
+   is not a substitute for the walk on this structure — which is the honest form of
+   the retrieve-then-rerank control the harness previously could not run.
+
+6. **The manifold fixture was built to have the structure MCMP needs.** That is its
+   declared purpose and it is what makes the result attributable, but it bounds the
+   claim: this shows the mechanism works on chain-structured data, not that code
+   retrieval is chain-structured. Per the plan's recorded caveat, the 12 seeds vary
+   vector realization at one fixed difficulty; they are not 12 difficulty levels.
+
+### 9.4 Decision
+
+The design spec's Gate 1 rule is about harness quality: proceed to Gate 2 when the
+harness is deterministic and all runs produce complete, comparable evidence.
+
+**That condition is now met, and it was not met before.** Gate 1 has a control that
+can falsify, a method that isolates the walk from the rerank, and a retrieval-pool
+control that can actually be run. The earlier blocking objection — that Gate 1
+measured the labelling convention — no longer applies to these fixtures.
+
+**Revised decision: Gate 2 is now justified, which it was not on the previous
+evidence.** This supersedes the section 5 and 8.5 decisions, which were made when
+the only positive result was a parameterization artifact. It is not a reversal of
+those findings: they remain correct about the legacy fixture.
+
+Two conditions on that recommendation:
+
+1. **Gate 2 must answer the structural question, not repeat the metric.** The open
+   question is whether real Fungus code retrieval contains chain structure of the
+   kind the manifold fixture supplies. If it does not, the mechanism has nothing to
+   act on and the manifold result does not transfer.
+2. **The cost profile belongs in Gate 2's design from the start.** A ~696x
+   comparison factor for a one-band depth gain is not viable in production as it
+   stands. Gate 2 should measure whether the walk can be bounded — fewer agents,
+   fewer steps, or a restricted frontier — while keeping the depth gain, because
+   that, not the raw effect, decides whether this is shippable.
+
+If the owner would rather not spend Gate 2 yet, the defensible alternative is
+unchanged from section 5's option 4: keep MCMP as a bounded reranking layer and
+stop the discovery branch. The neutral control gives no support for MCMP as a
+general retrieval improvement.
+
+### 9.5 Non-claims
+
+No production MCMP behaviour was changed. No Gate 2 run was performed, no TIG C004
+algorithm implemented, no MCP server, LLM, OpenFang, Docker or GPU involved. E's
+novelty count is structurally zero by construction and is not reported as a finding
+about MCMP. No claim is made about MCMP on real code retrieval.
