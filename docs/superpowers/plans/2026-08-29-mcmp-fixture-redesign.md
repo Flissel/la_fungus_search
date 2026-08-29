@@ -949,6 +949,28 @@ from the top 16. **Run the neutral fixture at `top_k = 8`** unless there is a re
 not to. A seed-7 smoke run at `top_k = 4` returning recall 0.000 for every method is
 expected and is not a defect.
 
+## Note for the evidence step: what a manifold seed sweep does and does not show
+
+Measured after Task 4. The construction works as designed at seed 7 for `q-main`:
+FAISS ranks 1-4 are chain links 1-4 (all irrelevant), distractors occupy ranks 5
+onward at cosine 0.71-0.74, and the relevant links 6-8 sit at ranks 30, 31 and 32.
+Consecutive chain similarity is a uniform 0.985. The relevant documents are
+therefore unreachable by shallow similarity retrieval and reachable only by
+traversing the chain, which is the point of the fixture.
+
+**However, the relevant ranks are exactly `(30, 31, 32)` in all 12 seeds.** The seed
+varies the orthonormal basis, the chain direction and the distractor draws, but not
+the angular layout, so the ordinal difficulty is constant. This is deliberate for
+the manifold fixture — controlled difficulty is what makes a positive result
+interpretable — but it constrains the claim: a 12-seed manifold sweep demonstrates
+robustness to vector realization at one fixed difficulty. It is **not** 12
+independent difficulty levels, and the evidence review must not report it as such.
+The neutral fixture is where rank position genuinely varies.
+
+If a later step wants difficulty to vary too, seed-varying `MANIFOLD_TOTAL_ANGLE`
+or the distractor cosine band is the lever — that is a spec change, not something
+to slip into an evidence run.
+
 ## Out of scope for this plan
 
 Generating Gate 1 evidence on the neutral and manifold fixtures, and reviewing it, is a separate step under the Gate 1 decision rule. Do not draw or record a conclusion about MCMP from within this plan. Method F (equal-budget, pheromone-free control) is deliberately deferred.

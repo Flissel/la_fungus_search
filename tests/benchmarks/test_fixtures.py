@@ -162,3 +162,49 @@ def test_neutral_dataset_is_deterministic_per_seed() -> None:
 def test_registry_selects_the_requested_builder() -> None:
     assert build_dataset("neutral", 7).dataset_id == "neutral-mcmp-v1"
     assert build_dataset("legacy", 7).dataset_id == "synthetic-mcmp-v1"
+
+
+from benchmarks.mcmp.fixtures import build_manifold_dataset
+
+
+def test_manifold_dataset_has_expected_shape_and_validates() -> None:
+    dataset = build_manifold_dataset(7)
+
+    assert dataset.dataset_id == "manifold-mcmp-v1"
+    assert dataset.document_vectors.shape == (64, 16)
+    assert dataset.query_ids == ("q-main", "q-related")
+    assert dataset.relevant_by_query["q-main"] == frozenset(
+        {"main-chain-6", "main-chain-7", "main-chain-8"}
+    )
+    assert dataset.relevant_by_query["q-related"] == frozenset(
+        {"related-chain-6", "related-chain-7", "related-chain-8"}
+    )
+    dataset.validate()
+
+
+def test_manifold_chain_links_are_closer_to_each_other_than_the_far_end_is_to_the_query() -> None:
+    dataset = build_manifold_dataset(7)
+    index = {document_id: position for position, document_id in enumerate(dataset.document_ids)}
+    vectors = dataset.document_vectors
+    query = dataset.query_vectors[dataset.query_ids.index("q-main")]
+
+    far_end_similarity = float(vectors[index["main-chain-8"]] @ query)
+    for position in range(1, 8):
+        link = float(
+            vectors[index[f"main-chain-{position}"]]
+            @ vectors[index[f"main-chain-{position + 1}"]]
+        )
+        assert link > far_end_similarity
+
+
+def test_manifold_relevant_documents_rank_below_the_default_top_k() -> None:
+    dataset = build_manifold_dataset(7)
+
+    ranks = _relevant_ranks(dataset, "q-main")
+
+    assert min(ranks) > 4
+
+
+def test_manifold_dataset_is_deterministic_per_seed() -> None:
+    assert build_manifold_dataset(3).digest() == build_manifold_dataset(3).digest()
+    assert build_manifold_dataset(3).digest() != build_manifold_dataset(4).digest()

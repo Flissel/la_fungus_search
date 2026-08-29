@@ -93,9 +93,79 @@ def build_neutral_dataset(seed: int = 7) -> BenchmarkDataset:
     return dataset
 
 
+MANIFOLD_CHAIN_LENGTH = 8
+MANIFOLD_TOTAL_ANGLE = 1.37
+MANIFOLD_RELEVANT_TAIL = 3
+MANIFOLD_DISTRACTOR_COUNT = 48
+MANIFOLD_DISTRACTOR_COSINE_RANGE = (0.55, 0.75)
+
+
+def _orthonormal_basis(rng: np.random.Generator, dimensions: int) -> np.ndarray:
+    basis, _ = np.linalg.qr(rng.normal(size=(dimensions, dimensions)))
+    return basis.T
+
+
+def _chain(query: np.ndarray, direction: np.ndarray, length: int, total_angle: float) -> np.ndarray:
+    angles = np.linspace(total_angle / length, total_angle, length)
+    return np.stack(
+        [np.cos(angle) * query + np.sin(angle) * direction for angle in angles]
+    )
+
+
+def build_manifold_dataset(seed: int = 7) -> BenchmarkDataset:
+    """Build a fixture whose relevant documents are reachable only along a chain."""
+    rng = np.random.default_rng(seed)
+    dimensions = NEUTRAL_DIMENSIONS
+    basis = _orthonormal_basis(rng, dimensions)
+    queries = basis[:2]
+    query_ids = ("q-main", "q-related")
+
+    document_ids: list[str] = []
+    rows: list[np.ndarray] = []
+    relevant_by_query: dict[str, frozenset[str]] = {}
+
+    for query_index, (query_id, prefix) in enumerate(
+        zip(query_ids, ("main", "related"), strict=True)
+    ):
+        weights = rng.normal(size=dimensions - 2)
+        direction = weights @ basis[2:]
+        direction = direction / np.linalg.norm(direction)
+        chain = _chain(
+            queries[query_index], direction, MANIFOLD_CHAIN_LENGTH, MANIFOLD_TOTAL_ANGLE
+        )
+        ids = [f"{prefix}-chain-{position}" for position in range(1, MANIFOLD_CHAIN_LENGTH + 1)]
+        document_ids.extend(ids)
+        rows.extend(chain)
+        relevant_by_query[query_id] = frozenset(ids[-MANIFOLD_RELEVANT_TAIL:])
+
+    low, high = MANIFOLD_DISTRACTOR_COSINE_RANGE
+    for position in range(MANIFOLD_DISTRACTOR_COUNT):
+        anchor = queries[position % 2]
+        cosine = float(rng.uniform(low, high))
+        weights = rng.normal(size=dimensions - 2)
+        offset = weights @ basis[2:]
+        offset = offset / np.linalg.norm(offset)
+        document_ids.append(f"distractor-{position:02d}")
+        rows.append(cosine * anchor + np.sqrt(1.0 - cosine**2) * offset)
+
+    documents = _unit_rows(np.stack(rows))
+    dataset = BenchmarkDataset(
+        dataset_id="manifold-mcmp-v1",
+        seed=seed,
+        document_ids=tuple(document_ids),
+        document_vectors=documents,
+        query_ids=query_ids,
+        query_vectors=_unit_rows(queries),
+        relevant_by_query=relevant_by_query,
+    )
+    dataset.validate()
+    return dataset
+
+
 FIXTURES = {
     "legacy": build_synthetic_dataset,
     "neutral": build_neutral_dataset,
+    "manifold": build_manifold_dataset,
 }
 
 
