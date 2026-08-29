@@ -8,6 +8,10 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
+> **Section 8 is an addendum** recording the re-baseline run
+> (`initial_k = top_k`) that section 5 recommended. It sharpens the diagnosis and
+> does not reverse the decision. Read it together with section 5.
+
 ---
 
 ## 1. Facts: harness verification
@@ -204,3 +208,118 @@ LLM, OpenFang, RAG generation, Docker, or a production embedding service. No
 Gate 2 run was performed. No TIG C004 algorithm was implemented or evaluated. No
 GPU was used. No claim is made about MCMP behaviour on real Fungus code
 retrieval — that is Gate 2's question and it remains unanswered.
+
+---
+
+## 8. Addendum: re-baseline with `initial_k = top_k`
+
+Section 5 recommended re-baselining so that the novelty metric measures MCMP
+against what FAISS actually returns, rather than against a truncated pool. That
+run has now been performed.
+
+**Declared design, fixed before execution:** `top_k = initial_k ∈ {2, 3, 4}`,
+seeds 1–12, `num_agents 24`, `steps 10`. 36 runs, all reported, none discarded.
+Evidence: `benchmarks/results/rebaseline/`.
+
+### 8.1 Facts: does the effect survive?
+
+| `top_k = initial_k` | `conclusion` (12 seeds) | C novel relevant | D novel relevant |
+|---|---|---|---|
+| 2 | 12 × `novel_relevant_observed` | 1.00 | 2.00 |
+| 3 | 12 × `no_novel_relevant_observed` | 0.00 | 0.00 |
+| 4 | 12 × `no_novel_relevant_observed` | 0.00 | 0.00 |
+
+Means over 12 seeds per configuration:
+
+| k | Method | recall@k | MRR | nDCG@k | comparisons |
+|---|---|---|---|---|---|
+| 2 | A | 0.500 | 0.500 | 0.387 | 8 |
+| 2 | B | 0.000 | 0.500 | 0.000 | 16 |
+| 2 | C | **1.000** | **1.000** | **1.000** | 5 565 |
+| 2 | D | 0.500 | 1.000 | 1.000 | 11 127 |
+| 3 | A | 1.000 | 0.500 | 0.693 | 8 |
+| 3 | B | 0.250 | 0.500 | 0.235 | 16 |
+| 3 | C | 1.000 | 1.000 | 1.000 | 5 565 |
+| 3 | D | 0.750 | 1.000 | 1.000 | 11 127 |
+| 4 | A | 1.000 | 0.500 | 0.693 | 8 |
+| 4 | B | 0.500 | 0.500 | 0.363 | 16 |
+| 4 | C | 1.000 | 1.000 | 1.000 | 5 565 |
+| 4 | D | 1.000 | 1.000 | 1.000 | 11 127 |
+
+Across all 36 runs: C recall@k is 1.000 in every single run (min = max = 1.000).
+A ranges 0.500–1.000 (mean 0.833). B ranges 0.000–0.500 (mean 0.250).
+
+### 8.2 Facts: the fixture's relevance structure
+
+Computed directly from `benchmarks/mcmp/fixtures.py`, all 12 seeds × 2 queries
+= 24 query cases:
+
+- The relevant documents occupy FAISS similarity ranks **exactly (2, 3)** in
+  **all 24** cases.
+- The rank-1 document (`main-top` / `related-top`, the exact query match,
+  similarity ≈ 1.0) is labelled **irrelevant** in **all 24** cases.
+
+Seed 7, `q-main`: `main-top` 1.0000 · `main-near` 0.9836 (relevant) ·
+`main-bridge` 0.8010 (relevant) · `related-bridge` 0.5986 · …
+
+### 8.3 Facts: the standard control cannot be expressed
+
+The natural cheap competitor to MCMP is retrieve-then-rerank: give FAISS a
+candidate pool deeper than the returned list. The harness rejects it —
+`benchmarks/mcmp/adapters.py:294` raises `ValueError("initial_k must not exceed
+top_k")`. `initial_k > top_k` is therefore unreachable, and
+`MCMP_novel = MCMP_discovered − FAISS_initial` is evaluated against a pool that
+is by construction never deeper than `top_k`.
+
+### 8.4 Interpretation
+
+1. **The re-baseline does not rescue the positive result; it localises it.** The
+   novelty effect exists only at `k = 2` and disappears at `k ≥ 3`. This is a
+   direct consequence of 8.2: the deepest relevant document sits at rank 3, so a
+   pool of 2 misses it and a pool of 3 or more contains it. MCMP reaches one rank
+   position beyond the pool. That is pool expansion, not semantic discovery, and
+   the fixture cannot distinguish the two.
+
+2. **The ranking advantage survives at every k — and 8.2 explains it entirely.**
+   A's MRR is 0.500 in all configurations because the first relevant document is
+   always at rank 2, giving RR = 1/2 exactly. MCMP scores MRR 1.000 because it
+   demotes the rank-1 document. The fixture labels the single most similar
+   document as irrelevant, which is adversarial to similarity ranking by
+   construction. Any method that declines to rank purely by similarity gains here.
+
+3. **The measured benefit is therefore a property of the fixture's labelling, not
+   demonstrated retrieval behaviour.** Every Gate 1 number — A's MRR of 0.5, C's
+   1.0, the novelty counts, their disappearance at `k ≥ 3` — follows
+   deterministically from "relevance is defined as ranks 2 and 3, never rank 1."
+   The experiment has effectively one degree of freedom.
+
+4. **The missing control is structural, not accidental** (8.3). Until the harness
+   permits `initial_k > top_k`, it cannot answer whether a cheap reranker over a
+   slightly deeper FAISS pool matches MCMP at ~700× less compute.
+
+### 8.5 Decision after re-baseline
+
+**The section 5 decision stands: do not proceed to Gate 2, query colonies, or
+TIG C004 on this evidence.** The re-baseline was the cheapest test available and
+it did not produce a result attributable to MCMP's search dynamics.
+
+The blocking issue is no longer the `initial_k` parameter — it is the fixture.
+Before any further MCMP ablation work is worth running:
+
+1. **Relevance must stop being a fixed function of similarity rank.** As long as
+   the relevant set is exactly ranks (2, 3) and rank 1 is always irrelevant, the
+   harness measures the labelling convention, not the retriever.
+2. **Allow `initial_k > top_k`** so retrieve-then-rerank can be run as a control
+   at comparable cost.
+3. Only then is a positive Gate 1 result informative enough to justify Gate 2.
+
+If the owner does not want to invest in (1) and (2), the honest reading of the
+current evidence is section 5's option 4: keep MCMP, if at all, as a re-ranking
+layer under an explicit compute budget, and stop the discovery branch.
+
+### 8.6 Non-claims for this addendum
+
+No harness or production code was modified. `initial_k > top_k` was attempted and
+refused by the existing contract; it was not worked around. Section 8.2 is a read-only
+computation over the existing fixture. No Gate 2 run, no TIG C004 implementation,
+no MCP server, LLM, OpenFang, Docker or GPU involvement.
