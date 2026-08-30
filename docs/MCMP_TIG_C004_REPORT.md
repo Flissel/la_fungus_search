@@ -19,8 +19,14 @@ Facts and interpretation are kept in separate sections on purpose.
 >   diagnosis and did not reverse that decision.
 > - **Section 9** reviews Gate 1 re-run on the redesigned fixtures, which added a
 >   neutral control and a method that isolates MCMP's walk from its reranking.
->   **It revises the decision: Gate 2 is now justified.** Sections 5 and 8.5 remain
->   correct about the legacy fixture; they are superseded, not retracted.
+>   It revises the decision: Gate 2 is justified. Sections 5 and 8.5 remain correct
+>   about the legacy fixture; they are superseded, not retracted.
+> - **Section 10 corrects section 9.3 point 3, which was wrong.** Section 9 held the
+>   agent budget fixed at 24 and read the resulting limit as a property of the
+>   mechanism. It is not: at 192 agents MCMP traverses the whole manifold in 12 of
+>   12 seeds. Section 10 carries the current reading — Gate 2 stays justified, but
+>   its second condition is replaced, because the bottleneck is MCMP's scoring, not
+>   its walk.
 
 ---
 
@@ -415,7 +421,10 @@ Interpretation, not measurement.
    walk leaving the pool, not to MCMP's reranking. This is the first
    mechanism-attributable positive result Gate 1 has produced.
 
-3. **The effect's magnitude is one rank band, not manifold traversal.** C reaches
+3. **[CORRECTED IN SECTION 10 — this point is wrong.]** It was measured at a fixed
+   agent budget of 24 and generalised beyond it; at 192 agents MCMP does traverse
+   the chain to its end. The original text follows unchanged for the record.
+   **The effect's magnitude is one rank band, not manifold traversal.** C reaches
    `main-chain-6` and never `main-chain-7` or `main-chain-8`. Chain link 6 sits at
    cosine 0.517, just below the distractor band at 0.55-0.75; links 7 and 8 sit at
    0.364 and 0.199. So the walk penetrates roughly one similarity band past what
@@ -462,11 +471,13 @@ Two conditions on that recommendation:
    question is whether real Fungus code retrieval contains chain structure of the
    kind the manifold fixture supplies. If it does not, the mechanism has nothing to
    act on and the manifold result does not transfer.
-2. **The cost profile belongs in Gate 2's design from the start.** A ~696x
-   comparison factor for a one-band depth gain is not viable in production as it
-   stands. Gate 2 should measure whether the walk can be bounded — fewer agents,
-   fewer steps, or a restricted frontier — while keeping the depth gain, because
-   that, not the raw effect, decides whether this is shippable.
+2. **[REPLACED BY SECTION 10.5 — this condition points the wrong way.]** It asks
+   for the walk to be bounded, which is precisely what destroys the gain. Retained
+   for the record. **The cost profile belongs in Gate 2's design from the start.**
+   A ~696x comparison factor for a one-band depth gain is not viable in production
+   as it stands. Gate 2 should measure whether the walk can be bounded — fewer
+   agents, fewer steps, or a restricted frontier — while keeping the depth gain,
+   because that, not the raw effect, decides whether this is shippable.
 
 If the owner would rather not spend Gate 2 yet, the defensible alternative is
 unchanged from section 5's option 4: keep MCMP as a bounded reranking layer and
@@ -479,3 +490,121 @@ No production MCMP behaviour was changed. No Gate 2 run was performed, no TIG C0
 algorithm implemented, no MCP server, LLM, OpenFang, Docker or GPU involved. E's
 novelty count is structurally zero by construction and is not reported as a finding
 about MCMP. No claim is made about MCMP on real code retrieval.
+
+---
+
+## 10. Correction: the one-band limit was an agent-budget artifact
+
+Section 9 held `num_agents = 24` and `steps = 10` fixed across all 48 runs, for
+comparability with the earlier rounds. Section 9.3 then generalised beyond that
+hold. This section corrects it.
+
+**Section 9.3 point 3 is wrong.** It stated that "the walk penetrates roughly one
+similarity band past what FAISS retrieves, and does not follow the chain to its
+end", and read that as a property of the mechanism. It is not. It is a property of
+running MCMP with 24 agents.
+
+The section 9.2 *facts* stand — at 24 agents and 10 steps, `main-chain-7` and
+`main-chain-8` were never reached in any of those 24 runs. What was wrong was
+treating that as the mechanism's ceiling.
+
+### 10.1 Facts: steps do not matter, agents do
+
+Manifold fixture, `top_k = initial_k = 8`, seed 1. Raising steps 20-fold changes
+nothing:
+
+| steps | agents | C recall@8 | relevant found | comparisons |
+|---|---|---|---|---|
+| 10 | 24 | 0.333 | `main-chain-6` | 44 544 |
+| 50 | 24 | 0.333 | `main-chain-6` | 228 864 |
+| 200 | 24 | 0.333 | `main-chain-6` | 920 064 |
+
+Raising the agent count does. Manifold, `steps = 50`, means over seeds 1-12:
+
+| agents | recall@8 | seeds with recall>0 | seeds discovering all 3 | comparisons | vs A |
+|---|---|---|---|---|---|
+| 24 (§9 setting, steps 10) | 0.222 | 8 / 12 | 0 / 12 | 44 544 | 696x |
+| 48 | 0.333 | 12 / 12 | 0 / 12 | 457 728 | 7 152x |
+| 96 | **0.722** | 12 / 12 | 10 / 12 | 915 456 | 14 304x |
+| 192 | 0.611 | 11 / 12 | **12 / 12** | 1 830 912 | 28 608x |
+| 384 | 0.139 | 5 / 12 | **12 / 12** | 3 661 824 | 57 216x |
+
+### 10.2 Facts: discovery and ranking come apart
+
+Splitting "reached as a candidate" from "ranked into the top 8", means over 12 seeds:
+
+| agents | relevant discovered | of those, ranked in top-8 |
+|---|---|---|
+| 48 | 1.00 / 3 | 1.00 / 3 |
+| 96 | 2.67 / 3 | 2.17 / 3 |
+| 192 | 3.00 / 3 | 1.83 / 3 |
+| 384 | 3.00 / 3 | 0.42 / 3 |
+
+Discovery rises monotonically with agents and saturates at complete traversal.
+Ranking peaks near 96 agents and then collapses.
+
+### 10.3 Facts: the control still holds at the manifold optimum
+
+Neutral fixture at the manifold-optimal budget (`agents = 96`, `steps = 50`),
+means over 12 seeds:
+
+| Method | recall@8 | MRR | nDCG@8 | comparisons |
+|---|---|---|---|---|
+| A | **0.438** | **0.433** | **0.341** | 64 |
+| C | 0.375 | 0.429 | 0.305 | 914 923 |
+| E | **0.438** | 0.429 | 0.339 | 915 088 |
+
+Paired against A, C is better on recall in 2 seeds, worse in 4, tied in 6. MCMP
+still shows no advantage on the control, at 14 000x the comparisons. The manifold
+gain is therefore structure-specific and not a budget effect — which is what makes
+the control worth having.
+
+### 10.4 Revised interpretation
+
+1. **MCMP's walk can traverse the whole manifold.** At 192 agents it discovers all
+   three chain-end documents in 12 of 12 seeds. The mechanism is not depth-limited
+   in the way section 9 claimed. This is a stronger positive result for MCMP than
+   section 9 reported.
+2. **The bottleneck is the relevance scoring, not the walk.** Past roughly 96
+   agents, MCMP keeps finding the right documents and keeps ranking them worse,
+   until at 384 agents it discovers everything and surfaces almost none of it.
+   Exploration and scoring are in tension in the current implementation.
+3. **`steps` is the wrong knob.** A 20-fold increase changes nothing. Whatever
+   limits a single agent's reach is not iteration count.
+4. **The cost verdict gets worse, not better.** The section 9 figure of ~696x was
+   measured at a setting that finds one third of the target. The best-ranking
+   setting costs ~14 300x and the complete-discovery setting ~28 600x.
+5. **The methodological failure is the same one this report keeps documenting.**
+   Round one generalised past a fixed `initial_k`. Round two generalised past a
+   fixed fixture labelling. This round generalised past a fixed agent budget. Each
+   time the held-fixed parameter, not the mechanism, produced the headline. Any
+   future claim here should sweep the parameter it is about to generalise over.
+
+### 10.5 Revised decision
+
+**Gate 2 remains justified** — section 9.4 is unchanged on that point, and the
+evidence for it is now stronger, since full traversal is reproducible in 12 of 12
+seeds rather than a partial effect in 8.
+
+**Section 9.4's second condition is replaced.** It asked Gate 2 to measure whether
+the walk can be *bounded* — fewer agents, fewer steps, a restricted frontier —
+while keeping the depth gain. That prescription was based on the mistaken
+one-band reading and points the wrong way: the walk needs *more* agents, and
+shrinking it is what destroys the gain.
+
+The correct condition is: **Gate 2 should measure whether MCMP's scoring can hold
+onto what its walk finds.** Discovery is solved and expensive; ranking is the
+unsolved part. A Gate 2 that only reports retrieval metrics at one agent count will
+reproduce exactly the error this section corrects — it must sweep the agent budget
+and report discovery and ranking separately.
+
+The cost condition stands and hardens: 14 300x at the best operating point is not
+a production profile. Whether that is fixable is a question about the scoring, not
+about the walk.
+
+### 10.6 Non-claims
+
+No production MCMP behaviour was changed; the agent and step counts are existing
+CLI parameters. No Gate 2 run, no TIG C004 implementation, no MCP server, LLM,
+OpenFang, Docker or GPU. The exploration bonus and pheromone decay were not varied
+and remain at their harness constants; no claim is made about their effect.
