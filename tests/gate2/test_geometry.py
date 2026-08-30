@@ -63,6 +63,24 @@ def test_chain_reachable_respects_the_hop_budget() -> None:
     )
 
 
+def test_chain_reachable_prunes_hops_below_the_threshold() -> None:
+    """The chain's hops sit at cosine 0.9394 (0.9888 for the last one).
+
+    At the default threshold of 0.0 nothing is pruned and d5 is reached. A
+    threshold of 0.95 is above every hop out of the start node, so the path
+    must be cut and d5 must become unreachable. Deleting the pruning branch
+    makes the second assertion fail.
+    """
+    dataset = _chain_dataset()
+
+    assert chain_reachable(
+        dataset, "q:probe", "d5", knn_k=2, max_hops=6, hop_threshold=0.0
+    )
+    assert not chain_reachable(
+        dataset, "q:probe", "d5", knn_k=2, max_hops=6, hop_threshold=0.95
+    )
+
+
 def test_characterise_reports_a_manifold_signature() -> None:
     dataset = _chain_dataset()
 
@@ -73,6 +91,43 @@ def test_characterise_reports_a_manifold_signature() -> None:
     assert report["far_and_reachable_count"] == 1
     assert report["manifold_signature"] == 1.0
     assert report["pairs"][0]["document_id"] == "d5"
+    assert report["pairs"][0]["rank"] == relevant_ranks(dataset, "q:probe")[0]
+    assert report["pairs"][0]["chain_reachable"] is True
+
+
+def test_characterise_records_near_pairs_as_not_measured() -> None:
+    """Reachability is computed only for far pairs.
+
+    A near pair therefore has no measurement, and must not be recorded as
+    ``False`` -- a reader tallying chain_reachable across the raw records
+    would count it as "walk cannot reach this" and undercount.
+    """
+    dataset = _chain_dataset()
+    dataset = BenchmarkDataset(
+        dataset_id=dataset.dataset_id,
+        seed=dataset.seed,
+        document_ids=dataset.document_ids,
+        document_vectors=dataset.document_vectors,
+        query_ids=dataset.query_ids,
+        query_vectors=dataset.query_vectors,
+        relevant_by_query={"q:probe": frozenset({"d1", "d5"})},
+    )
+
+    report = characterise(dataset, top_k=2, knn_k=2, max_hops=6, hop_threshold=0.0)
+
+    near, far = report["pairs"]
+    assert near["document_id"] == "d1"
+    assert near["far"] is False
+    assert near["chain_reachable"] is None
+    assert far["document_id"] == "d5"
+    assert far["far"] is True
+    assert far["chain_reachable"] is True
+
+    # The aggregates gate on `far`, so "not measured" is invisible to them.
+    assert report["pair_count"] == 2
+    assert report["far_count"] == 1
+    assert report["far_and_reachable_count"] == 1
+    assert report["manifold_signature"] == 0.5
 
 
 def test_stage_two_gate_is_pre_registered_at_ten_percent() -> None:

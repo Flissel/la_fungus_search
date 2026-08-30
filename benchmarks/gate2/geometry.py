@@ -83,18 +83,25 @@ def characterise(
     """Measure relevant-rank distribution and chain reachability for every pair."""
     pairs: list[dict[str, object]] = []
     for query_id in dataset.query_ids:
-        similarities = _similarities(dataset, query_id)
-        order = np.argsort(-similarities)
+        # relevant_ranks is the tested rank function, so it is the one that runs
+        # here. Its ranks are positions in this same descending-similarity
+        # ordering, so indexing back through `order` recovers the document each
+        # rank belongs to exactly, without a parallel rank computation.
+        order = np.argsort(-_similarities(dataset, query_id))
         rank_by_id = {
-            dataset.document_ids[index]: rank for rank, index in enumerate(order, start=1)
+            dataset.document_ids[order[rank - 1]]: rank
+            for rank in relevant_ranks(dataset, query_id)
         }
         for document_id in sorted(dataset.relevant_by_query[query_id]):
             rank = rank_by_id[document_id]
             far = rank > top_k
+            # Reachability is measured only for far pairs. Near pairs record
+            # None -- "not measured" -- rather than False, so a reader tallying
+            # chain_reachable across the raw records cannot undercount it.
             reachable = (
                 chain_reachable(dataset, query_id, document_id, knn_k, max_hops, hop_threshold)
                 if far
-                else False
+                else None
             )
             pairs.append(
                 {
@@ -106,7 +113,9 @@ def characterise(
                 }
             )
     far_count = sum(1 for pair in pairs if pair["far"])
-    far_and_reachable = sum(1 for pair in pairs if pair["far"] and pair["chain_reachable"])
+    far_and_reachable = sum(
+        1 for pair in pairs if pair["far"] and pair["chain_reachable"] is True
+    )
     signature = far_and_reachable / len(pairs) if pairs else 0.0
     return {
         "config": {

@@ -131,6 +131,33 @@ def test_manifest_round_trips_and_digest_is_stable(tmp_path: Path) -> None:
     assert reloaded.documents == manifest.documents
 
 
+def test_digest_changes_when_a_function_body_changes(tmp_path: Path) -> None:
+    """A refactored body is the mismatch a snapshot digest check has to catch.
+
+    Same corpus root, same commit sha, same document ids, same call structure:
+    everything the digest hashed before the source text was added. The
+    snapshot builders embed ``document.source``, so two corpora that differ
+    only in a body produce different vectors and must not share a digest.
+    """
+    root = tmp_path / "corpus"
+    root.mkdir(parents=True, exist_ok=True)
+    template = "def helper():\n    return {value}\n\ndef caller():\n    return helper()\n"
+
+    (root / "alpha.py").write_text(template.format(value=1), encoding="utf-8")
+    first = build_manifest(root, commit_sha="abc123", manifest_id="test-v1")
+    (root / "alpha.py").write_text(template.format(value=2), encoding="utf-8")
+    second = build_manifest(root, commit_sha="abc123", manifest_id="test-v1")
+
+    assert first.corpus_root == second.corpus_root
+    assert [d.document_id for d in first.documents] == [
+        d.document_id for d in second.documents
+    ]
+    assert first.callees_by_document == second.callees_by_document
+    assert first.documents[0].source != second.documents[0].source
+
+    assert manifest_digest(first) != manifest_digest(second)
+
+
 def test_zero_match_call_names_are_recorded_as_unresolved(tmp_path: Path) -> None:
     root = tmp_path / "corpus"
     _write_corpus(root)

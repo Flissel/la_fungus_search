@@ -67,11 +67,19 @@ def build_service_snapshot(manifest: Manifest, client: object, batch_size: int =
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     if not np.all(norms > 0.0):
         raise ValueError("embedding backend returned a zero vector")
+    # Fail closed on provenance: a snapshot whose model identifier is a
+    # placeholder is indistinguishable from one built by a different model, and
+    # this function runs once, unattended, behind an expensive setup.
+    model = getattr(client, "model_id", None)
+    if not isinstance(model, str) or not model:
+        raise ValueError(
+            "embedding client exposes no model_id; snapshot provenance would be empty"
+        )
     return Snapshot(
         document_ids=document_ids,
         vectors=(matrix / norms).astype(np.float32),
         backend="embedding-service",
-        model=str(getattr(client, "model_id", "unknown")),
+        model=model,
         dimension=int(matrix.shape[1]),
         manifest_digest=manifest_digest(manifest),
     )

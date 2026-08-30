@@ -202,6 +202,11 @@ def manifest_digest(manifest: Manifest) -> str:
         result.update(part.encode("utf-8") + b"\0")
     for document in manifest.documents:
         result.update(document.document_id.encode("utf-8") + b"\0")
+        # The source text is what both snapshot builders embed. Without it a
+        # snapshot built from an older corpus revision would pass the digest
+        # check against a newer manifest whenever symbol names and call
+        # structure are unchanged -- exactly what refactoring a body looks like.
+        result.update(document.source.encode("utf-8") + b"\0")
     for key in sorted(manifest.callees_by_document):
         result.update(key.encode("utf-8") + b":")
         result.update(",".join(sorted(manifest.callees_by_document[key])).encode("utf-8") + b"\0")

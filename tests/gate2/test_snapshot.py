@@ -117,3 +117,49 @@ def test_service_snapshot_rejects_an_empty_manifest_without_calling_the_client(t
         build_service_snapshot(manifest, client, batch_size=64)
 
     assert client.batches == []
+
+
+class _NoModelIdClient:
+    """Shaped like the real EmbeddingServiceClient, which has no ``model_id``.
+
+    Encodes fine, so the failure under test is the provenance read alone.
+    """
+
+    def __init__(self, dimension: int) -> None:
+        self.dimension = dimension
+
+    def encode(self, texts):
+        return [
+            [float(len(text) + offset + 1) for offset in range(self.dimension)]
+            for text in texts
+        ]
+
+
+class _ZeroVectorClient:
+    """Returns a row of zeros; carries a model_id so only the zero branch fires."""
+
+    model_id = "fake-model"
+
+    def __init__(self, dimension: int) -> None:
+        self.dimension = dimension
+
+    def encode(self, texts):
+        return [[0.0] * self.dimension for _ in texts]
+
+
+def test_service_snapshot_refuses_a_client_without_a_model_id(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    _corpus(root)
+    manifest = build_manifest(root, commit_sha="sha", manifest_id="m1")
+
+    with pytest.raises(ValueError, match="exposes no model_id"):
+        build_service_snapshot(manifest, _NoModelIdClient(4), batch_size=64)
+
+
+def test_service_snapshot_rejects_a_zero_vector(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    _corpus(root)
+    manifest = build_manifest(root, commit_sha="sha", manifest_id="m1")
+
+    with pytest.raises(ValueError, match="zero vector"):
+        build_service_snapshot(manifest, _ZeroVectorClient(4), batch_size=64)
