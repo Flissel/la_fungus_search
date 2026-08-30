@@ -28,6 +28,7 @@ class Manifest:
     callees_by_document: dict[str, frozenset[str]]
     callers_by_document: dict[str, frozenset[str]]
     discarded_names: tuple[str, ...]
+    unresolved_names: tuple[str, ...]
 
 
 _DEFINITION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -98,6 +99,7 @@ def build_manifest(corpus_root: Path, commit_sha: str, manifest_id: str) -> Mani
 
     callees: dict[str, frozenset[str]] = {}
     discarded: set[str] = set()
+    unresolved: set[str] = set()
     for document_id, names in raw_calls.items():
         resolved: set[str] = set()
         for name in sorted(names):
@@ -107,6 +109,8 @@ def build_manifest(corpus_root: Path, commit_sha: str, manifest_id: str) -> Mani
                     resolved.add(targets[0])
             elif len(targets) > 1:
                 discarded.add(name)
+            else:
+                unresolved.add(name)
         callees[document_id] = frozenset(resolved)
 
     callers: dict[str, set[str]] = {document.document_id: set() for document in documents}
@@ -122,6 +126,7 @@ def build_manifest(corpus_root: Path, commit_sha: str, manifest_id: str) -> Mani
         callees_by_document=callees,
         callers_by_document={key: frozenset(value) for key, value in callers.items()},
         discarded_names=tuple(sorted(discarded)),
+        unresolved_names=tuple(sorted(unresolved)),
     )
 
 
@@ -166,6 +171,7 @@ def save_manifest(manifest: Manifest, path: Path) -> None:
             key: sorted(value) for key, value in sorted(manifest.callers_by_document.items())
         },
         "discarded_names": list(manifest.discarded_names),
+        "unresolved_names": list(manifest.unresolved_names),
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -184,6 +190,7 @@ def load_manifest(path: Path) -> Manifest:
             key: frozenset(value) for key, value in payload["callers_by_document"].items()
         },
         discarded_names=tuple(payload["discarded_names"]),
+        unresolved_names=tuple(payload["unresolved_names"]),
     )
 
 

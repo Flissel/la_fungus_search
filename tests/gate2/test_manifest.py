@@ -43,6 +43,20 @@ def _write_corpus(root: Path) -> None:
         "    return 42\n",
         encoding="utf-8",
     )
+    (root / "delta.py").write_text(
+        "def class_level_helper():\n"
+        "    return 1\n"
+        "\n"
+        "def method_level_helper():\n"
+        "    return 2\n"
+        "\n"
+        "class Widget:\n"
+        "    class_level_helper()\n"
+        "\n"
+        "    def method(self):\n"
+        "        return method_level_helper()\n",
+        encoding="utf-8",
+    )
 
 
 def test_manifest_records_documents_and_resolved_edges(tmp_path: Path) -> None:
@@ -115,3 +129,31 @@ def test_manifest_round_trips_and_digest_is_stable(tmp_path: Path) -> None:
     assert manifest_digest(reloaded) == manifest_digest(manifest)
     assert reloaded.commit_sha == "abc123"
     assert reloaded.documents == manifest.documents
+
+
+def test_zero_match_call_names_are_recorded_as_unresolved(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    _write_corpus(root)
+
+    manifest = build_manifest(root, commit_sha="abc123", manifest_id="test-v1")
+
+    assert "inner" in manifest.unresolved_names
+    assert "inner" not in manifest.discarded_names
+
+
+def test_class_document_only_counts_class_level_calls(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    _write_corpus(root)
+
+    manifest = build_manifest(root, commit_sha="abc123", manifest_id="test-v1")
+
+    ids = {document.document_id for document in manifest.documents}
+    assert "delta.Widget" in ids
+    assert "delta.Widget.method" in ids
+
+    assert manifest.callees_by_document["delta.Widget.method"] == frozenset(
+        {"delta.method_level_helper"}
+    )
+    assert manifest.callees_by_document["delta.Widget"] == frozenset(
+        {"delta.class_level_helper"}
+    )
