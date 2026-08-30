@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from benchmarks.gate2.manifest import build_manifest, relevant_for
 from benchmarks.gate2.provider import build_gate2_dataset
@@ -74,3 +75,42 @@ def test_dataset_is_deterministic_per_seed(tmp_path: Path) -> None:
 
     assert first.digest() == second.digest()
     assert np.allclose(np.linalg.norm(first.document_vectors, axis=1), 1.0, atol=1e-4)
+
+
+def test_every_query_has_a_nonempty_relevant_set(tmp_path: Path) -> None:
+    # Of the 6 possible query pairs over the helper -> caller -> second -> third
+    # chain, 2 leave one of their own queries with zero relevant documents once
+    # the pair is excluded from the corpus (each pair member was the other's
+    # only call-graph neighbour). This must never be observable from the built
+    # dataset, for any seed.
+    manifest, snapshot = _fixture(tmp_path)
+
+    for seed in range(8):
+        dataset = build_gate2_dataset(manifest, snapshot, seed=seed)
+        for query_id, relevant in dataset.relevant_by_query.items():
+            assert relevant, f"seed={seed} query_id={query_id} has an empty relevant set"
+
+
+def test_no_valid_query_pair_raises(tmp_path: Path) -> None:
+    # Exactly two mutually-calling functions and nothing else: both are query
+    # candidates, but the only possible pair is the two of them together, and
+    # drawing both empties the corpus each depended on for relevance. No pair
+    # can ever satisfy the non-empty-relevant-set requirement here.
+    root = tmp_path / "corpus"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pair.py").write_text(
+        "def a():\n"
+        "    return b()\n"
+        "\n"
+        "def b():\n"
+        "    return a()\n",
+        encoding="utf-8",
+    )
+    manifest = build_manifest(root, commit_sha="sha", manifest_id="pair")
+    snapshot = build_stub_snapshot(manifest, dimension=16)
+
+    with pytest.raises(
+        ValueError,
+        match="no query pair leaves both queries with a non-empty relevant set",
+    ):
+        build_gate2_dataset(manifest, snapshot, seed=1)
