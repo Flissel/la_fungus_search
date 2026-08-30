@@ -24,6 +24,8 @@ class Snapshot:
 
 def stub_embed(texts: Sequence[str], dimension: int = 16) -> np.ndarray:
     """Deterministic offline embedding derived from the text digest."""
+    if len(texts) == 0:
+        raise ValueError("cannot embed an empty text sequence")
     rows = []
     for text in texts:
         seed = int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:8], "little")
@@ -52,6 +54,8 @@ def build_service_snapshot(manifest: Manifest, client: object, batch_size: int =
     The client is injected rather than constructed so this stays testable offline.
     Production passes ``EmbeddingServiceClient()``, which is fail-closed HTTP.
     """
+    if len(manifest.documents) == 0:
+        raise ValueError("manifest has no documents to embed")
     document_ids = tuple(document.document_id for document in manifest.documents)
     sources = [document.source for document in manifest.documents]
     rows: list[list[float]] = []

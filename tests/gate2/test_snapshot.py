@@ -99,3 +99,21 @@ def test_service_snapshot_rejects_a_short_response(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="wrong number of vectors"):
         build_service_snapshot(manifest, _FakeEmbeddingClient(4, truncate=True), batch_size=64)
+
+
+def test_stub_embed_rejects_an_empty_text_sequence() -> None:
+    with pytest.raises(ValueError, match="cannot embed an empty text sequence"):
+        stub_embed([], dimension=16)
+
+
+def test_service_snapshot_rejects_an_empty_manifest_without_calling_the_client(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "empty.py").write_text("x = 1\n", encoding="utf-8")
+    manifest = build_manifest(root, commit_sha="sha", manifest_id="m1")
+    client = _FakeEmbeddingClient(dimension=4)
+
+    with pytest.raises(ValueError, match="manifest has no documents to embed"):
+        build_service_snapshot(manifest, client, batch_size=64)
+
+    assert client.batches == []
