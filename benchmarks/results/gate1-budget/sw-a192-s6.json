@@ -1,0 +1,1139 @@
+{
+  "comparisons": {
+    "A_vs_C": {
+      "mrr_delta": 0.14285714285714285,
+      "ndcg_at_k_delta": 0.15642624200758548,
+      "novel_relevant_candidates": [
+        "main-chain-6",
+        "main-chain-7",
+        "main-chain-8"
+      ],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.3333333333333333
+    },
+    "A_vs_E": {
+      "mrr_delta": 0.0,
+      "ndcg_at_k_delta": 0.0,
+      "novel_relevant_candidates": [],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.0
+    },
+    "B_vs_D": {
+      "mrr_delta": 0.15476190476190477,
+      "ndcg_at_k_delta": 0.0,
+      "novel_relevant_candidates": [
+        "main-chain-6",
+        "main-chain-7",
+        "main-chain-8",
+        "related-chain-6",
+        "related-chain-7",
+        "related-chain-8"
+      ],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.0
+    },
+    "C_vs_E": {
+      "mrr_delta": -0.14285714285714285,
+      "ndcg_at_k_delta": -0.15642624200758548,
+      "novel_relevant_candidates": [],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": -0.3333333333333333
+    }
+  },
+  "conclusion": "novel_relevant_observed",
+  "config": {
+    "initial_k": 8,
+    "num_agents": 192,
+    "seed": 6,
+    "steps": 50,
+    "top_k": 8
+  },
+  "dataset": {
+    "digest": "b749dce631be33638d5dd441929a2020d8b27dd54a92353f8b06f6e877887e9a",
+    "document_ids": [
+      "main-chain-1",
+      "main-chain-2",
+      "main-chain-3",
+      "main-chain-4",
+      "main-chain-5",
+      "main-chain-6",
+      "main-chain-7",
+      "main-chain-8",
+      "related-chain-1",
+      "related-chain-2",
+      "related-chain-3",
+      "related-chain-4",
+      "related-chain-5",
+      "related-chain-6",
+      "related-chain-7",
+      "related-chain-8",
+      "distractor-00",
+      "distractor-01",
+      "distractor-02",
+      "distractor-03",
+      "distractor-04",
+      "distractor-05",
+      "distractor-06",
+      "distractor-07",
+      "distractor-08",
+      "distractor-09",
+      "distractor-10",
+      "distractor-11",
+      "distractor-12",
+      "distractor-13",
+      "distractor-14",
+      "distractor-15",
+      "distractor-16",
+      "distractor-17",
+      "distractor-18",
+      "distractor-19",
+      "distractor-20",
+      "distractor-21",
+      "distractor-22",
+      "distractor-23",
+      "distractor-24",
+      "distractor-25",
+      "distractor-26",
+      "distractor-27",
+      "distractor-28",
+      "distractor-29",
+      "distractor-30",
+      "distractor-31",
+      "distractor-32",
+      "distractor-33",
+      "distractor-34",
+      "distractor-35",
+      "distractor-36",
+      "distractor-37",
+      "distractor-38",
+      "distractor-39",
+      "distractor-40",
+      "distractor-41",
+      "distractor-42",
+      "distractor-43",
+      "distractor-44",
+      "distractor-45",
+      "distractor-46",
+      "distractor-47"
+    ],
+    "document_vector_shape": [
+      64,
+      16
+    ],
+    "fixture": "manifold",
+    "id": "manifold-mcmp-v1",
+    "query_ids": [
+      "q-main",
+      "q-related"
+    ],
+    "query_vector_shape": [
+      2,
+      16
+    ]
+  },
+  "environment": {
+    "execution_backend": "faiss-cpu",
+    "faiss_factory": "Flat",
+    "faiss_metric": "inner_product",
+    "faiss_version": "1.15.0",
+    "force_cpu": true,
+    "numpy_version": "2.4.6",
+    "python_version": "3.11.0"
+  },
+  "execution": {
+    "clock_mode": "fixed",
+    "clock_value": 2.0,
+    "exploration_bonus": 0.1,
+    "faiss_factory": "Flat",
+    "faiss_metric": "inner_product",
+    "force_cpu": true,
+    "pheromone_decay": 0.95
+  },
+  "query_geometry": {
+    "max_cosine_distance": 0.9999999947281563,
+    "mean_cosine_distance": 0.9999999947281563
+  },
+  "runs": {
+    "A": {
+      "candidate_comparisons": 64,
+      "candidate_overlap": {},
+      "document_visits": {},
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": null,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "faiss",
+        "num_agents": null,
+        "pheromone_decay": null,
+        "random_seed_provenance": {
+          "numpy_random_seed": null,
+          "per_query": null,
+          "python_random_seed": null
+        },
+        "seed": 6,
+        "steps": null,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 1,
+      "mcmp_steps": 0,
+      "metrics": {
+        "candidate_count": 8,
+        "mrr": 0.0,
+        "ndcg_at_k": 0.0,
+        "novel_candidates": [],
+        "novel_relevant_candidates": [],
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "unique_relevant_documents": 0
+      },
+      "nearest_search_calls": 1,
+      "pheromone_trails": 0,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "distractor-02",
+          "distractor-08",
+          "distractor-12",
+          "distractor-30",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4"
+        ],
+        "initial_candidate_ids": [
+          "distractor-02",
+          "distractor-08",
+          "distractor-12",
+          "distractor-30",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "distractor-02",
+            "distractor-08",
+            "distractor-12",
+            "distractor-30",
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "distractor-08",
+            "distractor-02",
+            "distractor-12",
+            "distractor-30"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "distractor-08",
+            "distractor-02",
+            "distractor-12",
+            "distractor-30"
+          ]
+        },
+        "ranked_document_ids": [
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4",
+          "distractor-08",
+          "distractor-02",
+          "distractor-12",
+          "distractor-30"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 0.4845999937970191
+      }
+    },
+    "B": {
+      "candidate_comparisons": 128,
+      "candidate_overlap": {
+        "q-main|q-related": 0.0
+      },
+      "document_visits": {},
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": null,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "faiss",
+        "num_agents": null,
+        "pheromone_decay": null,
+        "random_seed_provenance": {
+          "numpy_random_seed": null,
+          "per_query": null,
+          "python_random_seed": null
+        },
+        "seed": 6,
+        "steps": null,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 2,
+      "mcmp_steps": 0,
+      "metrics": {
+        "candidate_count": 16,
+        "mrr": 0.0,
+        "ndcg_at_k": 0.0,
+        "novel_candidates": [],
+        "novel_relevant_candidates": [],
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "unique_relevant_documents": 0
+      },
+      "nearest_search_calls": 2,
+      "pheromone_trails": 0,
+      "query_ids": [
+        "q-main",
+        "q-related"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "distractor-02",
+          "distractor-03",
+          "distractor-08",
+          "distractor-12",
+          "distractor-27",
+          "distractor-30",
+          "distractor-41",
+          "distractor-45",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4",
+          "related-chain-1",
+          "related-chain-2",
+          "related-chain-3",
+          "related-chain-4"
+        ],
+        "initial_candidate_ids": [
+          "distractor-02",
+          "distractor-03",
+          "distractor-08",
+          "distractor-12",
+          "distractor-27",
+          "distractor-30",
+          "distractor-41",
+          "distractor-45",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4",
+          "related-chain-1",
+          "related-chain-2",
+          "related-chain-3",
+          "related-chain-4"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "distractor-02",
+            "distractor-08",
+            "distractor-12",
+            "distractor-30",
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4"
+          ],
+          "q-related": [
+            "distractor-03",
+            "distractor-27",
+            "distractor-41",
+            "distractor-45",
+            "related-chain-1",
+            "related-chain-2",
+            "related-chain-3",
+            "related-chain-4"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "distractor-08",
+            "distractor-02",
+            "distractor-12",
+            "distractor-30"
+          ],
+          "q-related": [
+            "related-chain-1",
+            "related-chain-2",
+            "related-chain-3",
+            "related-chain-4",
+            "distractor-27",
+            "distractor-03",
+            "distractor-41",
+            "distractor-45"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "distractor-08",
+            "distractor-02",
+            "distractor-12",
+            "distractor-30"
+          ],
+          "q-related": [
+            "related-chain-1",
+            "related-chain-2",
+            "related-chain-3",
+            "related-chain-4",
+            "distractor-27",
+            "distractor-03",
+            "distractor-41",
+            "distractor-45"
+          ]
+        },
+        "ranked_document_ids": [
+          "main-chain-1",
+          "related-chain-1",
+          "main-chain-2",
+          "related-chain-2",
+          "main-chain-3",
+          "related-chain-3",
+          "main-chain-4",
+          "related-chain-4"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 0.4895000020042062
+      }
+    },
+    "C": {
+      "candidate_comparisons": 1830912,
+      "candidate_overlap": {},
+      "document_visits": {
+        "distractor-00": 0,
+        "distractor-01": 0,
+        "distractor-02": 0,
+        "distractor-03": 0,
+        "distractor-04": 3,
+        "distractor-05": 0,
+        "distractor-06": 0,
+        "distractor-07": 0,
+        "distractor-08": 0,
+        "distractor-09": 0,
+        "distractor-10": 0,
+        "distractor-11": 0,
+        "distractor-12": 0,
+        "distractor-13": 0,
+        "distractor-14": 0,
+        "distractor-15": 0,
+        "distractor-16": 0,
+        "distractor-17": 0,
+        "distractor-18": 0,
+        "distractor-19": 0,
+        "distractor-20": 0,
+        "distractor-21": 0,
+        "distractor-22": 0,
+        "distractor-23": 0,
+        "distractor-24": 0,
+        "distractor-25": 0,
+        "distractor-26": 0,
+        "distractor-27": 0,
+        "distractor-28": 0,
+        "distractor-29": 0,
+        "distractor-30": 0,
+        "distractor-31": 19,
+        "distractor-32": 0,
+        "distractor-33": 0,
+        "distractor-34": 1,
+        "distractor-35": 0,
+        "distractor-36": 0,
+        "distractor-37": 0,
+        "distractor-38": 0,
+        "distractor-39": 0,
+        "distractor-40": 0,
+        "distractor-41": 1,
+        "distractor-42": 0,
+        "distractor-43": 0,
+        "distractor-44": 0,
+        "distractor-45": 0,
+        "distractor-46": 59,
+        "distractor-47": 114,
+        "main-chain-1": 101,
+        "main-chain-2": 82,
+        "main-chain-3": 214,
+        "main-chain-4": 108,
+        "main-chain-5": 425,
+        "main-chain-6": 1831,
+        "main-chain-7": 1657,
+        "main-chain-8": 4948,
+        "related-chain-1": 0,
+        "related-chain-2": 5,
+        "related-chain-3": 16,
+        "related-chain-4": 0,
+        "related-chain-5": 0,
+        "related-chain-6": 10,
+        "related-chain-7": 4,
+        "related-chain-8": 2
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "mcmp",
+        "num_agents": 192,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 6,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 6,
+              "python_random_seed": 6
+            }
+          },
+          "python_random_seed": 6
+        },
+        "seed": 6,
+        "steps": 50,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 1,
+      "mcmp_steps": 50,
+      "metrics": {
+        "candidate_count": 19,
+        "mrr": 0.14285714285714285,
+        "ndcg_at_k": 0.15642624200758548,
+        "novel_candidates": [
+          "distractor-04",
+          "distractor-31",
+          "distractor-34",
+          "distractor-41",
+          "distractor-46",
+          "distractor-47",
+          "main-chain-5",
+          "main-chain-6",
+          "main-chain-7",
+          "main-chain-8",
+          "related-chain-2",
+          "related-chain-3",
+          "related-chain-6",
+          "related-chain-7",
+          "related-chain-8"
+        ],
+        "novel_relevant_candidates": [
+          "main-chain-6",
+          "main-chain-7",
+          "main-chain-8"
+        ],
+        "recall_at_k": 0.3333333333333333,
+        "reciprocal_rank": 0.14285714285714285,
+        "unique_relevant_documents": 1
+      },
+      "nearest_search_calls": 28608,
+      "pheromone_trails": 52,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "distractor-04",
+          "distractor-31",
+          "distractor-34",
+          "distractor-41",
+          "distractor-46",
+          "distractor-47",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4",
+          "main-chain-5",
+          "main-chain-6",
+          "main-chain-7",
+          "main-chain-8",
+          "related-chain-2",
+          "related-chain-3",
+          "related-chain-6",
+          "related-chain-7",
+          "related-chain-8"
+        ],
+        "initial_candidate_ids": [
+          "distractor-02",
+          "distractor-08",
+          "distractor-12",
+          "distractor-30",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "distractor-04",
+            "distractor-31",
+            "distractor-34",
+            "distractor-41",
+            "distractor-46",
+            "distractor-47",
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "main-chain-5",
+            "main-chain-6",
+            "main-chain-7",
+            "main-chain-8",
+            "related-chain-2",
+            "related-chain-3",
+            "related-chain-6",
+            "related-chain-7",
+            "related-chain-8"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "distractor-08",
+            "distractor-02",
+            "distractor-12",
+            "distractor-30"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "main-chain-5",
+            "distractor-46",
+            "main-chain-6",
+            "distractor-04"
+          ]
+        },
+        "ranked_document_ids": [
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4",
+          "main-chain-5",
+          "distractor-46",
+          "main-chain-6",
+          "distractor-04"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 1483.0549000180326
+      }
+    },
+    "D": {
+      "candidate_comparisons": 3661824,
+      "candidate_overlap": {
+        "q-main|q-related": 0.48
+      },
+      "document_visits": {
+        "distractor-00": 0,
+        "distractor-01": 0,
+        "distractor-02": 0,
+        "distractor-03": 0,
+        "distractor-04": 11,
+        "distractor-05": 0,
+        "distractor-06": 0,
+        "distractor-07": 0,
+        "distractor-08": 0,
+        "distractor-09": 0,
+        "distractor-10": 21,
+        "distractor-11": 0,
+        "distractor-12": 0,
+        "distractor-13": 0,
+        "distractor-14": 0,
+        "distractor-15": 0,
+        "distractor-16": 24,
+        "distractor-17": 0,
+        "distractor-18": 0,
+        "distractor-19": 0,
+        "distractor-20": 0,
+        "distractor-21": 0,
+        "distractor-22": 0,
+        "distractor-23": 0,
+        "distractor-24": 0,
+        "distractor-25": 0,
+        "distractor-26": 0,
+        "distractor-27": 0,
+        "distractor-28": 31,
+        "distractor-29": 0,
+        "distractor-30": 0,
+        "distractor-31": 19,
+        "distractor-32": 0,
+        "distractor-33": 0,
+        "distractor-34": 1,
+        "distractor-35": 0,
+        "distractor-36": 0,
+        "distractor-37": 0,
+        "distractor-38": 0,
+        "distractor-39": 0,
+        "distractor-40": 0,
+        "distractor-41": 1,
+        "distractor-42": 0,
+        "distractor-43": 0,
+        "distractor-44": 0,
+        "distractor-45": 0,
+        "distractor-46": 59,
+        "distractor-47": 114,
+        "main-chain-1": 102,
+        "main-chain-2": 83,
+        "main-chain-3": 228,
+        "main-chain-4": 108,
+        "main-chain-5": 425,
+        "main-chain-6": 1857,
+        "main-chain-7": 1667,
+        "main-chain-8": 4953,
+        "related-chain-1": 109,
+        "related-chain-2": 84,
+        "related-chain-3": 76,
+        "related-chain-4": 108,
+        "related-chain-5": 358,
+        "related-chain-6": 2086,
+        "related-chain-7": 1518,
+        "related-chain-8": 5157
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "mcmp",
+        "num_agents": 192,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 6,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 6,
+              "python_random_seed": 6
+            },
+            "q-related": {
+              "numpy_random_seed": 7,
+              "python_random_seed": 7
+            }
+          },
+          "python_random_seed": 6
+        },
+        "seed": 6,
+        "steps": 50,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 2,
+      "mcmp_steps": 50,
+      "metrics": {
+        "candidate_count": 25,
+        "mrr": 0.15476190476190477,
+        "ndcg_at_k": 0.0,
+        "novel_candidates": [
+          "distractor-04",
+          "distractor-10",
+          "distractor-16",
+          "distractor-28",
+          "distractor-31",
+          "distractor-34",
+          "distractor-46",
+          "distractor-47",
+          "main-chain-5",
+          "main-chain-6",
+          "main-chain-7",
+          "main-chain-8",
+          "related-chain-5",
+          "related-chain-6",
+          "related-chain-7",
+          "related-chain-8"
+        ],
+        "novel_relevant_candidates": [
+          "main-chain-6",
+          "main-chain-7",
+          "main-chain-8",
+          "related-chain-6",
+          "related-chain-7",
+          "related-chain-8"
+        ],
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "unique_relevant_documents": 0
+      },
+      "nearest_search_calls": 57216,
+      "pheromone_trails": 100,
+      "query_ids": [
+        "q-main",
+        "q-related"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "distractor-04",
+          "distractor-10",
+          "distractor-16",
+          "distractor-28",
+          "distractor-31",
+          "distractor-34",
+          "distractor-41",
+          "distractor-46",
+          "distractor-47",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4",
+          "main-chain-5",
+          "main-chain-6",
+          "main-chain-7",
+          "main-chain-8",
+          "related-chain-1",
+          "related-chain-2",
+          "related-chain-3",
+          "related-chain-4",
+          "related-chain-5",
+          "related-chain-6",
+          "related-chain-7",
+          "related-chain-8"
+        ],
+        "initial_candidate_ids": [
+          "distractor-02",
+          "distractor-03",
+          "distractor-08",
+          "distractor-12",
+          "distractor-27",
+          "distractor-30",
+          "distractor-41",
+          "distractor-45",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4",
+          "related-chain-1",
+          "related-chain-2",
+          "related-chain-3",
+          "related-chain-4"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "distractor-04",
+            "distractor-31",
+            "distractor-34",
+            "distractor-41",
+            "distractor-46",
+            "distractor-47",
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "main-chain-5",
+            "main-chain-6",
+            "main-chain-7",
+            "main-chain-8",
+            "related-chain-2",
+            "related-chain-3",
+            "related-chain-6",
+            "related-chain-7",
+            "related-chain-8"
+          ],
+          "q-related": [
+            "distractor-04",
+            "distractor-10",
+            "distractor-16",
+            "distractor-28",
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-6",
+            "main-chain-7",
+            "main-chain-8",
+            "related-chain-1",
+            "related-chain-2",
+            "related-chain-3",
+            "related-chain-4",
+            "related-chain-5",
+            "related-chain-6",
+            "related-chain-7",
+            "related-chain-8"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "distractor-08",
+            "distractor-02",
+            "distractor-12",
+            "distractor-30"
+          ],
+          "q-related": [
+            "related-chain-1",
+            "related-chain-2",
+            "related-chain-3",
+            "related-chain-4",
+            "distractor-27",
+            "distractor-03",
+            "distractor-41",
+            "distractor-45"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "main-chain-5",
+            "distractor-46",
+            "main-chain-6",
+            "distractor-04"
+          ],
+          "q-related": [
+            "related-chain-1",
+            "related-chain-2",
+            "related-chain-3",
+            "related-chain-4",
+            "related-chain-5",
+            "related-chain-6",
+            "related-chain-7",
+            "related-chain-8"
+          ]
+        },
+        "ranked_document_ids": [
+          "related-chain-1",
+          "main-chain-1",
+          "main-chain-2",
+          "related-chain-2",
+          "main-chain-3",
+          "related-chain-3",
+          "main-chain-4",
+          "related-chain-4"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 2002.8847000212409
+      }
+    },
+    "E": {
+      "candidate_comparisons": 1830912,
+      "candidate_overlap": {},
+      "document_visits": {
+        "distractor-00": 0,
+        "distractor-01": 0,
+        "distractor-02": 8,
+        "distractor-03": 0,
+        "distractor-04": 0,
+        "distractor-05": 0,
+        "distractor-06": 0,
+        "distractor-07": 0,
+        "distractor-08": 0,
+        "distractor-09": 0,
+        "distractor-10": 0,
+        "distractor-11": 0,
+        "distractor-12": 2007,
+        "distractor-13": 0,
+        "distractor-14": 0,
+        "distractor-15": 0,
+        "distractor-16": 0,
+        "distractor-17": 0,
+        "distractor-18": 0,
+        "distractor-19": 0,
+        "distractor-20": 0,
+        "distractor-21": 0,
+        "distractor-22": 0,
+        "distractor-23": 0,
+        "distractor-24": 0,
+        "distractor-25": 0,
+        "distractor-26": 0,
+        "distractor-27": 0,
+        "distractor-28": 0,
+        "distractor-29": 0,
+        "distractor-30": 25,
+        "distractor-31": 0,
+        "distractor-32": 0,
+        "distractor-33": 0,
+        "distractor-34": 0,
+        "distractor-35": 0,
+        "distractor-36": 0,
+        "distractor-37": 0,
+        "distractor-38": 0,
+        "distractor-39": 0,
+        "distractor-40": 0,
+        "distractor-41": 0,
+        "distractor-42": 0,
+        "distractor-43": 0,
+        "distractor-44": 0,
+        "distractor-45": 0,
+        "distractor-46": 0,
+        "distractor-47": 0,
+        "main-chain-1": 417,
+        "main-chain-2": 1618,
+        "main-chain-3": 1416,
+        "main-chain-4": 4109,
+        "main-chain-5": 0,
+        "main-chain-6": 0,
+        "main-chain-7": 0,
+        "main-chain-8": 0,
+        "related-chain-1": 0,
+        "related-chain-2": 0,
+        "related-chain-3": 0,
+        "related-chain-4": 0,
+        "related-chain-5": 0,
+        "related-chain-6": 0,
+        "related-chain-7": 0,
+        "related-chain-8": 0
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "mcmp",
+        "num_agents": 192,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 6,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 6,
+              "python_random_seed": 6
+            }
+          },
+          "python_random_seed": 6
+        },
+        "seed": 6,
+        "steps": 50,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "independent_run_count": 1,
+      "mcmp_steps": 50,
+      "metrics": {
+        "candidate_count": 7,
+        "mrr": 0.0,
+        "ndcg_at_k": 0.0,
+        "novel_candidates": [],
+        "novel_relevant_candidates": [],
+        "recall_at_k": 0.0,
+        "reciprocal_rank": 0.0,
+        "unique_relevant_documents": 0
+      },
+      "nearest_search_calls": 28608,
+      "pheromone_trails": 20,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "distractor-02",
+          "distractor-12",
+          "distractor-30",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4"
+        ],
+        "initial_candidate_ids": [
+          "distractor-02",
+          "distractor-08",
+          "distractor-12",
+          "distractor-30",
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "distractor-02",
+            "distractor-12",
+            "distractor-30",
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "distractor-08",
+            "distractor-02",
+            "distractor-12",
+            "distractor-30"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "main-chain-1",
+            "main-chain-2",
+            "main-chain-3",
+            "main-chain-4",
+            "distractor-02",
+            "distractor-12",
+            "distractor-30",
+            "distractor-08"
+          ]
+        },
+        "ranked_document_ids": [
+          "main-chain-1",
+          "main-chain-2",
+          "main-chain-3",
+          "main-chain-4",
+          "distractor-02",
+          "distractor-12",
+          "distractor-30",
+          "distractor-08"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 2204.549299989594
+      }
+    }
+  }
+}
