@@ -388,3 +388,80 @@ def test_method_f_is_single_query_and_deterministic() -> None:
     assert first.ranked_document_ids == second.ranked_document_ids
     with pytest.raises(ValueError, match="requires exactly 1 query"):
         run_mcmp(dataset, "F", ("q-main", "q-related"), **kwargs)
+
+
+def test_comparisons_are_counted_against_the_corpus_present_at_each_call() -> None:
+    """Cost must be accumulated per call, not multiplied at the end.
+
+    For A-D and F the working set is the whole corpus and the two agree. For E,
+    whose retriever holds only the FAISS pool, the end-multiplication overstated
+    the cost -- a caveat carried as a known limitation until now. A method whose
+    working set grows during the run cannot be measured any other way.
+    """
+    dataset = build_synthetic_dataset()
+    full = len(dataset.document_ids)
+
+    c_run, c_evidence = run_mcmp(
+        dataset, "C", ("q-main",), top_k=2, initial_k=3, seed=7, num_agents=4, steps=3
+    )
+    e_run, e_evidence = run_mcmp(
+        dataset, "E", ("q-main",), top_k=2, initial_k=3,
+        seed=7, num_agents=4, steps=3, pool_only=True,
+    )
+
+    assert c_run.candidate_comparisons == c_evidence.nearest_search_calls * full
+    assert e_run.candidate_comparisons < e_evidence.nearest_search_calls * full
+    assert e_run.candidate_comparisons > 0
+
+
+def test_method_g_grows_its_working_set_beyond_the_initial_pool() -> None:
+    """G is the middle C and E leave open: it may leave its starting
+    neighbourhood without ever holding the whole corpus."""
+    dataset = build_synthetic_dataset()
+
+    run, evidence = run_mcmp(
+        dataset, "G", ("q-main",), top_k=3, initial_k=2,
+        seed=7, num_agents=6, steps=10, frontier=True,
+        expand_every=2, expand_k=2, frontier_cap=6,
+    )
+
+    assert evidence.frontier_expansions > 0
+    assert evidence.frontier_documents_added > 0
+    reached = set(run.per_query_candidate_ids["q-main"]) | set(
+        run.per_query_ranked_document_ids["q-main"]
+    )
+    pool = set(run.per_query_initial_candidate_ids["q-main"])
+    assert reached - pool, "G never left its starting pool"
+
+
+def test_method_g_respects_the_frontier_cap_and_costs_less_than_c() -> None:
+    dataset = build_synthetic_dataset()
+    full = len(dataset.document_ids)
+
+    g_run, g_evidence = run_mcmp(
+        dataset, "G", ("q-main",), top_k=3, initial_k=2,
+        seed=7, num_agents=6, steps=10, frontier=True,
+        expand_every=2, expand_k=2, frontier_cap=5,
+    )
+    c_run, _ = run_mcmp(
+        dataset, "C", ("q-main",), top_k=3, initial_k=2, seed=7, num_agents=6, steps=10
+    )
+
+    assert 2 + g_evidence.frontier_documents_added <= 5
+    assert g_run.candidate_comparisons < c_run.candidate_comparisons
+    assert g_run.candidate_comparisons < g_evidence.nearest_search_calls * full
+
+
+def test_method_g_is_single_query_and_deterministic() -> None:
+    dataset = build_synthetic_dataset()
+    kwargs = dict(
+        top_k=3, initial_k=2, seed=7, num_agents=6, steps=10, frontier=True,
+        expand_every=2, expand_k=2, frontier_cap=6,
+    )
+
+    first, _ = run_mcmp(dataset, "G", ("q-main",), **kwargs)
+    second, _ = run_mcmp(dataset, "G", ("q-main",), **kwargs)
+
+    assert first.ranked_document_ids == second.ranked_document_ids
+    with pytest.raises(ValueError, match="requires exactly 1 query"):
+        run_mcmp(dataset, "G", ("q-main", "q-related"), **kwargs)

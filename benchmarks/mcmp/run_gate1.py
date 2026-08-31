@@ -32,6 +32,7 @@ _RUN_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("D", ("q-main", "q-related")),
     ("E", ("q-main",)),
     ("F", ("q-main",)),
+    ("G", ("q-main",)),
 )
 
 
@@ -42,6 +43,9 @@ def run_gate1(
     num_agents: int,
     steps: int,
     fixture: str = "legacy",
+    expand_every: int = 10,
+    expand_k: int = 4,
+    frontier_cap: int = 64,
 ) -> dict[str, object]:
     """Run the fixed A-D offline ablation and return its complete evidence."""
     dataset = build_dataset(fixture, seed)
@@ -62,6 +66,10 @@ def run_gate1(
                 steps,
                 pool_only=method == "E",
                 pheromone_free=method == "F",
+                frontier=method == "G",
+                expand_every=expand_every,
+                expand_k=expand_k,
+                frontier_cap=frontier_cap,
             )
         runs[method] = _run_payload(
             dataset, run, evidence, seed, top_k, initial_k, num_agents, steps
@@ -169,6 +177,8 @@ def _run_payload(
         "mcmp_steps": run.mcmp_steps,
         "document_visits": dict(sorted(run.document_visits.items())),
         "pheromone_trails": run.pheromone_trails,
+        "frontier_expansions": evidence.frontier_expansions,
+        "frontier_documents_added": evidence.frontier_documents_added,
     }
 
 
@@ -184,7 +194,7 @@ def _run_execution_snapshot(
     clock_mode: str = DETERMINISTIC_CLOCK_MODE,
     clock_value: float = DETERMINISTIC_CLOCK_VALUE,
 ) -> dict[str, object]:
-    is_mcmp = method in {"C", "D", "E", "F"}
+    is_mcmp = method in {"C", "D", "E", "F", "G"}
     random_seed_provenance: dict[str, object] = {
         "python_random_seed": seed if is_mcmp else None,
         "numpy_random_seed": seed if is_mcmp else None,
@@ -249,6 +259,9 @@ def _comparison_payload(runs: dict[str, dict[str, object]]) -> dict[str, dict[st
         # The load-bearing comparison for the colony question: same corpus,
         # same agents, same steps, same seed -- pheromone on versus off.
         comparisons["C_vs_F"] = _compare_runs(runs["C"], runs["F"])
+    if "G" in runs:
+        # The scaling comparison: same colony, bounded working set.
+        comparisons["C_vs_G"] = _compare_runs(runs["C"], runs["G"])
     return comparisons
 
 
@@ -342,8 +355,9 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
         ["A", "B", "C", "D"],
         ["A", "B", "C", "D", "E"],
         ["A", "B", "C", "D", "E", "F"],
+        ["A", "B", "C", "D", "E", "F", "G"],
     ):
-        raise ValueError("runs must be ordered A-D, optionally followed by E and F")
+        raise ValueError("runs must be ordered A-D, optionally followed by E, F and G")
     present = set(runs)
     for method, query_ids in _RUN_SPECS:
         if method not in present:
@@ -366,6 +380,8 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
         expected_pairs += (("A_vs_E", "A", "E"), ("C_vs_E", "C", "E"))
     if "F" in present:
         expected_pairs += (("C_vs_F", "C", "F"),)
+    if "G" in present:
+        expected_pairs += (("C_vs_G", "C", "G"),)
     if list(comparisons) != [name for name, _left, _right in expected_pairs]:
         raise ValueError("comparisons must match the runs present")
     for name, left, right in expected_pairs:
@@ -395,6 +411,13 @@ def _validate_run_evidence(
     steps: int,
 ) -> None:
     required = {"query_ids", "independent_run_count", "execution_backend", "execution", "raw_ids", "metrics", "candidate_overlap", "timing", "candidate_comparisons", "nearest_search_calls", "mcmp_steps", "document_visits", "pheromone_trails"}
+    # Frontier fields are optional so payloads written before method G existed
+    # keep validating; a payload carrying one must carry both.
+    frontier_keys = {"frontier_expansions", "frontier_documents_added"}
+    present_frontier = frontier_keys & set(run)
+    if present_frontier and present_frontier != frontier_keys:
+        raise ValueError(f"runs.{method} frontier evidence is incomplete")
+    required |= present_frontier
     _require_keys(run, required, f"runs.{method}")
     if not _strict_equal(run["query_ids"], list(query_ids)) or _integer(run["independent_run_count"], "independent_run_count") != len(query_ids):
         raise ValueError(f"runs.{method} has incorrect query cardinality")
@@ -414,7 +437,12 @@ def _validate_run_evidence(
     discovered = _string_list(raw_ids["discovered_candidate_ids"], "discovered_candidate_ids")
     # Method E reranks only its FAISS pool, so it cannot return more documents than
     # the pool holds. Every other method ranks against the full corpus.
-    expected_ranked_count = min(top_k, initial_k) if method == "E" else top_k
+    # E ranks its pool; G ranks a working set that grows during the run, so only
+    # an upper bound is checkable from the evidence.
+    if method == "G":
+        expected_ranked_count = len(ranked) if 0 < len(ranked) <= top_k else -1
+    else:
+        expected_ranked_count = min(top_k, initial_k) if method == "E" else top_k
     if len(ranked) != expected_ranked_count or any(len(set(values)) != len(values) for values in (ranked, initial, discovered)) or not set(ranked) <= documents or not set(initial) <= documents or not set(discovered) <= documents:
         raise ValueError(f"runs.{method} contains invalid raw document ids")
     per_query_initials = _mapping(
@@ -452,7 +480,12 @@ def _validate_run_evidence(
         raise ValueError(f"runs.{method} discovered candidates do not match per-query evidence")
     if method in {"A", "B"} and frozenset(initial) != frozenset(discovered):
         raise ValueError(f"runs.{method} baseline candidates must not be novel")
-    if any(len(ranking) != expected_ranked_count for ranking in per_query_rankings.values()):
+    if method == "G":
+        if any(
+            not 0 < len(ranking) <= top_k for ranking in per_query_rankings.values()
+        ):
+            raise ValueError(f"runs.{method} per-query rankings must equal top_k")
+    elif any(len(ranking) != expected_ranked_count for ranking in per_query_rankings.values()):
         raise ValueError(f"runs.{method} per-query rankings must equal top_k")
     metrics = _mapping(run["metrics"], f"runs.{method}.metrics")
     _require_keys(metrics, {"recall_at_k", "reciprocal_rank", "mrr", "ndcg_at_k", "unique_relevant_documents", "candidate_count", "novel_candidates", "novel_relevant_candidates"}, f"runs.{method}.metrics")
@@ -473,7 +506,15 @@ def _validate_run_evidence(
     nearest_search_calls = _positive_int(run["nearest_search_calls"], "nearest_search_calls", allow_zero=True)
     if nearest_search_calls < len(query_ids):
         raise ValueError("nearest_search_calls is incomplete")
-    if candidate_comparisons != nearest_search_calls * len(dataset.document_ids):
+    # Comparisons are accumulated per call against the corpus present at that
+    # call. For methods whose retriever holds the whole corpus that is exactly
+    # calls x document count; for a pool-confined or frontier-growing working set
+    # it is strictly less, and only the upper bound can be checked from evidence.
+    full_corpus_bound = nearest_search_calls * len(dataset.document_ids)
+    if method in {"A", "B", "C", "D", "F"}:
+        if candidate_comparisons != full_corpus_bound:
+            raise ValueError("candidate comparisons do not match nearest-search evidence")
+    elif not 0 < candidate_comparisons <= full_corpus_bound:
         raise ValueError("candidate comparisons do not match nearest-search evidence")
     expected_steps = 0 if method in {"A", "B"} else steps
     if _integer(run["mcmp_steps"], "mcmp_steps") != expected_steps:
@@ -481,7 +522,7 @@ def _validate_run_evidence(
     visits = _mapping(run["document_visits"], f"runs.{method}.document_visits")
     if method in {"A", "B"} and visits:
         raise ValueError(f"runs.{method} must not report MCMP visits")
-    if method in {"C", "D", "E", "F"} and set(visits) != documents:
+    if method in {"C", "D", "E", "F", "G"} and set(visits) != documents:
         raise ValueError(f"runs.{method} must report every document visit count")
     visit_counts = {
         document_id: _positive_int(value, "document visit", allow_zero=True)
@@ -593,9 +634,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--steps", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--fixture", choices=sorted(FIXTURES), default="legacy")
+    parser.add_argument("--expand-every", type=int, default=10)
+    parser.add_argument("--expand-k", type=int, default=4)
+    parser.add_argument("--frontier-cap", type=int, default=64)
     args = parser.parse_args(argv)
     payload = run_gate1(
-        args.seed, args.top_k, args.initial_k, args.num_agents, args.steps, args.fixture
+        args.seed, args.top_k, args.initial_k, args.num_agents, args.steps, args.fixture,
+        args.expand_every, args.expand_k, args.frontier_cap,
     )
     try:
         write_gate1_result(payload, args.output)

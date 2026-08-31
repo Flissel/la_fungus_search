@@ -44,6 +44,12 @@ class AdapterEvidence:
     per_query_random_seeds: dict[str, dict[str, int]] | None
     clock_mode: str
     clock_value: float
+    # Frontier expansion, reported separately and NEVER folded into
+    # candidate_comparisons: in production those lookups go to an ANN index whose
+    # cost is not comparable to the walk's linear scans, so a combined total would
+    # be a number with two different units in it.
+    frontier_expansions: int = 0
+    frontier_documents_added: int = 0
 
 
 class MappingEmbeddingBackend:
@@ -64,9 +70,15 @@ class CountingRetriever(MCPMRetriever):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.nearest_search_calls = 0
+        self.candidate_comparisons = 0
 
     def find_nearest_documents(self, position: np.ndarray, k: int = 3):
         self.nearest_search_calls += 1
+        # Accumulate against the corpus present at THIS call. Multiplying calls
+        # by the final corpus size at the end is only correct while the working
+        # set is constant: it overstates a pool-confined run and is meaningless
+        # for one whose frontier grows during the walk.
+        self.candidate_comparisons += len(self.documents)
         return super().find_nearest_documents(position, k)
 
 
@@ -119,6 +131,7 @@ def run_faiss(
     rankings: dict[str, Sequence[str]] = {}
     score_maps: list[dict[str, float]] = []
     nearest_search_calls = 0
+    comparisons = 0
     execution_backends: set[str] = set()
 
     for query_id in query_ids:
@@ -139,6 +152,7 @@ def run_faiss(
         candidates[query_id] = frozenset(initial_rankings[query_id])
         score_maps.append(scores)
         nearest_search_calls += retriever.nearest_search_calls
+        comparisons += retriever.candidate_comparisons
 
     run = SearchRun(
         method=method,
@@ -149,7 +163,7 @@ def run_faiss(
         per_query_candidate_ids=candidates,
         per_query_ranked_document_ids=rankings,
         elapsed_ms=(perf_counter() - started) * 1000.0,
-        candidate_comparisons=nearest_search_calls * len(dataset.document_ids),
+        candidate_comparisons=comparisons,
         mcmp_steps=0,
         document_visits={},
         pheromone_trails=0,
@@ -178,9 +192,13 @@ def run_mcmp(
     steps: int,
     pool_only: bool = False,
     pheromone_free: bool = False,
+    frontier: bool = False,
+    expand_every: int = 10,
+    expand_k: int = 4,
+    frontier_cap: int = 64,
 ) -> tuple[SearchRun, AdapterEvidence]:
     """Run a fresh, seeded MCMP simulation for every benchmark query."""
-    _validate_run_inputs(dataset, method, query_ids, {"C", "D", "E", "F"}, top_k, initial_k)
+    _validate_run_inputs(dataset, method, query_ids, {"C", "D", "E", "F", "G"}, top_k, initial_k)
     # Method F is C with the colony switched off; every other knob is identical.
     retriever_class = PheromoneFreeRetriever if pheromone_free else CountingRetriever
     _validate_positive_integer(num_agents, name="num_agents")
@@ -196,6 +214,9 @@ def run_mcmp(
     visits: dict[str, int] = {document_id: 0 for document_id in dataset.document_ids}
     trails = 0
     nearest_search_calls = 0
+    comparisons = 0
+    frontier_expansions = 0
+    frontier_documents_added = 0
     execution_backends: set[str] = set()
     per_query_random_seeds: dict[str, dict[str, int]] = {}
     original_python_rng_state = random.getstate()
@@ -231,6 +252,7 @@ def run_mcmp(
                 # full-corpus retriever, whose search calls are banked here before
                 # a second retriever is built over the pool alone.
                 nearest_search_calls += retriever.nearest_search_calls
+                comparisons += retriever.candidate_comparisons
                 backend = MappingEmbeddingBackend(vectors)
                 retriever = retriever_class(
                     num_agents=num_agents,
@@ -244,8 +266,59 @@ def run_mcmp(
                 )
                 retriever.add_documents(list(initial_rankings[query_id]), cache=False)
                 execution_backends.add(_execution_backend(retriever))
-            retriever.initialize_simulation(query_id)
-            retriever.step(steps)
+            if frontier:
+                # Start on the FAISS pool, then grow toward wherever the walk
+                # actually goes: every `expand_every` steps, the most-visited
+                # document not yet expanded contributes its nearest neighbours.
+                # `add_documents` appends and rebuilds the index without touching
+                # agents, trails or visit counts, so the colony survives the
+                # expansion -- which is the whole point, since a pool-confined
+                # colony (method E) finds nothing on a chain.
+                working = list(initial_rankings[query_id])
+                backend = MappingEmbeddingBackend(vectors)
+                retriever = retriever_class(
+                    num_agents=num_agents,
+                    max_iterations=steps,
+                    pheromone_decay=PHEROMONE_DECAY,
+                    exploration_bonus=EXPLORATION_BONUS,
+                    build_faiss_after_add=True,
+                    force_cpu=True,
+                    embedding_backend=(backend, dataset.document_vectors.shape[1]),
+                    time_source=FixedClock(DETERMINISTIC_CLOCK_VALUE),
+                )
+                retriever.add_documents(working, cache=False)
+                execution_backends.add(_execution_backend(retriever))
+                retriever.initialize_simulation(query_id)
+                expanded: set[str] = set()
+                remaining = steps
+                while remaining > 0:
+                    chunk = min(expand_every, remaining)
+                    retriever.step(chunk)
+                    remaining -= chunk
+                    if remaining <= 0 or len(working) >= frontier_cap:
+                        continue
+                    ordered = sorted(
+                        (d for d in retriever.documents if d.content not in expanded),
+                        key=lambda d: (-int(d.visit_count), d.content),
+                    )
+                    if not ordered:
+                        continue
+                    origin = ordered[0].content
+                    expanded.add(origin)
+                    room = frontier_cap - len(working)
+                    additions = [
+                        candidate
+                        for candidate in _nearest_in_corpus(dataset, origin, expand_k)
+                        if candidate not in set(working)
+                    ][:room]
+                    frontier_expansions += 1
+                    if additions:
+                        retriever.add_documents(additions, cache=False)
+                        working.extend(additions)
+                        frontier_documents_added += len(additions)
+            else:
+                retriever.initialize_simulation(query_id)
+                retriever.step(steps)
 
             scores = {document.content: float(document.relevance_score) for document in retriever.documents}
             rankings[query_id] = _rank(scores, top_k)
@@ -257,6 +330,7 @@ def run_mcmp(
                 visits[document.content] += int(document.visit_count)
             trails += len(retriever.pheromone_trails)
             nearest_search_calls += retriever.nearest_search_calls
+            comparisons += retriever.candidate_comparisons
     finally:
         random.setstate(original_python_rng_state)
         np.random.set_state(original_rng_state)
@@ -270,7 +344,7 @@ def run_mcmp(
         per_query_candidate_ids=discovered_candidates,
         per_query_ranked_document_ids=rankings,
         elapsed_ms=(perf_counter() - started) * 1000.0,
-        candidate_comparisons=nearest_search_calls * len(dataset.document_ids),
+        candidate_comparisons=comparisons,
         mcmp_steps=steps,
         document_visits=visits,
         pheromone_trails=trails,
@@ -285,6 +359,8 @@ def run_mcmp(
         per_query_random_seeds,
         DETERMINISTIC_CLOCK_MODE,
         DETERMINISTIC_CLOCK_VALUE,
+        frontier_expansions,
+        frontier_documents_added,
     )
 
 
@@ -296,6 +372,21 @@ def _single_execution_backend(backends: set[str]) -> str:
     if len(backends) != 1:
         raise RuntimeError("benchmark execution backend changed within a run")
     return next(iter(backends))
+
+
+def _nearest_in_corpus(
+    dataset: BenchmarkDataset, document_id: str, count: int
+) -> tuple[str, ...]:
+    """Nearest neighbours of a document across the whole corpus.
+
+    Stands in for the production ANN index that a frontier expansion would query.
+    Its cost is reported as a frontier expansion, not as walk comparisons.
+    """
+    index = list(dataset.document_ids).index(document_id)
+    similarities = dataset.document_vectors @ dataset.document_vectors[index]
+    similarities[index] = -np.inf
+    order = np.argsort(-similarities)[:count]
+    return tuple(dataset.document_ids[int(position)] for position in order)
 
 
 def _vector_mapping(dataset: BenchmarkDataset) -> dict[str, np.ndarray]:
@@ -331,7 +422,7 @@ def _validate_run_inputs(
     dataset.validate()
     if method not in allowed_methods:
         raise ValueError(f"method must be one of {sorted(allowed_methods)}")
-    expected_query_count = 1 if method in {"A", "C", "E", "F"} else 2
+    expected_query_count = 1 if method in {"A", "C", "E", "F", "G"} else 2
     if len(query_ids) != expected_query_count:
         raise ValueError(f"method {method} requires exactly {expected_query_count} query ids")
     if len(set(query_ids)) != len(query_ids):

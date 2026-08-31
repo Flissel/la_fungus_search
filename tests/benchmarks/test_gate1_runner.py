@@ -17,7 +17,7 @@ from benchmarks.mcmp.run_gate1 import (
 def test_gate1_runner_orchestrates_fixed_ablation_and_round_trips_evidence(tmp_path) -> None:
     payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10)
 
-    assert list(payload["runs"]) == ["A", "B", "C", "D", "E", "F"]
+    assert list(payload["runs"]) == ["A", "B", "C", "D", "E", "F", "G"]
     assert payload["config"] == {
         "seed": 7,
         "top_k": 4,
@@ -167,7 +167,7 @@ def test_writer_persists_full_schema_with_sorted_format_and_final_newline(tmp_pa
     assert text.endswith("\n")
     assert text.startswith('{\n  "comparisons"')
     assert reloaded == payload
-    assert list(reloaded["runs"]) == ["A", "B", "C", "D", "E", "F"]
+    assert list(reloaded["runs"]) == ["A", "B", "C", "D", "E", "F", "G"]
     assert reloaded["runs"]["D"]["independent_run_count"] == 2
     assert reloaded["comparisons"].keys() == {
         "A_vs_C",
@@ -175,6 +175,7 @@ def test_writer_persists_full_schema_with_sorted_format_and_final_newline(tmp_pa
         "A_vs_E",
         "C_vs_E",
         "C_vs_F",
+        "C_vs_G",
     }
     for run in reloaded["runs"].values():
         assert {"raw_ids", "metrics", "timing", "candidate_comparisons", "nearest_search_calls", "document_visits", "pheromone_trails"} <= run.keys()
@@ -368,8 +369,10 @@ def test_conclusion_ignores_method_e() -> None:
 
 def test_validator_accepts_a_legacy_four_run_payload() -> None:
     payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=4, steps=2)
+    del payload["runs"]["G"]
     del payload["runs"]["F"]
     del payload["runs"]["E"]
+    del payload["comparisons"]["C_vs_G"]
     del payload["comparisons"]["C_vs_F"]
     del payload["comparisons"]["A_vs_E"]
     del payload["comparisons"]["C_vs_E"]
@@ -409,10 +412,28 @@ def test_c_vs_f_isolates_the_colony() -> None:
 def test_validator_accepts_payloads_without_e_and_f() -> None:
     """Evidence written before E and F existed must keep validating."""
     payload = run_gate1(seed=7, top_k=4, initial_k=4, num_agents=4, steps=2)
-    for method in ("F", "E"):
+    for method in ("G", "F", "E"):
         del payload["runs"][method]
-    for name in ("C_vs_F", "A_vs_E", "C_vs_E"):
+    for name in ("C_vs_G", "C_vs_F", "A_vs_E", "C_vs_E"):
         del payload["comparisons"][name]
     del payload["dataset"]["fixture"]
 
     validate_gate1_evidence(payload)
+
+
+def test_method_g_reports_its_frontier_and_costs_less_than_c() -> None:
+    """G is the bounded-frontier scaling candidate: it may leave its starting
+    pool without ever holding the whole corpus."""
+    payload = run_gate1(
+        seed=7, top_k=4, initial_k=2, num_agents=8, steps=10,
+        expand_every=2, expand_k=2, frontier_cap=6,
+    )
+
+    g = payload["runs"]["G"]
+    assert g["frontier_expansions"] > 0
+    assert g["frontier_documents_added"] > 0
+    assert g["candidate_comparisons"] < payload["runs"]["C"]["candidate_comparisons"]
+    assert "C_vs_G" in payload["comparisons"]
+    # The frontier lookups are reported on their own and never folded into the
+    # walk's comparison count -- in production they are ANN index queries.
+    assert payload["runs"]["C"]["frontier_expansions"] == 0
