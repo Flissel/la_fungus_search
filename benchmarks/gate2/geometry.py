@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import replace
+from typing import NamedTuple
 
 import numpy as np
 
@@ -18,11 +19,33 @@ NULL_PERMUTATIONS = 100
 NULL_ALPHA = 0.05
 MIN_EXCESS_OVER_NULL_MEDIAN = 0.10
 
-# The mutual k-NN graph and the pairwise similarity matrix depend only on the
-# document vectors, which a label permutation leaves untouched. Computing them
-# once per dataset and reusing them across permutations is what makes a
-# 100-permutation null affordable.
-GeometryCache = tuple[dict[int, frozenset[int]], np.ndarray]
+
+class GeometryCache(NamedTuple):
+    """Precomputed geometry, reusable across label permutations.
+
+    The mutual k-NN graph and the pairwise similarity matrix depend only on the
+    document vectors, which a label permutation leaves untouched. Computing them
+    once per dataset and reusing them is what makes a 100-permutation null
+    affordable. ``knn_k`` travels with them so a cache can never be honoured for
+    a different neighbourhood size than it was built for -- that would answer
+    with the wrong graph and say nothing about it.
+    """
+
+    graph: dict[int, frozenset[int]]
+    pairwise: np.ndarray
+    knn_k: int
+
+
+def _resolve_cache(
+    dataset: BenchmarkDataset, knn_k: int, cache: "GeometryCache | None"
+) -> "GeometryCache":
+    if cache is None:
+        return geometry_cache(dataset, knn_k)
+    if cache.knn_k != knn_k:
+        raise ValueError(
+            f"cache was built for knn_k={cache.knn_k}, but knn_k={knn_k} was requested"
+        )
+    return cache
 
 
 def _similarities(dataset: BenchmarkDataset, query_id: str) -> np.ndarray:
@@ -57,9 +80,10 @@ def knn_graph(vectors: np.ndarray, knn_k: int) -> dict[int, frozenset[int]]:
 
 def geometry_cache(dataset: BenchmarkDataset, knn_k: int) -> GeometryCache:
     """Precompute the parts of the measurement that depend only on the vectors."""
-    return (
-        knn_graph(dataset.document_vectors, knn_k),
-        dataset.document_vectors @ dataset.document_vectors.T,
+    return GeometryCache(
+        graph=knn_graph(dataset.document_vectors, knn_k),
+        pairwise=dataset.document_vectors @ dataset.document_vectors.T,
+        knn_k=knn_k,
     )
 
 
@@ -109,7 +133,7 @@ def chain_reachable(
     target = list(dataset.document_ids).index(document_id)
     if start == target:
         return True
-    graph, pairwise = cache if cache is not None else geometry_cache(dataset, knn_k)
+    graph, pairwise, _ = _resolve_cache(dataset, knn_k, cache)
     queue = deque([(start, 0)])
     seen = {start}
     while queue:
@@ -135,8 +159,7 @@ def characterise(
     cache: GeometryCache | None = None,
 ) -> dict[str, object]:
     """Measure relevant-rank distribution and chain reachability for every pair."""
-    if cache is None:
-        cache = geometry_cache(dataset, knn_k)
+    cache = _resolve_cache(dataset, knn_k, cache)
     pairs: list[dict[str, object]] = []
     for query_id in dataset.query_ids:
         # relevant_ranks is the tested rank function, so it is the one that runs

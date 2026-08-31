@@ -211,3 +211,15 @@ def test_a_precomputed_cache_does_not_change_the_measurement() -> None:
     without_cache = characterise(dataset, top_k=2, knn_k=2)
 
     assert with_cache == without_cache
+
+
+def test_a_cache_built_for_a_different_knn_k_is_rejected() -> None:
+    """Silently honouring a mismatched cache would answer with the wrong graph."""
+    dataset = _chain_dataset()
+    cache = geometry_cache(dataset, knn_k=2)
+
+    with pytest.raises(ValueError, match="cache was built for knn_k"):
+        characterise(dataset, top_k=2, knn_k=5, cache=cache)
+
+    with pytest.raises(ValueError, match="cache was built for knn_k"):
+        chain_reachable(dataset, "q:probe", "d5", 5, 6, 0.0, cache=cache)
