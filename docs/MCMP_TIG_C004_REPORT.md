@@ -24,9 +24,14 @@ Facts and interpretation are kept in separate sections on purpose.
 > - **Section 10 corrects section 9.3 point 3, which was wrong.** Section 9 held the
 >   agent budget fixed at 24 and read the resulting limit as a property of the
 >   mechanism. It is not: at 192 agents MCMP traverses the whole manifold in 12 of
->   12 seeds. Section 10 carries the current reading — Gate 2 stays justified, but
->   its second condition is replaced, because the bottleneck is MCMP's scoring, not
->   its walk.
+>   12 seeds.
+> - **Section 11 corrects section 10 in turn, and carries the current reading.**
+>   Section 10 read `steps` as inert and concluded the agents work as parallel
+>   random restarts rather than as a colony. Method F — the same walk with the
+>   pheromone switched off — refutes that: F reaches exactly one chain document at
+>   any agent count while C reaches all three, and `steps` is decisive at 96 agents
+>   though it was inert at the 24 where section 10 measured it. **The colony is the
+>   mechanism.** Gate 2 stays justified; the ranking degradation stays unsolved.
 
 ---
 
@@ -608,3 +613,128 @@ No production MCMP behaviour was changed; the agent and step counts are existing
 CLI parameters. No Gate 2 run, no TIG C004 implementation, no MCP server, LLM,
 OpenFang, Docker or GPU. The exploration bonus and pheromone decay were not varied
 and remain at their harness constants; no claim is made about their effect.
+
+---
+
+## 11. Method F: does the colony contribute, or are the agents just a sampling budget?
+
+Section 10 established that discovery scales with agent count while `steps` appeared
+inert, and read that as evidence the agents function as parallel random restarts
+rather than as a pheromone-coordinated colony. Method F was built to test that
+directly. **The hypothesis was wrong, and section 10's `steps` observation was
+measured in a regime where the mechanism is not engaged.**
+
+**Method F** is method C with the colony switched off: pheromone deposition runs
+normally and the trail memory is then cleared, so the 0.15 pheromone term of the
+movement force contributes nothing while agents, steps, seeds, attraction and
+exploration stay exactly as C has them. Zero recorded trails is the
+self-verifying evidence that the control is pheromone-free.
+
+**Declared design, fixed before execution:** fixtures `manifold` and `neutral`,
+seeds 1-12, `agents ∈ {96, 192}`, `steps 50`, `top_k = initial_k = 8`. 48 runs,
+all reported. Evidence: `benchmarks/results/method-f/`.
+
+### 11.1 Facts
+
+Means over 12 seeds:
+
+| fixture | agents | method | recall@8 | MRR | nDCG@8 | comparisons |
+|---|---|---|---|---|---|---|
+| manifold | 96 | C | **0.722** | 0.165 | 0.345 | 915 456 |
+| manifold | 96 | F | 0.333 | 0.167 | 0.167 | 614 464 |
+| manifold | 192 | C | **0.611** | 0.145 | 0.290 | 1 830 912 |
+| manifold | 192 | F | 0.333 | 0.163 | 0.166 | 1 228 864 |
+| neutral | 96 | C | 0.375 | 0.429 | 0.305 | 914 923 |
+| neutral | 96 | F | 0.375 | 0.429 | 0.305 | 614 464 |
+| neutral | 192 | C | 0.375 | 0.419 | 0.309 | 1 830 379 |
+| neutral | 192 | F | 0.375 | 0.419 | 0.309 | 1 228 864 |
+
+Paired per seed on recall@8:
+
+| fixture | agents | C better | F better | tied |
+|---|---|---|---|---|
+| manifold | 96 | **10** | 0 | 2 |
+| manifold | 192 | **9** | 1 | 2 |
+| neutral | 96 | 0 | 0 | **12** |
+| neutral | 192 | 0 | 0 | **12** |
+
+Relevant chain documents discovered, manifold:
+
+| agents | C | F |
+|---|---|---|
+| 96 | 2.67 / 3 | **1.00 / 3** |
+| 192 | 3.00 / 3 | **1.00 / 3** |
+
+`steps` sensitivity re-measured at 96 agents, manifold, 12 seeds:
+
+| steps | C recall@8 | C discovered | comparisons |
+|---|---|---|---|
+| 10 | 0.333 | 1.00 / 3 | 178 176 |
+| 50 | 0.722 | 2.67 / 3 | 915 456 |
+| 200 | 0.667 | 2.67 / 3 | 3 680 256 |
+
+### 11.2 Interpretation
+
+1. **The colony is the mechanism. Section 10's reading was wrong.** F reaches
+   exactly 1.00 of 3 relevant chain documents at 96 agents and at 192 — adding
+   agents does not move it. C reaches 2.67 and 3.00. Chain traversal is what the
+   pheromone buys; without it, the walk stops at the first link no matter how
+   large the sampling budget. The agents are not parallel restarts.
+
+2. **`steps` is not inert; it was measured where the mechanism is dormant.**
+   Section 10 reported a 20-fold step increase changing nothing, at 24 agents. At
+   96 agents, 10 → 50 steps takes discovery from 1.00/3 to 2.67/3. The colony
+   needs enough agents to lay trails *and* enough steps to follow them; below
+   either threshold MCMP degenerates to exactly what F does. This is the fourth
+   time in this report that a conclusion came from a parameter held fixed outside
+   the regime it was generalised over, and the second time it was mine.
+
+3. **The control behaves as a control must.** On the neutral fixture C and F are
+   identical — same recall, same MRR, same nDCG, tied in all 12 seeds at both
+   agent counts. Where there is no chain structure the pheromone contributes
+   exactly nothing. That is what makes the manifold difference attributable to
+   structure rather than to the machinery.
+
+4. **The colony's price is roughly 49% on top of an already expensive walk.**
+   The pheromone force computation makes its own nearest-neighbour calls: 915 456
+   comparisons against F's 614 464 at the same agent and step count. On the
+   manifold fixture that buys 0.333 → 0.722 recall. On the neutral fixture it
+   buys nothing at all.
+
+5. **The ranking degradation from section 10 is unaffected and still unsolved.**
+   C's recall falls from 0.722 at 96 agents to 0.611 at 192, and 200 steps is
+   worse than 50. More exploration keeps finding more and ranking it worse.
+
+### 11.3 What this changes for the road ahead
+
+The question was whether to make the colony scale or replace it. The answer is
+now measured: **the colony is what produces the capability**, so replacing the
+walk with bounded sampling would discard the only thing MCMP does that FAISS
+cannot. The scaling problem has to be solved with the colony intact.
+
+Three constraints any large-corpus design must respect, all measured:
+
+- MCMP walks the entire corpus (`add_documents` receives every document), and
+  comparisons scale with corpus size. This is the binding obstacle, not the
+  pheromone.
+- The mechanism has thresholds in both agents and steps. A larger corpus needs
+  more of both to lay and follow trails across it, and cost is roughly the
+  product.
+- Ranking degrades as exploration grows, so simply scaling the budget up makes
+  results worse even where discovery improves.
+
+Method E's pool restriction is the obvious scaling lever, and section 9 measured
+it at 0.000 on the manifold fixture — a pool-confined colony finds nothing,
+because the chain leaves the pool by construction. A large-corpus design therefore
+needs a *bounded but not pool-confined* frontier: something that lets the walk
+leave its starting neighbourhood without touching the whole corpus. That is the
+open design problem.
+
+### 11.4 Non-claims
+
+No production MCMP behaviour was changed; F is a benchmark-side subclass. No
+Gate 2 run, no TIG C004 implementation, no MCP server, LLM, OpenFang, Docker or
+GPU. The renormalised variant — rescaling the remaining force weights so F
+matches C's total force magnitude — was not run; F therefore differs from C in
+two ways, no trail guidance and a slightly smaller total force, and the manifold
+difference cannot be attributed to guidance alone without it.
