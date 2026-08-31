@@ -96,6 +96,7 @@ def build_neutral_dataset(seed: int = 7) -> BenchmarkDataset:
 MANIFOLD_CHAIN_LENGTH = 8
 MANIFOLD_TOTAL_ANGLE = 1.37
 MANIFOLD_RELEVANT_TAIL = 3
+MANIFOLD_DOCUMENT_COUNT = 64
 MANIFOLD_DISTRACTOR_COUNT = 48
 MANIFOLD_DISTRACTOR_COSINE_RANGE = (0.55, 0.75)
 
@@ -112,8 +113,23 @@ def _chain(query: np.ndarray, direction: np.ndarray, length: int, total_angle: f
     )
 
 
-def build_manifold_dataset(seed: int = 7) -> BenchmarkDataset:
-    """Build a fixture whose relevant documents are reachable only along a chain."""
+def build_manifold_dataset(
+    seed: int = 7, document_count: int = MANIFOLD_DOCUMENT_COUNT
+) -> BenchmarkDataset:
+    """Build a fixture whose relevant documents are reachable only along a chain.
+
+    ``document_count`` scales the distractor field only. The two chains keep
+    their length and their relevant tail, so a larger corpus is a harder
+    haystack rather than a different needle -- which is what lets a corpus-size
+    sweep vary one thing at a time.
+    """
+    chain_documents = 2 * MANIFOLD_CHAIN_LENGTH
+    distractor_count = document_count - chain_documents
+    if distractor_count < 1:
+        raise ValueError(
+            f"document_count must leave room for the two chains: "
+            f"{document_count} given, more than {chain_documents} required"
+        )
     rng = np.random.default_rng(seed)
     dimensions = NEUTRAL_DIMENSIONS
     basis = _orthonormal_basis(rng, dimensions)
@@ -139,13 +155,13 @@ def build_manifold_dataset(seed: int = 7) -> BenchmarkDataset:
         relevant_by_query[query_id] = frozenset(ids[-MANIFOLD_RELEVANT_TAIL:])
 
     low, high = MANIFOLD_DISTRACTOR_COSINE_RANGE
-    for position in range(MANIFOLD_DISTRACTOR_COUNT):
+    for position in range(distractor_count):
         anchor = queries[position % 2]
         cosine = float(rng.uniform(low, high))
         weights = rng.normal(size=dimensions - 2)
         offset = weights @ basis[2:]
         offset = offset / np.linalg.norm(offset)
-        document_ids.append(f"distractor-{position:02d}")
+        document_ids.append(f"distractor-{position:04d}")
         rows.append(cosine * anchor + np.sqrt(1.0 - cosine**2) * offset)
 
     documents = _unit_rows(np.stack(rows))
@@ -169,10 +185,18 @@ FIXTURES = {
 }
 
 
-def build_dataset(fixture: str, seed: int) -> BenchmarkDataset:
+def build_dataset(
+    fixture: str, seed: int, document_count: int | None = None
+) -> BenchmarkDataset:
     """Build a benchmark dataset by registry key, failing closed on unknown keys."""
     if fixture not in FIXTURES:
         raise ValueError(
             f"unknown fixture {fixture!r}; valid keys are {sorted(FIXTURES)}"
         )
-    return FIXTURES[fixture](seed)
+    if document_count is None:
+        return FIXTURES[fixture](seed)
+    if fixture != "manifold":
+        raise ValueError(
+            f"document_count is only supported by the manifold fixture, not {fixture!r}"
+        )
+    return FIXTURES[fixture](seed, document_count=document_count)

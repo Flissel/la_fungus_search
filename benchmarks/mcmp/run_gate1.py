@@ -46,9 +46,10 @@ def run_gate1(
     expand_every: int = 10,
     expand_k: int = 4,
     frontier_cap: int = 64,
+    document_count: int | None = None,
 ) -> dict[str, object]:
     """Run the fixed A-D offline ablation and return its complete evidence."""
-    dataset = build_dataset(fixture, seed)
+    dataset = build_dataset(fixture, seed, document_count)
     runs: dict[str, dict[str, object]] = {}
 
     for method, query_ids in _RUN_SPECS:
@@ -85,6 +86,7 @@ def run_gate1(
         },
         "dataset": {
             "fixture": fixture,
+            "document_count": document_count,
             "id": dataset.dataset_id,
             "digest": dataset.digest(),
             "document_ids": list(dataset.document_ids),
@@ -324,10 +326,15 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
     fixture = dataset_payload.get("fixture", "legacy")
     if not isinstance(fixture, str):
         raise ValueError("dataset.fixture must be a string")
-    dataset = build_dataset(fixture, _integer(config["seed"], "seed"))
+    document_count = dataset_payload.get("document_count")
+    if document_count is not None and not isinstance(document_count, int):
+        raise ValueError("dataset.document_count must be an integer")
+    dataset = build_dataset(fixture, _integer(config["seed"], "seed"), document_count)
     required_dataset_keys = {"id", "digest", "document_ids", "query_ids", "document_vector_shape", "query_vector_shape"}
     if "fixture" in dataset_payload:
         required_dataset_keys = required_dataset_keys | {"fixture"}
+    if "document_count" in dataset_payload:
+        required_dataset_keys = required_dataset_keys | {"document_count"}
     _require_keys(dataset_payload, required_dataset_keys, "dataset")
     expected_dataset = {
         "id": dataset.dataset_id,
@@ -339,6 +346,8 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
     }
     if "fixture" in dataset_payload:
         expected_dataset["fixture"] = fixture
+    if "document_count" in dataset_payload:
+        expected_dataset["document_count"] = document_count
     if not _strict_equal(dict(dataset_payload), expected_dataset):
         raise ValueError("dataset evidence does not match the configured seed")
 
@@ -637,10 +646,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expand-every", type=int, default=10)
     parser.add_argument("--expand-k", type=int, default=4)
     parser.add_argument("--frontier-cap", type=int, default=64)
+    parser.add_argument("--document-count", type=int, default=None)
     args = parser.parse_args(argv)
     payload = run_gate1(
         args.seed, args.top_k, args.initial_k, args.num_agents, args.steps, args.fixture,
-        args.expand_every, args.expand_k, args.frontier_cap,
+        args.expand_every, args.expand_k, args.frontier_cap, args.document_count,
     )
     try:
         write_gate1_result(payload, args.output)

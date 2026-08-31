@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from benchmarks.mcmp.fixtures import build_synthetic_dataset
 
@@ -208,3 +209,33 @@ def test_manifold_relevant_documents_rank_below_the_default_top_k() -> None:
 def test_manifold_dataset_is_deterministic_per_seed() -> None:
     assert build_manifold_dataset(3).digest() == build_manifold_dataset(3).digest()
     assert build_manifold_dataset(3).digest() != build_manifold_dataset(4).digest()
+
+
+def test_manifold_document_count_is_parameterised() -> None:
+    """The corpus size has to vary to test whether a bounded frontier still
+    finds the chain when more distractors lie between."""
+    small = build_manifold_dataset(7)
+    large = build_manifold_dataset(7, document_count=256)
+
+    assert small.document_vectors.shape == (64, 16)
+    assert large.document_vectors.shape == (256, 16)
+    # The chain is the same length either way; only the distractor field grows,
+    # so a larger corpus is a harder haystack rather than a different needle.
+    assert large.relevant_by_query["q-main"] == small.relevant_by_query["q-main"]
+    assert sum(1 for d in large.document_ids if d.startswith("distractor")) == 240
+
+
+def test_manifold_rejects_a_corpus_too_small_for_its_chains() -> None:
+    with pytest.raises(ValueError, match="document_count must leave room"):
+        build_manifold_dataset(7, document_count=16)
+
+
+def test_relevant_documents_stay_deep_as_the_corpus_grows() -> None:
+    """More distractors must push the chain end further down, not change what it
+    is -- otherwise the sweep would vary two things at once."""
+    ranks = {
+        count: _relevant_ranks(build_manifold_dataset(7, document_count=count), "q-main")
+        for count in (64, 256)
+    }
+
+    assert min(ranks[256]) > min(ranks[64])

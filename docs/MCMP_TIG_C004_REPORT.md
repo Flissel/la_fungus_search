@@ -25,7 +25,13 @@ Facts and interpretation are kept in separate sections on purpose.
 >   agent budget fixed at 24 and read the resulting limit as a property of the
 >   mechanism. It is not: at 192 agents MCMP traverses the whole manifold in 12 of
 >   12 seeds.
-> - **Section 12 is the current state.** Method G — a bounded frontier that starts
+> - **Section 13 is the current state.** A corpus-size sweep shows full-corpus MCMP
+>   does not merely get expensive as the corpus grows — it fails: recall 0.611 at 64
+>   documents, 0.056 at 1024, while spending 14.6 million comparisons. Method G is
+>   flat across the same range at a constant 143 224 comparisons. The bounded
+>   frontier is not an optimisation of a working method; it is the only version that
+>   survives scale.
+> - **Section 12** introduces method G. Method G — a bounded frontier that starts
 >   on the FAISS pool and expands toward where the walk goes — matches method C's
 >   recall at 16% of the comparisons and discovers more of the chain, while holding
 >   about a fifth of the corpus. That is the scaling answer section 11.3 asked for.
@@ -843,3 +849,91 @@ and never folded into `candidate_comparisons`, because in production they are AN
 index queries whose cost is not comparable to the walk's linear scans; any
 end-to-end cost claim needs that index's cost model, which this report does not
 have. No Gate 2 run, no TIG C004, no live service of any kind.
+
+---
+
+## 13. Corpus scaling: the bounded frontier is not an optimisation, it is the only version that survives
+
+Section 12.2 point 5 said the cost saving's growth with corpus size followed from
+the cost model and was **not measured**, and that a corpus-size sweep was the next
+measurement. It has been run, and it found something the cost model did not
+predict.
+
+The manifold fixture's document count is now a parameter. Only the distractor
+field scales; the two chains keep their length and their relevant tail, so a
+larger corpus is a harder haystack rather than a different needle.
+
+**Declared design:** manifold at 64, 256 and 1024 documents, seeds 1-6, 96 agents,
+50 steps, `top_k = initial_k = 8`, `expand_every 10`, `expand_k 4`,
+`frontier_cap 24`. Evidence: `benchmarks/results/scaling/`.
+
+### 13.1 Facts: corpus size
+
+| documents | method | recall@8 | discovered / 3 | comparisons | vs C |
+|---|---|---|---|---|---|
+| 64 | A | 0.000 | 0.00 | 64 | 0.0% |
+| 64 | C | 0.611 | 2.33 | 915 456 | 100% |
+| 64 | **G** | **0.667** | **3.00** | 143 224 | 15.6% |
+| 256 | C | 0.389 | 2.50 | 3 661 824 | 100% |
+| 256 | **G** | **0.722** | **3.00** | 143 224 | 3.9% |
+| 1024 | C | **0.056** | 2.33 | 14 647 125 | 100% |
+| 1024 | **G** | **0.667** | **3.00** | 143 224 | **1.0%** |
+
+G's working set is 8 + 4.0 = 12 documents at **every** corpus size — 18.8% of the
+corpus at 64, 1.2% at 1024 — so its comparison count is identical (143 224) at all
+three sizes while C's grows linearly.
+
+### 13.2 Facts: agent count at 256 documents
+
+| agents | method | recall@8 | nDCG@8 | discovered / 3 |
+|---|---|---|---|---|
+| 96 | C | 0.389 | 0.185 | 2.50 |
+| 96 | **G** | **0.722** | **0.334** | 3.00 |
+| 192 | C | 0.278 | 0.131 | 3.00 |
+| 192 | **G** | **0.500** | **0.226** | 3.00 |
+| 384 | C | **0.000** | **0.000** | 3.00 |
+| 384 | **G** | **0.389** | **0.176** | 3.00 |
+
+### 13.3 Interpretation
+
+1. **Full-corpus MCMP does not scale — it fails.** C's recall falls from 0.611 at
+   64 documents to 0.056 at 1024. This is not a slowdown; at 1024 documents the
+   method returns essentially nothing useful while spending 14.6 million
+   comparisons. The bounded frontier is therefore not an optimisation of a working
+   method. It is the only version that still works.
+
+2. **The failure is ranking, not discovery.** At 1024 documents C still reaches
+   2.33 of 3 relevant chain documents — discovery holds — but ranks only about
+   0.17 of them into its top 8. The relevance ordering is computed over the whole
+   working set, so as the corpus grows the chain documents are pushed out by
+   distractors. G ranks over 12 candidates instead of 1024 and does not have the
+   problem. This is the ranking collapse from section 10, and corpus size is a
+   second, independent way to trigger it.
+
+3. **G's cost is constant, not merely smaller.** 143 224 comparisons at 64, 256
+   and 1024 documents. It is bounded by the working set, which is bounded by
+   `expand_every × expand_k`, and the corpus size does not enter. The ratio to C
+   is therefore whatever the corpus size makes it: 1.0% at 1024, and it would keep
+   falling.
+
+4. **G mitigates the agent-driven ranking collapse but does not solve it.** From
+   96 to 384 agents G falls 0.722 → 0.389 while C falls 0.389 → 0.000. G at 384
+   agents still beats C at 96. The degradation is real in both and the same
+   mechanism drives it; a smaller working set makes it much less severe. Section
+   10's finding — that MCMP's scoring is the unsolved part — stands.
+
+5. **`frontier_cap` never bound, at any corpus size.** Expansion added exactly 4.0
+   documents at 64, 256 and 1024 alike, because it is limited by the number of
+   expansion rounds and not by the cap. That G finds the whole chain by adding
+   four documents to a 1024-document corpus is the striking part of this result,
+   and it is also its narrowest point: the fixture's chain is 8 links and reachable
+   in few hops by construction. A structure needing a longer or branching walk
+   would need `expand_k` or the round count to grow, and that is untested.
+
+### 13.4 Non-claims
+
+Synthetic fixtures throughout, with a chain the fixture places there by design.
+Six seeds per configuration, not twelve. Nothing here says real code retrieval has
+this structure — that is Gate 2's question and it remains unrun. Frontier lookups
+are still reported separately from walk comparisons; an end-to-end production cost
+needs the ANN index's cost model, which this report does not have.
