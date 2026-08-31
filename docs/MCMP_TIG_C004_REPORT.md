@@ -8,9 +8,10 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read section 9 first — it carries the current decision.**
+> **Read section 14 first — it carries the current state. Section 9 carries the
+> standing Gate 2 decision.**
 >
-> This document was written in three rounds and is kept whole rather than rewritten,
+> This document was written in rounds and is kept whole rather than rewritten,
 > so the reasoning stays auditable.
 >
 > - **Sections 1-7** review Codex's original Gate 1 evidence on the legacy fixture.
@@ -25,7 +26,13 @@ Facts and interpretation are kept in separate sections on purpose.
 >   agent budget fixed at 24 and read the resulting limit as a property of the
 >   mechanism. It is not: at 192 agents MCMP traverses the whole manifold in 12 of
 >   12 seeds.
-> - **Section 13 is the current state.** A corpus-size sweep shows full-corpus MCMP
+> - **Section 14 is the current state.** It opens the relevance function, which
+>   sections 10, 11 and 13 all pointed at without examining. Removing the visit
+>   term drops recall to 0.000 in every configuration measured — it is the entire
+>   ranking signal — and it saturates at five visits, which is a mechanism for both
+>   documented collapses. It also records two undocumented defects in the pheromone
+>   code whose repair makes retrieval *worse*, and explains why.
+> - **Section 13.** A corpus-size sweep shows full-corpus MCMP
 >   does not merely get expensive as the corpus grows — it fails: recall 0.611 at 64
 >   documents, 0.056 at 1024, while spending 14.6 million comparisons. Method G is
 >   flat across the same range at a constant 143 224 comparisons. The bounded
@@ -937,3 +944,153 @@ Six seeds per configuration, not twelve. Nothing here says real code retrieval h
 this structure — that is Gate 2's question and it remains unrun. Frontier lookups
 are still reported separately from walk comparisons; an end-to-end production cost
 needs the ANN index's cost model, which this report does not have.
+
+---
+
+## 14. The relevance function: the visit term is the whole ranking signal, and it saturates
+
+Sections 10, 11 and 13 all arrived at the same place from different directions —
+discovery holds, ranking fails — and none of them opened the scoring function.
+This section does.
+
+**Declared design, fixed before execution:** fixture `manifold`, seeds 1-6,
+`agents ∈ {96, 192, 384}`, `steps 50`, `top_k = initial_k = 8`, corpus sizes 256
+and 1024, methods C and G. Every variant is an override applied inside a probe;
+nothing under `src/` was modified. Reproduce with
+`benchmarks/probes/visit_term.py`.
+
+recall@8 is measured over one query with three relevant documents across six
+seeds, so the resolution is 1/18 ≈ 0.056. Differences of that size are one
+document in one seed and are not read as differences below.
+
+### 14.1 Facts: ablating the visit term
+
+`update_document_relevance` computes
+`r_i = cosine(q, d_i) + min(0.1 × visits_i, 0.5) + time_bonus + kw_bonus`.
+Removing the visit term alone, at 256 documents:
+
+| method | agents | with visit term | without |
+|---|---|---|---|
+| C | 96 | 0.389 | **0.000** |
+| C | 192 | 0.278 | **0.000** |
+| C | 384 | 0.000 | **0.000** |
+| G | 96 | 0.722 | **0.000** |
+| G | 192 | 0.500 | **0.000** |
+| G | 384 | 0.389 | **0.000** |
+
+Under the benchmark's fixed clock (`DETERMINISTIC_CLOCK_VALUE = 2.0`) the time
+bonus reduces to a flat +0.1 for any document visited at least once, and
+`kw_lambda` is 0. So the "without" column is cosine similarity plus a visited flag.
+
+### 14.2 Facts: replacing the cap
+
+Three shapes that cannot saturate, against the shipped `min(0.1 v, 0.5)`. `log`
+is `0.5 · log1p(v) / log1p(v_max)`; `normalised` is `0.5 · v / v_max`; `uncapped`
+is `0.1 v`.
+
+256 documents:
+
+| method | agents | capped | uncapped | log | normalised |
+|---|---|---|---|---|---|
+| C | 96 | 0.389 | **0.556** | 0.333 | 0.167 |
+| C | 192 | 0.278 | **0.667** | 0.389 | 0.389 |
+| C | 384 | 0.000 | **0.667** | 0.333 | 0.000 |
+| G | 96 | **0.722** | 0.000 | 0.667 | 0.444 |
+| G | 192 | 0.500 | 0.000 | 0.500 | 0.500 |
+| G | 384 | **0.389** | 0.000 | 0.389 | 0.222 |
+
+1024 documents:
+
+| method | agents | capped | uncapped | log | normalised |
+|---|---|---|---|---|---|
+| C | 96 | 0.056 | 0.000 | **0.333** | 0.167 |
+| C | 192 | 0.000 | 0.000 | **0.333** | 0.333 |
+| C | 384 | 0.000 | **0.278** | 0.056 | 0.056 |
+| G | 96 | **0.667** | 0.000 | 0.611 | 0.500 |
+| G | 192 | 0.333 | 0.000 | 0.389 | **0.556** |
+| G | 384 | 0.333 | 0.000 | 0.389 | 0.167 |
+
+### 14.3 Facts: two undocumented defects in the pheromone code
+
+Both verified by experiment, both properties of the shipped source.
+
+1. **A trail is followable from one endpoint only.** `deposit_pheromones` stores
+   the key as `tuple(sorted((i, j)))`; `calculate_pheromone_force` matches
+   `doc_a == current_doc.id`, i.e. the lower id. Direct probe: with one trail
+   `(0, 2)` at strength 0.1, an agent on document 0 feels `|F_pher| = 0.1000` and
+   an agent on document 2 feels `0.0000`. Document ids are assigned in corpus
+   insertion order, so load order decides which half of the signal is usable.
+
+2. **The "last three visited documents" are not the last three.**
+   `agent.visited_docs` is a `set`, so `list(...)[-3:]` returns three entries in
+   hash order. For the visit sequence `7, 3, 91, 12, 5, 44, 2` the code deposits
+   against `[12, 44, 91]`; the genuinely recent three are `[5, 44, 2]`.
+
+Repairing them, 256 documents:
+
+| method | agents | as built | symmetric | recency | both |
+|---|---|---|---|---|---|
+| C | 96 | **0.389** | 0.056 | 0.389 | 0.000 |
+| C | 192 | **0.278** | 0.000 | 0.222 | 0.000 |
+| C | 384 | 0.000 | 0.000 | 0.000 | 0.000 |
+| G | 96 | **0.722** | 0.389 | 0.611 | 0.278 |
+| G | 192 | 0.500 | 0.222 | 0.333 | **0.556** |
+| G | 384 | **0.389** | 0.111 | 0.333 | 0.278 |
+
+### 14.4 Interpretation
+
+1. **The visit count is MCMP's entire ranking advantage.** Twelve cells, two
+   methods, three agent counts, and recall is 0.000 in every one without the visit
+   term. This is the answer to a question this report has circled since section 9:
+   what does the walk actually buy? It buys visits, and visits are the only channel
+   through which the walk reaches the ranking. Cosine similarity cannot lift a far
+   document into the top 8 — by construction, since the fixture defines "far" as
+   low cosine similarity.
+
+2. **The channel saturates at five visits, and that is a mechanism for both
+   documented collapses.** `min(0.1 v, 0.5)` is constant above five visits. Denser
+   walks push more documents past the ceiling; past it, the only discriminating
+   signal MCMP has is a tie. Section 10's collapse under agent count and section
+   13's collapse under corpus size are then the same failure reached two ways, and
+   the earlier framing — "the relevance ordering runs over the whole working set" —
+   was the symptom rather than the cause.
+
+3. **Uncapping repairs full-corpus MCMP at 256 documents and destroys the bounded
+   frontier.** For C the agent-driven collapse disappears: 0.556 / 0.667 / 0.667
+   against 0.389 / 0.278 / 0.000, i.e. 0.000 becomes 0.667 at 384 agents. For G it
+   is 0.000 in all six cells, because inside a 12-document working set an unbounded
+   visit term swamps similarity and the ranking becomes "most trafficked", which in
+   a frontier seeded from the FAISS pool means the pool. The correct shape of this
+   term depends on the size of the set being scored.
+
+4. **Log compression is the only shape that never fails.** It matches the cap
+   where the cap works and beats it where the cap saturates: 0.333 against 0.056
+   and 0.000 for C at 1024 documents. It is below the cap by one document in one
+   seed in the sparse cells. On this evidence it is the variant worth testing on
+   real data — not the variant to ship.
+
+5. **Repairing a genuine defect made retrieval worse, and the ceiling explains
+   why.** Eleven of twelve cells are at or below the shipped behaviour. More trail
+   signal concentrates the walk; a concentrated walk pushes more documents past the
+   five-visit ceiling; past the ceiling the ranking signal is gone. The defects
+   were an accidental brake on a feedback loop with no brake of its own. The
+   repairs are therefore **blocked on the visit term**, not independently
+   shippable. That they would compose well with a non-saturating term is a
+   prediction, and it has not been tested.
+
+6. **The unsolved problem from sections 10 and 13 now has a named cause.** It was
+   recorded as "MCMP's scoring is the unsolved part". The scoring's problem is a
+   hard ceiling on the only informative term. That is a smaller and more tractable
+   statement than the one it replaces.
+
+### 14.5 Non-claims
+
+Synthetic fixtures throughout, with a chain placed there by design. Six seeds, one
+query, three relevant documents — resolution 0.056. Two corpus sizes, three agent
+counts, `steps` held at 50, frontier parameters at their defaults. The exploration
+term has never been ablated. The alternative visit terms were not tuned; `log` and
+`normalised` reuse the shipped 0.5 ceiling for comparability, not because 0.5 is
+right. The combination of repaired pheromone code with a non-saturating visit term
+was not run. No production code was changed on the strength of any of this, and
+nothing here says real code retrieval behaves this way — that remains Gate 2's
+question, and Gate 2 remains unrun.

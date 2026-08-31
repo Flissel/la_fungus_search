@@ -90,9 +90,15 @@ class PheromoneFreeRetriever(CountingRetriever):
     permanently empty, so `calculate_pheromone_force` short-circuits and the
     0.15 pheromone term of the movement force contributes nothing, while the
     attraction and exploration terms, the agent count, the step count and every
-    seed stay exactly as method C has them. The same nearest-neighbour calls are
-    made, so the comparison budget is equal by construction rather than by
-    assertion.
+    seed stay exactly as method C has them.
+
+    The budget is *not* equal, and an earlier version of this docstring claimed it
+    was. `calculate_pheromone_force` returns immediately on an empty trail table,
+    skipping the `k=1` lookup it would otherwise make, so F does strictly fewer
+    comparisons than C: 614 464 against 915 456 at 96 agents on manifold, a 49%
+    overhead that the pheromone charges for its guidance. F is a control on the
+    mechanism, not on the cost; the cost difference is reported in section 11 of
+    `docs/MCMP_TIG_C004_REPORT.md` rather than assumed away.
 
     Known confound, recorded rather than hidden: the force weights
     (0.8 attraction, 0.15 pheromone, 0.05 exploration) are fixed, so removing the
