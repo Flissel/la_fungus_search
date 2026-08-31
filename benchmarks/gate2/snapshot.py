@@ -48,6 +48,31 @@ def build_stub_snapshot(manifest: Manifest, dimension: int = 16) -> Snapshot:
     )
 
 
+class ServiceEmbeddingClient:
+    """Pairs an embedding client with the model identifier a snapshot must record.
+
+    `EmbeddingServiceClient` in `src/embeddinggemma/mcmp/embeddings.py` exposes no
+    `model_id`, so `build_service_snapshot`'s fail-closed provenance read rejects
+    it outright. The service does not report which model it is serving either, so
+    the identifier cannot be discovered — it is the caller's declaration, and this
+    wrapper is where that declaration is made once and explicitly rather than
+    defaulted to "unknown" somewhere downstream.
+
+    Production use:
+
+        ServiceEmbeddingClient(EmbeddingServiceClient(), model_id="<model>")
+    """
+
+    def __init__(self, client: object, model_id: str) -> None:
+        if not isinstance(model_id, str) or not model_id:
+            raise ValueError("model_id must be a non-empty string")
+        self._client = client
+        self.model_id = model_id
+
+    def encode(self, texts: Sequence[str]) -> list[list[float]]:
+        return self._client.encode(texts)
+
+
 def build_service_snapshot(manifest: Manifest, client: object, batch_size: int = 32) -> Snapshot:
     """Materialise the production snapshot through an injected embedding client.
 

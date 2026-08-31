@@ -7,6 +7,7 @@ import pytest
 
 from benchmarks.gate2.manifest import build_manifest, manifest_digest
 from benchmarks.gate2.snapshot import (
+    ServiceEmbeddingClient,
     build_service_snapshot,
     build_stub_snapshot,
     load_snapshot,
@@ -163,3 +164,35 @@ def test_service_snapshot_rejects_a_zero_vector(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="zero vector"):
         build_service_snapshot(manifest, _ZeroVectorClient(4), batch_size=64)
+
+
+def test_service_embedding_client_supplies_the_model_id_and_delegates_encoding() -> None:
+    """The real EmbeddingServiceClient has no model_id, so the snapshot's
+    fail-closed provenance read rejects it outright. The service does not report
+    which model it serves, so the identifier is the caller's declaration and this
+    wrapper is where that declaration is made explicit."""
+    inner = _FakeEmbeddingClient(dimension=4)
+    client = ServiceEmbeddingClient(inner, model_id="qwen3-embedding")
+
+    vectors = client.encode(["alpha", "beta"])
+
+    assert client.model_id == "qwen3-embedding"
+    assert len(vectors) == 2
+    assert inner.batches == [["alpha", "beta"]]
+
+
+def test_service_embedding_client_rejects_an_empty_model_id() -> None:
+    with pytest.raises(ValueError, match="model_id must be a non-empty string"):
+        ServiceEmbeddingClient(_FakeEmbeddingClient(dimension=4), model_id="")
+
+
+def test_wrapped_client_satisfies_the_snapshot_provenance_guard(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    _corpus(root)
+    manifest = build_manifest(root, commit_sha="sha", manifest_id="m1")
+    client = ServiceEmbeddingClient(_FakeEmbeddingClient(dimension=4), model_id="qwen3")
+
+    snapshot = build_service_snapshot(manifest, client, batch_size=8)
+
+    assert snapshot.backend == "embedding-service"
+    assert snapshot.model == "qwen3"

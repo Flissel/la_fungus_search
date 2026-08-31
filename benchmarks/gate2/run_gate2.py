@@ -6,7 +6,17 @@ import argparse
 import json
 from pathlib import Path
 
-from benchmarks.gate2.geometry import characterise, stage_two_is_justified
+import numpy as np
+
+from benchmarks.gate2.geometry import (
+    MIN_EXCESS_OVER_NULL_MEDIAN,
+    NULL_ALPHA,
+    NULL_PERMUTATIONS,
+    characterise,
+    geometry_cache,
+    permuted_labels,
+    stage_two_is_justified,
+)
 from benchmarks.gate2.manifest import Manifest, load_manifest, manifest_digest
 from benchmarks.gate2.provider import build_gate2_dataset
 from benchmarks.gate2.snapshot import Snapshot, load_snapshot
@@ -27,6 +37,8 @@ def characterise_pooled(
     knn_k: int,
     max_hops: int,
     hop_threshold: float,
+    null_permutations: int = NULL_PERMUTATIONS,
+    null_seed: int = 0,
 ) -> dict[str, object]:
     """Pool stage 1 across seeds and score the pre-registered gate on the pool.
 
@@ -42,12 +54,18 @@ def characterise_pooled(
     """
     if stage1_seeds < 1:
         raise ValueError("--stage1-seeds must be at least 1")
+    if null_permutations < 1:
+        raise ValueError("--null-permutations must be at least 1")
 
     per_seed: list[dict[str, object]] = []
     skipped_seeds: list[int] = []
     pooled_pairs: list[dict[str, object]] = []
     dataset_id = ""
     last_skip: ValueError | None = None
+    # Held for the null: a label permutation leaves the vectors alone, so each
+    # dataset's k-NN graph and pairwise matrix are computed once here and reused
+    # across all permutations. That is what makes the null affordable.
+    measured: list[tuple[int, BenchmarkDataset, tuple[object, object]]] = []
 
     for seed in range(stage1_seeds):
         try:
@@ -58,12 +76,15 @@ def characterise_pooled(
             skipped_seeds.append(seed)
             last_skip = error
             continue
+        cache = geometry_cache(dataset, knn_k)
+        measured.append((seed, dataset, cache))
         report = characterise(
             dataset,
             top_k=top_k,
             knn_k=knn_k,
             max_hops=max_hops,
             hop_threshold=hop_threshold,
+            cache=cache,
         )
         dataset_id = str(report["dataset_id"])
         per_seed.append(
@@ -94,6 +115,33 @@ def characterise_pooled(
         1 for pair in pooled_pairs if pair["far"] and pair["chain_reachable"] is True
     )
     signature = far_and_reachable / pair_count if pair_count else 0.0
+
+    # The null: the same pooled statistic, computed on the same geometry with
+    # the relevance labels redrawn. Its pooling structure must match the real
+    # statistic's exactly, or the comparison is between two different things.
+    rng = np.random.default_rng(null_seed)
+    null_signatures: list[float] = []
+    for _ in range(null_permutations):
+        null_pairs: list[dict[str, object]] = []
+        for _seed, dataset, cache in measured:
+            null_report = characterise(
+                permuted_labels(dataset, rng),
+                top_k=top_k,
+                knn_k=knn_k,
+                max_hops=max_hops,
+                hop_threshold=hop_threshold,
+                cache=cache,
+            )
+            null_pairs.extend(null_report["pairs"])
+        null_hits = sum(
+            1 for pair in null_pairs if pair["far"] and pair["chain_reachable"] is True
+        )
+        null_signatures.append(null_hits / len(null_pairs) if null_pairs else 0.0)
+
+    null_median = float(np.median(null_signatures))
+    null_percentile = float(np.quantile(null_signatures, 1.0 - NULL_ALPHA))
+    excess = signature - null_median
+
     return {
         "config": {
             "top_k": top_k,
@@ -101,6 +149,8 @@ def characterise_pooled(
             "max_hops": max_hops,
             "hop_threshold": hop_threshold,
             "stage1_seeds": stage1_seeds,
+            "null_permutations": null_permutations,
+            "null_seed": null_seed,
         },
         "dataset_id": dataset_id,
         # Provenance, so a stub-derived evidence file and a production one are
@@ -112,6 +162,14 @@ def characterise_pooled(
         "far_count": far_count,
         "far_and_reachable_count": far_and_reachable,
         "manifold_signature": signature,
+        # The null distribution and both pre-registered sub-decisions, so the
+        # gate's verdict can be checked from the evidence file alone.
+        "null_signatures": null_signatures,
+        "null_median": null_median,
+        "null_p95": null_percentile,
+        "excess_over_null_median": excess,
+        "exceeds_null_p95": signature > null_percentile,
+        "meets_minimum_excess": excess >= MIN_EXCESS_OVER_NULL_MEDIAN,
         "per_seed": per_seed,
         "skipped_seeds": skipped_seeds,
         "pairs": pooled_pairs,
@@ -186,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-hops", type=int, default=6)
     parser.add_argument("--hop-threshold", type=float, default=0.0)
     parser.add_argument("--stage1-seeds", type=int, default=12)
+    parser.add_argument("--null-permutations", type=int, default=NULL_PERMUTATIONS)
+    parser.add_argument("--null-seed", type=int, default=0)
     parser.add_argument("--initial-k", type=int, default=8)
     parser.add_argument("--steps", type=int, default=50)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -202,12 +262,21 @@ def main(argv: list[str] | None = None) -> int:
         knn_k=args.knn_k,
         max_hops=args.max_hops,
         hop_threshold=args.hop_threshold,
+        null_permutations=args.null_permutations,
+        null_seed=args.null_seed,
     )
-    write_result(geometry, args.output_dir / f"geometry-seed-{args.seed}.json")
-    if not stage_two_is_justified(float(geometry["manifold_signature"])):
+    # Named for the manifest, not for --seed: stage 1 pools across its own seed
+    # range and never reads --seed, so a seed in this name would correspond to
+    # nothing inside the file and would make two identical payloads look like
+    # two independent draws.
+    write_result(geometry, args.output_dir / f"geometry-{manifest.manifest_id}.json")
+    if not stage_two_is_justified(
+        float(geometry["manifold_signature"]), list(geometry["null_signatures"])
+    ):
         parser.exit(
             0,
-            "stage 1 signature below the pre-registered gate; stage 2 not run\n",
+            "stage 1 signature does not beat its permutation null by the "
+            "pre-registered margin; stage 2 not run\n",
         )
 
     dataset = build_gate2_dataset(manifest, snapshot, args.seed)

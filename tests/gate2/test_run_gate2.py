@@ -172,7 +172,9 @@ def test_main_records_all_four_geometry_parameters(
     """
     manifest_path, snapshot_path = _write_manifest_and_snapshot(tmp_path)
     output_dir = tmp_path / "out"
-    monkeypatch.setattr(run_gate2_module, "stage_two_is_justified", lambda signature: False)
+    monkeypatch.setattr(
+        run_gate2_module, "stage_two_is_justified", lambda signature, null: False
+    )
 
     with pytest.raises(SystemExit) as excinfo:
         run_gate2_module.main(
@@ -185,6 +187,7 @@ def test_main_records_all_four_geometry_parameters(
                 "--max-hops", "2",
                 "--hop-threshold", "0.25",
                 "--stage1-seeds", "4",
+                "--null-permutations", "5",
                 "--steps", "2",
                 "--output-dir", str(output_dir),
             ]
@@ -192,7 +195,7 @@ def test_main_records_all_four_geometry_parameters(
 
     assert excinfo.value.code == 0
     payload = json.loads(
-        (output_dir / "geometry-seed-1.json").read_text(encoding="utf-8")
+        (output_dir / "geometry-m1.json").read_text(encoding="utf-8")
     )
     assert payload["config"] == {
         "top_k": 3,
@@ -200,6 +203,8 @@ def test_main_records_all_four_geometry_parameters(
         "max_hops": 2,
         "hop_threshold": 0.25,
         "stage1_seeds": 4,
+        "null_permutations": 5,
+        "null_seed": 0,
     }
 
 
@@ -220,6 +225,8 @@ def test_main_skips_stage_two_when_the_gate_is_not_met(tmp_path: Path) -> None:
                 "--snapshot", str(snapshot_path),
                 "--seed", "6",
                 "--hop-threshold", "0.9",
+                "--stage1-seeds", "4",
+                "--null-permutations", "5",
                 "--steps", "2",
                 "--output-dir", str(output_dir),
             ]
@@ -227,7 +234,7 @@ def test_main_skips_stage_two_when_the_gate_is_not_met(tmp_path: Path) -> None:
 
     assert excinfo.value.code == 0
     payload = json.loads(
-        (output_dir / "geometry-seed-6.json").read_text(encoding="utf-8")
+        (output_dir / "geometry-m1.json").read_text(encoding="utf-8")
     )
     assert payload["manifold_signature"] == 0.0
     assert payload["far_and_reachable_count"] == 0
@@ -240,6 +247,13 @@ def test_main_runs_the_sweep_when_the_gate_is_met(
     manifest_path, snapshot_path = _write_manifest_and_snapshot(tmp_path)
     output_dir = tmp_path / "out"
     monkeypatch.setattr(run_gate2_module, "AGENT_SWEEP", (4,))
+    # Whether the gate computes the right verdict is geometry.py's concern and
+    # is covered there; what this test covers is the CLI's branch wiring. On the
+    # stub corpus the real gate now correctly refuses to open -- see
+    # test_main_refuses_to_open_the_gate_on_a_structureless_corpus.
+    monkeypatch.setattr(
+        run_gate2_module, "stage_two_is_justified", lambda signature, null: True
+    )
 
     exit_code = run_gate2_module.main(
         [
@@ -248,6 +262,8 @@ def test_main_runs_the_sweep_when_the_gate_is_met(
             "--seed", "1",
             "--top-k", "4",
             "--initial-k", "4",
+            "--stage1-seeds", "4",
+            "--null-permutations", "5",
             "--steps", "2",
             "--output-dir", str(output_dir),
         ]
@@ -255,10 +271,9 @@ def test_main_runs_the_sweep_when_the_gate_is_met(
 
     assert exit_code == 0
     geometry = json.loads(
-        (output_dir / "geometry-seed-1.json").read_text(encoding="utf-8")
+        (output_dir / "geometry-m1.json").read_text(encoding="utf-8")
     )
     # The gate is decided on the pooled population, not one seed's 2-4 pairs.
-    assert geometry["manifold_signature"] >= 0.10
     assert geometry["pair_count"] > max(
         entry["pair_count"] for entry in geometry["per_seed"]
     )
@@ -270,3 +285,77 @@ def test_main_runs_the_sweep_when_the_gate_is_met(
     payload = json.loads(retrieval_path.read_text(encoding="utf-8"))
     assert list(payload["runs"]) == ["A", "B", "C", "D", "E"]
     assert payload["snapshot_backend"] == "stub"
+
+
+def test_geometry_payload_carries_the_null_distribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Schema only. The verdict is pinned closed so this test cannot depend on it.
+
+    A 7-permutation null is deliberately weak -- its 95th percentile is barely
+    more than the maximum of seven draws -- and the gate does open on it. The
+    default is 100 for that reason. What is asserted here is that the evidence
+    file carries the null and both sub-decisions, whichever way they fall.
+    """
+    manifest_path, snapshot_path = _write_manifest_and_snapshot(tmp_path)
+    output_dir = tmp_path / "out"
+    monkeypatch.setattr(
+        run_gate2_module, "stage_two_is_justified", lambda signature, null: False
+    )
+
+    with pytest.raises(SystemExit):
+        run_gate2_module.main(
+            [
+                "--manifest", str(manifest_path),
+                "--snapshot", str(snapshot_path),
+                "--seed", "1",
+                "--stage1-seeds", "4",
+                "--null-permutations", "7",
+                "--steps", "2",
+                "--output-dir", str(output_dir),
+            ]
+        )
+
+    payload = json.loads((output_dir / "geometry-m1.json").read_text(encoding="utf-8"))
+    assert len(payload["null_signatures"]) == 7
+    assert payload["null_median"] == pytest.approx(
+        sorted(payload["null_signatures"])[len(payload["null_signatures"]) // 2]
+    )
+    assert payload["excess_over_null_median"] == pytest.approx(
+        payload["manifold_signature"] - payload["null_median"]
+    )
+    assert isinstance(payload["exceeds_null_p95"], bool)
+    assert isinstance(payload["meets_minimum_excess"], bool)
+
+
+def test_main_refuses_to_open_the_gate_on_a_structureless_corpus(tmp_path: Path) -> None:
+    """The regression against the defect this null exists to fix.
+
+    The stub embedder derives each vector from a text digest, so the corpus
+    carries no geometric structure at all. The old bare 10% threshold was
+    cleared three to four times over on exactly this input. Against its own
+    permutation null the signature must not clear the gate.
+    """
+    manifest_path, snapshot_path = _write_manifest_and_snapshot(tmp_path)
+    output_dir = tmp_path / "out"
+
+    with pytest.raises(SystemExit) as excinfo:
+        run_gate2_module.main(
+            [
+                "--manifest", str(manifest_path),
+                "--snapshot", str(snapshot_path),
+                "--seed", "1",
+                "--stage1-seeds", "6",
+                "--null-permutations", "20",
+                "--steps", "2",
+                "--output-dir", str(output_dir),
+            ]
+        )
+
+    assert excinfo.value.code == 0
+    assert list(output_dir.glob("retrieval-*")) == []
+    payload = json.loads((output_dir / "geometry-m1.json").read_text(encoding="utf-8"))
+    # The old gate would have opened here: the raw signature clears 0.10 easily.
+    assert payload["manifold_signature"] >= 0.10
+    # The null clears it just as easily, which is the whole point.
+    assert not (payload["exceeds_null_p95"] and payload["meets_minimum_excess"])

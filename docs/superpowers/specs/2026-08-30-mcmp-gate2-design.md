@@ -101,7 +101,11 @@ One format, two provenances:
 
 A snapshot stores document ids, a float32 matrix, and metadata: backend
 identifier, model identifier, dimension, creation timestamp, and the digest of the
-manifest it was built for. Loading a snapshot whose manifest digest does not match
+manifest it was built for. The model identifier is read fail-closed: a client that
+exposes none is rejected rather than recorded as "unknown". `EmbeddingServiceClient`
+exposes no model id and the service does not report one, so production wraps it in
+`ServiceEmbeddingClient(client, model_id=...)`, where the identifier is the
+caller's explicit declaration. Loading a snapshot whose manifest digest does not match
 the manifest in use is a hard error.
 
 `src/embeddinggemma/mcmp/embeddings.py` is fail-closed HTTP against
@@ -129,23 +133,44 @@ Runs on snapshot plus manifest, with no retrieval method involved.
 3. **Manifold signature.** The fraction of relevant documents that are both far
    (deeper than `top_k`) and chain-reachable.
 
-Output: `benchmarks/results/gate2/geometry-<manifest>.json`, carrying the raw
-per-pair records, not only the aggregates.
+Output: `benchmarks/results/gate2/geometry-<manifest_id>.json`, carrying the raw
+per-pair records, the full null distribution, and both sub-decisions, not only the
+aggregates. The name carries the manifest, never a seed: stage 1 pools across its
+own seed range and never reads `--seed`, so a seed in the name would correspond to
+nothing inside the file.
 
-**Stage 1 gate, pre-registered.** Stage 2 runs if **at least 10% of all
-(query, relevant) pairs are both far and chain-reachable**. Below that, even a
-walk that recovered every reachable pair could lift recall by at most 10
-percentage points, which cannot carry the ~14 300x cost measured in Gate 1; the
-structure is then absent for practical purposes and Gate 2 is answered.
+**Stage 1 gate, pre-registered — amended 2026-08-30.** Stage 2 runs only if the
+pooled manifold signature satisfies **both** of the following against a
+permutation null:
 
-An earlier draft of this section declined to fix the threshold, reasoning that
-choosing a parameter before seeing data is what went wrong three times in Gate 1.
-That reasoning was inverted and is corrected here. The Gate 1 failures came from
-*generative* parameters — `initial_k`, fixture labelling, agent budget — held
-fixed and then generalised over. A *decision* threshold is the opposite case:
-fixing it in advance is what prevents the result from being rationalised after the
-fact. It is therefore pre-registered, and the review reports the measured
-distribution in full regardless of which side of it the number falls.
+1. It exceeds the **95th percentile** of the null distribution (one-sided test,
+   `NULL_ALPHA = 0.05`, `NULL_PERMUTATIONS = 100`). The result is not noise.
+2. It exceeds the null's **median by at least 10 percentage points**
+   (`MIN_EXCESS_OVER_NULL_MEDIAN`). The effect is large enough to be worth the
+   ~14 300x cost measured in Gate 1.
+
+**The null:** the same pooled statistic, computed on the same geometry with the
+relevance labels redrawn — for each query, as many documents as it really has,
+drawn uniformly from the corpus. Vectors, query vectors and therefore the k-NN
+graph are identical; only *which* documents count as relevant changes, and each
+query keeps its set size so the pair count is unchanged. What survives the
+comparison is the call-graph relation, isolated from graph density. The null is
+pooled across the same seed range as the real statistic, or the two would not be
+the same quantity.
+
+**Why this replaced a bare threshold.** An earlier version of this section fixed a
+10% floor with no reference point. Building the harness produced the measurement
+that refutes it: on the test corpus — whose vectors are pure text digests with no
+structure whatsoever — the pooled signature measures **0.356 to 0.444**, three to
+four times that floor. A threshold that structureless input clears is not a gate,
+and Gate 2 run against it would have reported "structure found" on noise. The
+pre-registration principle stands; what changed is that the number is now
+pre-registered *relative to a null the same data generates*, which is the only
+form of it that can fail.
+
+The earlier note in this section — that a *decision* threshold should be fixed in
+advance, unlike a *generative* parameter — remains correct and is why both
+constants above are fixed here rather than chosen after seeing the real corpus.
 
 ### Stage 2: retrieval
 

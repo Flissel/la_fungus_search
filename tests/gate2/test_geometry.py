@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import numpy as np
 
+import pytest
+
 from benchmarks.gate2.geometry import (
-    MANIFOLD_SIGNATURE_GATE,
+    MIN_EXCESS_OVER_NULL_MEDIAN,
+    NULL_ALPHA,
+    NULL_PERMUTATIONS,
     chain_reachable,
     characterise,
+    geometry_cache,
     knn_graph,
+    permuted_labels,
     relevant_ranks,
     stage_two_is_justified,
 )
@@ -130,7 +136,78 @@ def test_characterise_records_near_pairs_as_not_measured() -> None:
     assert report["manifold_signature"] == 0.5
 
 
-def test_stage_two_gate_is_pre_registered_at_ten_percent() -> None:
-    assert MANIFOLD_SIGNATURE_GATE == 0.10
-    assert stage_two_is_justified(0.10)
-    assert not stage_two_is_justified(0.09)
+def test_null_parameters_are_pre_registered() -> None:
+    assert NULL_PERMUTATIONS == 100
+    assert NULL_ALPHA == 0.05
+    assert MIN_EXCESS_OVER_NULL_MEDIAN == 0.10
+
+
+def test_stage_two_gate_requires_significance_and_effect_size() -> None:
+    flat_null = [0.10] * 100
+
+    # Above the null's 95th percentile AND at least 10 points over its median.
+    assert stage_two_is_justified(0.30, flat_null)
+    # Above the percentile, but the excess over the median is only 5 points:
+    # statistically distinguishable, too small to carry the measured cost.
+    assert not stage_two_is_justified(0.15, flat_null)
+    # A large signature that the null reaches just as easily is not evidence.
+    assert not stage_two_is_justified(0.30, [0.50] * 100)
+
+
+def test_stage_two_gate_refuses_an_empty_null() -> None:
+    with pytest.raises(ValueError, match="null distribution"):
+        stage_two_is_justified(0.9, [])
+
+
+def test_permuted_labels_keep_the_geometry_and_the_set_sizes() -> None:
+    dataset = _chain_dataset()
+
+    permuted = permuted_labels(dataset, np.random.default_rng(0))
+
+    assert permuted.document_ids == dataset.document_ids
+    assert permuted.query_ids == dataset.query_ids
+    assert np.array_equal(permuted.document_vectors, dataset.document_vectors)
+    assert np.array_equal(permuted.query_vectors, dataset.query_vectors)
+    for query_id in dataset.query_ids:
+        assert len(permuted.relevant_by_query[query_id]) == len(
+            dataset.relevant_by_query[query_id]
+        )
+        assert set(permuted.relevant_by_query[query_id]) <= set(dataset.document_ids)
+    permuted.validate()
+
+
+def test_permuted_labels_are_deterministic_and_vary_across_seeds() -> None:
+    dataset = _chain_dataset()
+
+    first = permuted_labels(dataset, np.random.default_rng(3))
+    second = permuted_labels(dataset, np.random.default_rng(3))
+
+    assert first.relevant_by_query == second.relevant_by_query
+
+    observed = {
+        frozenset(
+            permuted_labels(dataset, np.random.default_rng(seed)).relevant_by_query["q:probe"]
+        )
+        for seed in range(20)
+    }
+    assert len(observed) > 1
+
+
+def test_permutation_does_not_change_the_pair_count() -> None:
+    dataset = _chain_dataset()
+    permuted = permuted_labels(dataset, np.random.default_rng(1))
+
+    real = characterise(dataset, top_k=2, knn_k=2)
+    null = characterise(permuted, top_k=2, knn_k=2)
+
+    assert null["pair_count"] == real["pair_count"]
+
+
+def test_a_precomputed_cache_does_not_change_the_measurement() -> None:
+    dataset = _chain_dataset()
+    cache = geometry_cache(dataset, knn_k=2)
+
+    with_cache = characterise(dataset, top_k=2, knn_k=2, cache=cache)
+    without_cache = characterise(dataset, top_k=2, knn_k=2)
+
+    assert with_cache == without_cache
