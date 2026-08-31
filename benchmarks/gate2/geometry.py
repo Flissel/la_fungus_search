@@ -17,7 +17,16 @@ from benchmarks.mcmp.contracts import BenchmarkDataset
 # noise clears is not a gate.
 NULL_PERMUTATIONS = 100
 NULL_ALPHA = 0.05
-MIN_EXCESS_OVER_NULL_MEDIAN = 0.10
+# Absolute headroom. This is the condition the ~14 300x cost argument from
+# Gate 1 actually speaks to: a walk can only recover pairs that are far in the
+# first place.
+MIN_ABSOLUTE_SIGNATURE = 0.10
+# Effect size, expressed against the achievable ceiling rather than as a flat
+# margin. A flat 10 points is unsatisfiable a priori wherever the null median
+# exceeds 0.90 -- measured at 0.96 on a synthetic corpus, where the largest
+# possible excess is 0.043. Replacing a threshold that could not fail with one
+# that cannot pass is not a repair.
+MIN_RELATIVE_EXCESS = 0.10
 
 
 class GeometryCache(NamedTuple):
@@ -34,6 +43,7 @@ class GeometryCache(NamedTuple):
     graph: dict[int, frozenset[int]]
     pairwise: np.ndarray
     knn_k: int
+    vectors: np.ndarray
 
 
 def _resolve_cache(
@@ -45,6 +55,12 @@ def _resolve_cache(
         raise ValueError(
             f"cache was built for knn_k={cache.knn_k}, but knn_k={knn_k} was requested"
         )
+    # Identity, not equality: a label permutation shares the vector buffer by
+    # construction, so this passes for the null path and fails for a cache built
+    # from any other dataset. Every stage-1 seed's corpus has the same shape, so
+    # a mis-zipped cache would otherwise answer with the wrong graph in silence.
+    if cache.vectors is not dataset.document_vectors:
+        raise ValueError("cache was built for a different dataset's vectors")
     return cache
 
 
@@ -84,6 +100,7 @@ def geometry_cache(dataset: BenchmarkDataset, knn_k: int) -> GeometryCache:
         graph=knn_graph(dataset.document_vectors, knn_k),
         pairwise=dataset.document_vectors @ dataset.document_vectors.T,
         knn_k=knn_k,
+        vectors=dataset.document_vectors,
     )
 
 
@@ -133,7 +150,8 @@ def chain_reachable(
     target = list(dataset.document_ids).index(document_id)
     if start == target:
         return True
-    graph, pairwise, _ = _resolve_cache(dataset, knn_k, cache)
+    resolved = _resolve_cache(dataset, knn_k, cache)
+    graph, pairwise = resolved.graph, resolved.pairwise
     queue = deque([(start, 0)])
     seen = {start}
     while queue:
@@ -222,19 +240,21 @@ def characterise(
 
 
 def stage_two_is_justified(signature: float, null_signatures: list[float]) -> bool:
-    """Pre-registered gate: the signature must beat its own null, and beat it by enough.
-
-    Two conditions, both fixed in advance:
+    """Pre-registered gate: three conditions, all fixed in advance.
 
     1. The signature exceeds the 95th percentile of the permutation null
-       (one-sided test at ``NULL_ALPHA``). This says the result is not noise.
-    2. It exceeds the null's median by at least ``MIN_EXCESS_OVER_NULL_MEDIAN``.
-       This says the effect is large enough to be worth the measured cost of
-       exploiting it.
+       (one-sided, ``NULL_ALPHA``). The result is not noise.
+    2. It is at least ``MIN_ABSOLUTE_SIGNATURE``. This is the condition the
+       Gate 1 cost measurement speaks to -- there must be enough far pairs for a
+       walk to recover for the compute to be worth spending.
+    3. It exceeds the null's median by at least ``MIN_RELATIVE_EXCESS`` of the
+       *achievable* ceiling, ``1 - median``, rather than by a flat margin. A flat
+       margin is unsatisfiable wherever the null median is high, which converts
+       the gate from "cannot fail" into "cannot pass".
 
-    Significance alone would certify a one-point difference on a large sample.
-    Effect size alone is what stood here before, and a structureless corpus
-    cleared it three to four times over.
+    Conditions 1 and 3 are different questions: significance alone certifies a
+    one-point difference on a large sample, and a large effect that the null
+    reaches just as easily is not evidence.
     """
     if not null_signatures:
         raise ValueError(
@@ -242,4 +262,9 @@ def stage_two_is_justified(signature: float, null_signatures: list[float]) -> bo
         )
     percentile = float(np.quantile(null_signatures, 1.0 - NULL_ALPHA))
     median = float(np.median(null_signatures))
-    return signature > percentile and (signature - median) >= MIN_EXCESS_OVER_NULL_MEDIAN
+    required_excess = MIN_RELATIVE_EXCESS * (1.0 - median)
+    return (
+        signature > percentile
+        and signature >= MIN_ABSOLUTE_SIGNATURE
+        and (signature - median) >= required_excess
+    )

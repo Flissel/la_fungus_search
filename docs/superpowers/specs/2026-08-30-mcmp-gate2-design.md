@@ -139,38 +139,66 @@ aggregates. The name carries the manifest, never a seed: stage 1 pools across it
 own seed range and never reads `--seed`, so a seed in the name would correspond to
 nothing inside the file.
 
-**Stage 1 gate, pre-registered — amended 2026-08-30.** Stage 2 runs only if the
-pooled manifold signature satisfies **both** of the following against a
-permutation null:
+**Stage 1 gate, pre-registered — amended 2026-08-30, revised after review.**
+Stage 2 runs only if the pooled manifold signature satisfies **all three**:
 
-1. It exceeds the **95th percentile** of the null distribution (one-sided test,
+1. It exceeds the **95th percentile** of the permutation null (one-sided,
    `NULL_ALPHA = 0.05`, `NULL_PERMUTATIONS = 100`). The result is not noise.
-2. It exceeds the null's **median by at least 10 percentage points**
-   (`MIN_EXCESS_OVER_NULL_MEDIAN`). The effect is large enough to be worth the
-   ~14 300x cost measured in Gate 1.
+2. It is at least `MIN_ABSOLUTE_SIGNATURE = 0.10`. This is the condition the
+   Gate 1 cost measurement speaks to: a walk can only recover pairs that are far
+   in the first place, and there must be enough of them to carry ~14 300x.
+3. It exceeds the null's median by at least `MIN_RELATIVE_EXCESS = 0.10` of the
+   **achievable ceiling** `1 - median`, not by a flat margin.
 
-**The null:** the same pooled statistic, computed on the same geometry with the
-relevance labels redrawn — for each query, as many documents as it really has,
-drawn uniformly from the corpus. Vectors, query vectors and therefore the k-NN
-graph are identical; only *which* documents count as relevant changes, and each
-query keeps its set size so the pair count is unchanged. What survives the
-comparison is the call-graph relation, isolated from graph density. The null is
-pooled across the same seed range as the real statistic, or the two would not be
-the same quantity.
+**The null:** the same pooled statistic on the same geometry with relevance
+labels redrawn — for each query, as many documents as it really has, drawn
+uniformly from the corpus. Vectors, query vectors and the k-NN graph are
+identical; only *which* documents count as relevant changes, and each query keeps
+its set size so the pair count is unchanged. Pooled across the same seed range as
+the real statistic, or the two would not be the same quantity.
 
-**Why this replaced a bare threshold.** An earlier version of this section fixed a
-10% floor with no reference point. Building the harness produced the measurement
-that refutes it: on the test corpus — whose vectors are pure text digests with no
-structure whatsoever — the pooled signature measures **0.356 to 0.444**, three to
-four times that floor. A threshold that structureless input clears is not a gate,
-and Gate 2 run against it would have reported "structure found" on noise. The
-pre-registration principle stands; what changed is that the number is now
-pre-registered *relative to a null the same data generates*, which is the only
-form of it that can fail.
+**Why a bare threshold was replaced.** Building the harness produced the
+measurement that refutes it: on the test corpus — pure text digests, no structure
+whatsoever — the pooled signature measures 0.356 to 0.444, three to four times the
+old 0.10 floor. A threshold that structureless input clears cannot fail.
 
-The earlier note in this section — that a *decision* threshold should be fixed in
-advance, unlike a *generative* parameter — remains correct and is why both
-constants above are fixed here rather than chosen after seeing the real corpus.
+**Why condition 3 is relative, not flat.** The first amendment made it a flat
+10-point margin over the null median, and review showed that merely inverts the
+defect. The statistic is a proportion capped at 1.0 while the null median is not
+bounded away from it: on a corpus measured at null median 0.96, the largest
+possible excess is 0.043, so a flat 10-point rule is unsatisfiable *a priori* —
+even a corpus with 96% of relevant pairs far-and-reachable, the best possible
+conditions for a walk, is refused. Replacing "cannot fail" with "cannot pass" is
+not a repair. Condition 2 also had to be restored separately: the flat margin had
+quietly taken over the cost argument while measuring a different quantity.
+
+**Open, and binding before the production run: reachability saturation.**
+On every corpus measurable offline, `far_and_reachable_count == far_count`
+exactly — reachability given "far" is 1.000, for real and permuted labels alike,
+at 11 and at 249 documents. At `knn_k = 8` and `max_hops = 6` the mutual k-NN
+graph reaches everything, so the manifold signature is numerically identical to
+the far rate and the permutation test compares **rank depth**, not reachability.
+Read literally, it then opens the gate when call-graph neighbours rank *worse*
+than random documents — close to the opposite of the intended signal, since a
+better embedding would lower the statistic.
+
+Whether this holds on the production snapshot is an open empirical question.
+Therefore, **before the production stage 1 run is treated as evidence**:
+
+1. Sweep `knn_k` and `max_hops` on the production snapshot and record where
+   `reach_given_far` stops being saturated.
+2. Pre-register the operating point from a criterion stated *before* seeing the
+   sweep — not the value that produces an agreeable number. Choosing a generative
+   parameter after seeing its output is the failure this project has already
+   documented three times.
+3. Only then run stage 1 for the record.
+
+Every stage 1 payload records `far_rate`, `reach_given_far`, and the null medians
+of both, so a saturated term is visible rather than silently collapsing the
+signature. A run below `NULL_PERMUTATIONS` is refused unless `--exploratory` is
+passed, and that flag is stamped into the payload: a weakened null opens the gate
+on structureless input, so such a file must never read as the pre-registered
+result.
 
 ### Stage 2: retrieval
 

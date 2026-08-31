@@ -188,6 +188,7 @@ def test_main_records_all_four_geometry_parameters(
                 "--hop-threshold", "0.25",
                 "--stage1-seeds", "4",
                 "--null-permutations", "5",
+                "--exploratory",
                 "--steps", "2",
                 "--output-dir", str(output_dir),
             ]
@@ -205,15 +206,16 @@ def test_main_records_all_four_geometry_parameters(
         "stage1_seeds": 4,
         "null_permutations": 5,
         "null_seed": 0,
+        "exploratory": True,
     }
 
 
 def test_main_skips_stage_two_when_the_gate_is_not_met(tmp_path: Path) -> None:
     """No pairwise similarity in this stub geometry reaches 0.9, so a hop
-    threshold of 0.9 prunes every hop and no far pair is chain-reachable. The
-    pooled signature is a real, unmocked 0.0 -- below the 0.10 gate. That
-    keeps this an end-to-end exercise of the CLI's gate decision, not an
-    assertion about a mocked boolean.
+    threshold of 0.9 prunes every hop and no far pair is chain-reachable.
+    Signature and null are both a real, unmocked 0.0, and `0.0 > 0.0` is False,
+    so the significance condition closes the gate. This is the one place the
+    degenerate-null path runs end to end through the CLI.
     """
     manifest_path, snapshot_path = _write_manifest_and_snapshot(tmp_path)
     output_dir = tmp_path / "out"
@@ -227,6 +229,7 @@ def test_main_skips_stage_two_when_the_gate_is_not_met(tmp_path: Path) -> None:
                 "--hop-threshold", "0.9",
                 "--stage1-seeds", "4",
                 "--null-permutations", "5",
+                "--exploratory",
                 "--steps", "2",
                 "--output-dir", str(output_dir),
             ]
@@ -251,9 +254,14 @@ def test_main_runs_the_sweep_when_the_gate_is_met(
     # is covered there; what this test covers is the CLI's branch wiring. On the
     # stub corpus the real gate now correctly refuses to open -- see
     # test_main_refuses_to_open_the_gate_on_a_structureless_corpus.
-    monkeypatch.setattr(
-        run_gate2_module, "stage_two_is_justified", lambda signature, null: True
-    )
+    seen: dict[str, object] = {}
+
+    def _record(signature: float, null: list[float]) -> bool:
+        seen["signature"] = signature
+        seen["null"] = null
+        return True
+
+    monkeypatch.setattr(run_gate2_module, "stage_two_is_justified", _record)
 
     exit_code = run_gate2_module.main(
         [
@@ -264,6 +272,7 @@ def test_main_runs_the_sweep_when_the_gate_is_met(
             "--initial-k", "4",
             "--stage1-seeds", "4",
             "--null-permutations", "5",
+                "--exploratory",
             "--steps", "2",
             "--output-dir", str(output_dir),
         ]
@@ -279,6 +288,11 @@ def test_main_runs_the_sweep_when_the_gate_is_met(
     )
     assert geometry["snapshot_backend"] == "stub"
     assert geometry["manifest_digest"]
+    # The mock hides the verdict, so assert main() handed the predicate the
+    # pooled signature and the pooled null -- not a per-seed value or another
+    # run's list.
+    assert seen["signature"] == geometry["manifold_signature"]
+    assert seen["null"] == geometry["null_signatures"]
 
     retrieval_path = output_dir / "retrieval-seed-1-a4.json"
     assert retrieval_path.exists()
@@ -311,6 +325,7 @@ def test_geometry_payload_carries_the_null_distribution(
                 "--seed", "1",
                 "--stage1-seeds", "4",
                 "--null-permutations", "7",
+                "--exploratory",
                 "--steps", "2",
                 "--output-dir", str(output_dir),
             ]
@@ -325,37 +340,107 @@ def test_geometry_payload_carries_the_null_distribution(
         payload["manifold_signature"] - payload["null_median"]
     )
     assert isinstance(payload["exceeds_null_p95"], bool)
-    assert isinstance(payload["meets_minimum_excess"], bool)
+    assert isinstance(payload["meets_absolute_minimum"], bool)
+    assert isinstance(payload["meets_relative_excess"], bool)
 
 
 def test_main_refuses_to_open_the_gate_on_a_structureless_corpus(tmp_path: Path) -> None:
-    """The regression against the defect this null exists to fix.
+    """The regression against the defect the null exists to fix.
 
     The stub embedder derives each vector from a text digest, so the corpus
     carries no geometric structure at all. The old bare 10% threshold was
-    cleared three to four times over on exactly this input. Against its own
-    permutation null the signature must not clear the gate.
+    cleared three to four times over on exactly this input.
+
+    Run at the PRE-REGISTERED defaults -- 12 stage-1 seeds, 100 permutations --
+    and across several null seeds, because an earlier version of this test
+    passed by 0.002 at a hand-picked configuration that nobody runs, while the
+    CLI's own defaults opened the gate.
     """
     manifest_path, snapshot_path = _write_manifest_and_snapshot(tmp_path)
-    output_dir = tmp_path / "out"
 
-    with pytest.raises(SystemExit) as excinfo:
+    for null_seed in (0, 1, 2):
+        output_dir = tmp_path / f"out-{null_seed}"
+        with pytest.raises(SystemExit) as excinfo:
+            run_gate2_module.main(
+                [
+                    "--manifest", str(manifest_path),
+                    "--snapshot", str(snapshot_path),
+                    "--seed", "1",
+                    "--null-seed", str(null_seed),
+                    "--steps", "2",
+                    "--output-dir", str(output_dir),
+                ]
+            )
+
+        assert excinfo.value.code == 0
+        assert list(output_dir.glob("retrieval-*")) == []
+        payload = json.loads(
+            (output_dir / "geometry-m1.json").read_text(encoding="utf-8")
+        )
+        assert payload["config"]["stage1_seeds"] == 12
+        assert payload["config"]["null_permutations"] == 100
+        assert payload["config"]["exploratory"] is False
+        # The old gate would have opened: the raw signature clears 0.10 easily.
+        assert payload["manifold_signature"] >= 0.10
+        # Against its own null it does not clear all three conditions.
+        assert not (
+            payload["exceeds_null_p95"]
+            and payload["meets_absolute_minimum"]
+            and payload["meets_relative_excess"]
+        )
+
+
+def test_a_weakened_null_is_refused_without_the_exploratory_flag(tmp_path: Path) -> None:
+    """A 7-permutation null opens the gate on structureless input, so a run
+    below the pre-registered count must not be mistakable for the real thing."""
+    manifest_path, snapshot_path = _write_manifest_and_snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="below the pre-registered"):
         run_gate2_module.main(
             [
                 "--manifest", str(manifest_path),
                 "--snapshot", str(snapshot_path),
                 "--seed", "1",
-                "--stage1-seeds", "6",
-                "--null-permutations", "20",
+                "--null-permutations", "7",
+                "--steps", "2",
+                "--output-dir", str(tmp_path / "out"),
+            ]
+        )
+
+
+def test_the_evidence_decomposes_the_signature_into_its_two_factors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The signature is far_rate x reach_given_far. If reachability saturates at
+    1.000 the signature silently becomes the far rate, and the permutation test
+    compares rank depth rather than reachability. The evidence has to show that.
+    """
+    manifest_path, snapshot_path = _write_manifest_and_snapshot(tmp_path)
+    output_dir = tmp_path / "out"
+    monkeypatch.setattr(
+        run_gate2_module, "stage_two_is_justified", lambda signature, null: False
+    )
+
+    with pytest.raises(SystemExit):
+        run_gate2_module.main(
+            [
+                "--manifest", str(manifest_path),
+                "--snapshot", str(snapshot_path),
+                "--seed", "1",
+                "--stage1-seeds", "4",
+                "--null-permutations", "5",
+                "--exploratory",
                 "--steps", "2",
                 "--output-dir", str(output_dir),
             ]
         )
 
-    assert excinfo.value.code == 0
-    assert list(output_dir.glob("retrieval-*")) == []
     payload = json.loads((output_dir / "geometry-m1.json").read_text(encoding="utf-8"))
-    # The old gate would have opened here: the raw signature clears 0.10 easily.
-    assert payload["manifold_signature"] >= 0.10
-    # The null clears it just as easily, which is the whole point.
-    assert not (payload["exceeds_null_p95"] and payload["meets_minimum_excess"])
+    assert payload["manifold_signature"] == pytest.approx(
+        payload["far_rate"] * payload["reach_given_far"]
+    )
+    assert "null_far_rate_median" in payload
+    assert "null_reach_given_far_median" in payload
+    assert payload["required_excess"] == pytest.approx(
+        0.10 * (1.0 - payload["null_median"])
+    )

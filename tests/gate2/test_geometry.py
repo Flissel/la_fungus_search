@@ -5,7 +5,8 @@ import numpy as np
 import pytest
 
 from benchmarks.gate2.geometry import (
-    MIN_EXCESS_OVER_NULL_MEDIAN,
+    MIN_ABSOLUTE_SIGNATURE,
+    MIN_RELATIVE_EXCESS,
     NULL_ALPHA,
     NULL_PERMUTATIONS,
     chain_reachable,
@@ -139,19 +140,45 @@ def test_characterise_records_near_pairs_as_not_measured() -> None:
 def test_null_parameters_are_pre_registered() -> None:
     assert NULL_PERMUTATIONS == 100
     assert NULL_ALPHA == 0.05
-    assert MIN_EXCESS_OVER_NULL_MEDIAN == 0.10
+    assert MIN_ABSOLUTE_SIGNATURE == 0.10
+    assert MIN_RELATIVE_EXCESS == 0.10
 
 
-def test_stage_two_gate_requires_significance_and_effect_size() -> None:
-    flat_null = [0.10] * 100
+def test_stage_two_gate_requires_all_three_conditions() -> None:
+    low_null = [0.10] * 100  # median .10, ceiling .90, required excess .09
 
-    # Above the null's 95th percentile AND at least 10 points over its median.
-    assert stage_two_is_justified(0.30, flat_null)
-    # Above the percentile, but the excess over the median is only 5 points:
-    # statistically distinguishable, too small to carry the measured cost.
-    assert not stage_two_is_justified(0.15, flat_null)
-    # A large signature that the null reaches just as easily is not evidence.
+    assert stage_two_is_justified(0.30, low_null)
+    # Significant, above the absolute floor, but the excess is 5 points against
+    # a required 9: too small to carry the measured cost.
+    assert not stage_two_is_justified(0.15, low_null)
+    # A large signature the null reaches just as easily is not evidence.
     assert not stage_two_is_justified(0.30, [0.50] * 100)
+
+
+def test_the_absolute_floor_bites_independently_of_the_null() -> None:
+    """A tiny signature can be significant against a tiny null and still be
+    worthless: a walk can only recover pairs that are far in the first place,
+    and that is what the Gate 1 cost measurement speaks to."""
+    zero_null = [0.0] * 100
+
+    assert 0.05 > 0.0  # significant against this null
+    assert not stage_two_is_justified(0.05, zero_null)
+    assert stage_two_is_justified(0.20, zero_null)
+
+
+def test_the_margin_scales_with_the_achievable_ceiling() -> None:
+    """The regression against a rule that could not pass.
+
+    A flat 10-point margin is unsatisfiable wherever the null median exceeds
+    0.90 -- measured at 0.96 on a synthetic corpus, where the largest possible
+    excess is 0.043. Against the ceiling the required margin there is 0.004,
+    so real structure can still clear it.
+    """
+    saturated_null = [0.96] * 100
+
+    assert stage_two_is_justified(0.98, saturated_null)
+    # Under the flat-margin rule this was False: 0.98 - 0.96 = 0.02 < 0.10.
+    assert (0.98 - 0.96) < 0.10
 
 
 def test_stage_two_gate_refuses_an_empty_null() -> None:
@@ -174,6 +201,9 @@ def test_permuted_labels_keep_the_geometry_and_the_set_sizes() -> None:
         )
         assert set(permuted.relevant_by_query[query_id]) <= set(dataset.document_ids)
     permuted.validate()
+    # The original must be untouched, or the comparison against it would be
+    # self-consistent and meaningless.
+    assert dataset.relevant_by_query == {"q:probe": frozenset({"d5"})}
 
 
 def test_permuted_labels_are_deterministic_and_vary_across_seeds() -> None:
@@ -223,3 +253,18 @@ def test_a_cache_built_for_a_different_knn_k_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="cache was built for knn_k"):
         chain_reachable(dataset, "q:probe", "d5", 5, 6, 0.0, cache=cache)
+
+
+def test_a_cache_built_from_another_dataset_is_rejected() -> None:
+    """Every stage-1 seed's corpus has the same shape, so a mis-zipped cache
+    would otherwise answer with a different corpus's graph in silence. A label
+    permutation shares the vector buffer by construction and must still pass."""
+    dataset = _chain_dataset()
+    other = _chain_dataset()  # identical values, distinct array object
+    cache = geometry_cache(dataset, knn_k=2)
+
+    with pytest.raises(ValueError, match="different dataset's vectors"):
+        characterise(other, top_k=2, knn_k=2, cache=cache)
+
+    permuted = permuted_labels(dataset, np.random.default_rng(0))
+    assert characterise(permuted, top_k=2, knn_k=2, cache=cache)["pair_count"] == 1

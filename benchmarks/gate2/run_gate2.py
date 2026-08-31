@@ -9,10 +9,12 @@ from pathlib import Path
 import numpy as np
 
 from benchmarks.gate2.geometry import (
-    MIN_EXCESS_OVER_NULL_MEDIAN,
+    MIN_ABSOLUTE_SIGNATURE,
+    MIN_RELATIVE_EXCESS,
     NULL_ALPHA,
     NULL_PERMUTATIONS,
     characterise,
+    GeometryCache,
     geometry_cache,
     permuted_labels,
     stage_two_is_justified,
@@ -39,6 +41,7 @@ def characterise_pooled(
     hop_threshold: float,
     null_permutations: int = NULL_PERMUTATIONS,
     null_seed: int = 0,
+    exploratory: bool = False,
 ) -> dict[str, object]:
     """Pool stage 1 across seeds and score the pre-registered gate on the pool.
 
@@ -56,6 +59,13 @@ def characterise_pooled(
         raise ValueError("--stage1-seeds must be at least 1")
     if null_permutations < 1:
         raise ValueError("--null-permutations must be at least 1")
+    if null_permutations < NULL_PERMUTATIONS and not exploratory:
+        raise ValueError(
+            f"--null-permutations={null_permutations} is below the pre-registered "
+            f"{NULL_PERMUTATIONS}; a weakened null opens the gate on structureless "
+            "input. Pass --exploratory to run it anyway; the result is then "
+            "stamped as not pre-registered."
+        )
 
     per_seed: list[dict[str, object]] = []
     skipped_seeds: list[int] = []
@@ -65,7 +75,7 @@ def characterise_pooled(
     # Held for the null: a label permutation leaves the vectors alone, so each
     # dataset's k-NN graph and pairwise matrix are computed once here and reused
     # across all permutations. That is what makes the null affordable.
-    measured: list[tuple[int, BenchmarkDataset, tuple[object, object]]] = []
+    measured: list[tuple[int, BenchmarkDataset, GeometryCache]] = []
 
     for seed in range(stage1_seeds):
         try:
@@ -121,6 +131,8 @@ def characterise_pooled(
     # statistic's exactly, or the comparison is between two different things.
     rng = np.random.default_rng(null_seed)
     null_signatures: list[float] = []
+    null_far_rates: list[float] = []
+    null_reach_given_far: list[float] = []
     for _ in range(null_permutations):
         null_pairs: list[dict[str, object]] = []
         for _seed, dataset, cache in measured:
@@ -133,11 +145,23 @@ def characterise_pooled(
                 cache=cache,
             )
             null_pairs.extend(null_report["pairs"])
+        null_total = len(null_pairs)
+        null_far = sum(1 for pair in null_pairs if pair["far"])
         null_hits = sum(
             1 for pair in null_pairs if pair["far"] and pair["chain_reachable"] is True
         )
-        null_signatures.append(null_hits / len(null_pairs) if null_pairs else 0.0)
+        null_signatures.append(null_hits / null_total if null_total else 0.0)
+        null_far_rates.append(null_far / null_total if null_total else 0.0)
+        null_reach_given_far.append(null_hits / null_far if null_far else 0.0)
 
+    # The signature is far_rate x reach_given_far. Recording the factors makes a
+    # saturated reachability term visible instead of silently collapsing the
+    # signature into the far rate -- measured saturated at 1.000 on every corpus
+    # available offline, which would mean the test compares rank depth, not
+    # reachability. A closed gate has several possible causes and the evidence
+    # file has to be able to tell them apart.
+    real_far_rate = far_count / pair_count if pair_count else 0.0
+    real_reach_given_far = far_and_reachable / far_count if far_count else 0.0
     null_median = float(np.median(null_signatures))
     null_percentile = float(np.quantile(null_signatures, 1.0 - NULL_ALPHA))
     excess = signature - null_median
@@ -151,6 +175,7 @@ def characterise_pooled(
             "stage1_seeds": stage1_seeds,
             "null_permutations": null_permutations,
             "null_seed": null_seed,
+            "exploratory": exploratory,
         },
         "dataset_id": dataset_id,
         # Provenance, so a stub-derived evidence file and a production one are
@@ -168,8 +193,14 @@ def characterise_pooled(
         "null_median": null_median,
         "null_p95": null_percentile,
         "excess_over_null_median": excess,
+        "required_excess": MIN_RELATIVE_EXCESS * (1.0 - null_median),
         "exceeds_null_p95": signature > null_percentile,
-        "meets_minimum_excess": excess >= MIN_EXCESS_OVER_NULL_MEDIAN,
+        "meets_absolute_minimum": signature >= MIN_ABSOLUTE_SIGNATURE,
+        "meets_relative_excess": excess >= MIN_RELATIVE_EXCESS * (1.0 - null_median),
+        "far_rate": real_far_rate,
+        "reach_given_far": real_reach_given_far,
+        "null_far_rate_median": float(np.median(null_far_rates)),
+        "null_reach_given_far_median": float(np.median(null_reach_given_far)),
         "per_seed": per_seed,
         "skipped_seeds": skipped_seeds,
         "pairs": pooled_pairs,
@@ -246,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stage1-seeds", type=int, default=12)
     parser.add_argument("--null-permutations", type=int, default=NULL_PERMUTATIONS)
     parser.add_argument("--null-seed", type=int, default=0)
+    parser.add_argument("--exploratory", action="store_true")
     parser.add_argument("--initial-k", type=int, default=8)
     parser.add_argument("--steps", type=int, default=50)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -264,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
         hop_threshold=args.hop_threshold,
         null_permutations=args.null_permutations,
         null_seed=args.null_seed,
+        exploratory=args.exploratory,
     )
     # Named for the manifest, not for --seed: stage 1 pools across its own seed
     # range and never reads --seed, so a seed in this name would correspond to
