@@ -1,0 +1,1487 @@
+{
+  "comparisons": {
+    "A_vs_C": {
+      "mrr_delta": 0.0,
+      "ndcg_at_k_delta": -0.2622073738811405,
+      "novel_relevant_candidates": [
+        "doc-43"
+      ],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": -0.5
+    },
+    "A_vs_E": {
+      "mrr_delta": 0.0,
+      "ndcg_at_k_delta": 0.0,
+      "novel_relevant_candidates": [],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.0
+    },
+    "B_vs_D": {
+      "mrr_delta": -0.07142857142857142,
+      "ndcg_at_k_delta": 0.0,
+      "novel_relevant_candidates": [
+        "doc-43"
+      ],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.0
+    },
+    "C_vs_E": {
+      "mrr_delta": 0.0,
+      "ndcg_at_k_delta": 0.2622073738811405,
+      "novel_relevant_candidates": [],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.5
+    },
+    "C_vs_F": {
+      "mrr_delta": 0.0,
+      "ndcg_at_k_delta": 0.0,
+      "novel_relevant_candidates": [
+        "doc-43"
+      ],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.0
+    },
+    "C_vs_G": {
+      "mrr_delta": 0.0,
+      "ndcg_at_k_delta": 0.13012668333070054,
+      "novel_relevant_candidates": [],
+      "ranked_document_ids_equal": false,
+      "recall_at_k_delta": 0.25
+    }
+  },
+  "conclusion": "novel_relevant_observed",
+  "config": {
+    "initial_k": 8,
+    "num_agents": 96,
+    "seed": 3,
+    "steps": 50,
+    "top_k": 8
+  },
+  "dataset": {
+    "digest": "a036a22a5e25af4b9651e6deb91ea324c6d605d83ed584414a6e070a42bae8ce",
+    "document_ids": [
+      "doc-00",
+      "doc-01",
+      "doc-02",
+      "doc-03",
+      "doc-04",
+      "doc-05",
+      "doc-06",
+      "doc-07",
+      "doc-08",
+      "doc-09",
+      "doc-10",
+      "doc-11",
+      "doc-12",
+      "doc-13",
+      "doc-14",
+      "doc-15",
+      "doc-16",
+      "doc-17",
+      "doc-18",
+      "doc-19",
+      "doc-20",
+      "doc-21",
+      "doc-22",
+      "doc-23",
+      "doc-24",
+      "doc-25",
+      "doc-26",
+      "doc-27",
+      "doc-28",
+      "doc-29",
+      "doc-30",
+      "doc-31",
+      "doc-32",
+      "doc-33",
+      "doc-34",
+      "doc-35",
+      "doc-36",
+      "doc-37",
+      "doc-38",
+      "doc-39",
+      "doc-40",
+      "doc-41",
+      "doc-42",
+      "doc-43",
+      "doc-44",
+      "doc-45",
+      "doc-46",
+      "doc-47",
+      "doc-48",
+      "doc-49",
+      "doc-50",
+      "doc-51",
+      "doc-52",
+      "doc-53",
+      "doc-54",
+      "doc-55",
+      "doc-56",
+      "doc-57",
+      "doc-58",
+      "doc-59",
+      "doc-60",
+      "doc-61",
+      "doc-62",
+      "doc-63"
+    ],
+    "document_vector_shape": [
+      64,
+      16
+    ],
+    "fixture": "neutral",
+    "id": "neutral-mcmp-v1",
+    "query_ids": [
+      "q-main",
+      "q-related"
+    ],
+    "query_vector_shape": [
+      2,
+      16
+    ]
+  },
+  "environment": {
+    "execution_backend": "faiss-cpu",
+    "faiss_factory": "Flat",
+    "faiss_metric": "inner_product",
+    "faiss_version": "1.15.0",
+    "force_cpu": true,
+    "numpy_version": "2.4.6",
+    "python_version": "3.11.0"
+  },
+  "execution": {
+    "clock_mode": "fixed",
+    "clock_value": 2.0,
+    "exploration_bonus": 0.1,
+    "faiss_factory": "Flat",
+    "faiss_metric": "inner_product",
+    "force_cpu": true,
+    "pheromone_decay": 0.95
+  },
+  "query_geometry": {
+    "max_cosine_distance": 0.881901417574009,
+    "mean_cosine_distance": 0.881901417574009
+  },
+  "runs": {
+    "A": {
+      "candidate_comparisons": 64,
+      "candidate_overlap": {},
+      "document_visits": {},
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": null,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "faiss",
+        "num_agents": null,
+        "pheromone_decay": null,
+        "random_seed_provenance": {
+          "numpy_random_seed": null,
+          "per_query": null,
+          "python_random_seed": null
+        },
+        "seed": 3,
+        "steps": null,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "frontier_documents_added": 0,
+      "frontier_expansions": 0,
+      "independent_run_count": 1,
+      "mcmp_steps": 0,
+      "metrics": {
+        "candidate_count": 8,
+        "mrr": 0.2,
+        "ndcg_at_k": 0.41322699210894576,
+        "novel_candidates": [],
+        "novel_relevant_candidates": [],
+        "recall_at_k": 0.75,
+        "reciprocal_rank": 0.2,
+        "unique_relevant_documents": 3
+      },
+      "nearest_search_calls": 1,
+      "pheromone_trails": 0,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "doc-06",
+          "doc-20",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-52",
+          "doc-55",
+          "doc-62"
+        ],
+        "initial_candidate_ids": [
+          "doc-06",
+          "doc-20",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-52",
+          "doc-55",
+          "doc-62"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "doc-06",
+            "doc-20",
+            "doc-30",
+            "doc-32",
+            "doc-41",
+            "doc-52",
+            "doc-55",
+            "doc-62"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-20",
+            "doc-55",
+            "doc-62",
+            "doc-41"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-20",
+            "doc-55",
+            "doc-62",
+            "doc-41"
+          ]
+        },
+        "ranked_document_ids": [
+          "doc-32",
+          "doc-06",
+          "doc-52",
+          "doc-30",
+          "doc-20",
+          "doc-55",
+          "doc-62",
+          "doc-41"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 0.4287000047042966
+      }
+    },
+    "B": {
+      "candidate_comparisons": 128,
+      "candidate_overlap": {
+        "q-main|q-related": 0.14285714285714285
+      },
+      "document_visits": {},
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": null,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "faiss",
+        "num_agents": null,
+        "pheromone_decay": null,
+        "random_seed_provenance": {
+          "numpy_random_seed": null,
+          "per_query": null,
+          "python_random_seed": null
+        },
+        "seed": 3,
+        "steps": null,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "frontier_documents_added": 0,
+      "frontier_expansions": 0,
+      "independent_run_count": 2,
+      "mcmp_steps": 0,
+      "metrics": {
+        "candidate_count": 14,
+        "mrr": 0.17142857142857143,
+        "ndcg_at_k": 0.3327372413301053,
+        "novel_candidates": [],
+        "novel_relevant_candidates": [],
+        "recall_at_k": 0.25,
+        "reciprocal_rank": 1.0,
+        "unique_relevant_documents": 2
+      },
+      "nearest_search_calls": 2,
+      "pheromone_trails": 0,
+      "query_ids": [
+        "q-main",
+        "q-related"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "doc-03",
+          "doc-06",
+          "doc-10",
+          "doc-20",
+          "doc-29",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-44",
+          "doc-47",
+          "doc-52",
+          "doc-55",
+          "doc-56",
+          "doc-62"
+        ],
+        "initial_candidate_ids": [
+          "doc-03",
+          "doc-06",
+          "doc-10",
+          "doc-20",
+          "doc-29",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-44",
+          "doc-47",
+          "doc-52",
+          "doc-55",
+          "doc-56",
+          "doc-62"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "doc-06",
+            "doc-20",
+            "doc-30",
+            "doc-32",
+            "doc-41",
+            "doc-52",
+            "doc-55",
+            "doc-62"
+          ],
+          "q-related": [
+            "doc-03",
+            "doc-10",
+            "doc-29",
+            "doc-32",
+            "doc-41",
+            "doc-44",
+            "doc-47",
+            "doc-56"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-20",
+            "doc-55",
+            "doc-62",
+            "doc-41"
+          ],
+          "q-related": [
+            "doc-41",
+            "doc-47",
+            "doc-56",
+            "doc-10",
+            "doc-03",
+            "doc-44",
+            "doc-29",
+            "doc-32"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-20",
+            "doc-55",
+            "doc-62",
+            "doc-41"
+          ],
+          "q-related": [
+            "doc-41",
+            "doc-47",
+            "doc-56",
+            "doc-10",
+            "doc-03",
+            "doc-44",
+            "doc-29",
+            "doc-32"
+          ]
+        },
+        "ranked_document_ids": [
+          "doc-41",
+          "doc-32",
+          "doc-06",
+          "doc-47",
+          "doc-52",
+          "doc-30",
+          "doc-56",
+          "doc-20"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 0.4659999976865947
+      }
+    },
+    "C": {
+      "candidate_comparisons": 914048,
+      "candidate_overlap": {},
+      "document_visits": {
+        "doc-00": 0,
+        "doc-01": 0,
+        "doc-02": 97,
+        "doc-03": 0,
+        "doc-04": 0,
+        "doc-05": 0,
+        "doc-06": 175,
+        "doc-07": 0,
+        "doc-08": 0,
+        "doc-09": 0,
+        "doc-10": 9,
+        "doc-11": 0,
+        "doc-12": 0,
+        "doc-13": 0,
+        "doc-14": 0,
+        "doc-15": 0,
+        "doc-16": 1,
+        "doc-17": 0,
+        "doc-18": 0,
+        "doc-19": 0,
+        "doc-20": 0,
+        "doc-21": 76,
+        "doc-22": 0,
+        "doc-23": 0,
+        "doc-24": 0,
+        "doc-25": 0,
+        "doc-26": 0,
+        "doc-27": 6,
+        "doc-28": 0,
+        "doc-29": 0,
+        "doc-30": 48,
+        "doc-31": 0,
+        "doc-32": 4176,
+        "doc-33": 0,
+        "doc-34": 0,
+        "doc-35": 0,
+        "doc-36": 0,
+        "doc-37": 0,
+        "doc-38": 0,
+        "doc-39": 0,
+        "doc-40": 0,
+        "doc-41": 0,
+        "doc-42": 0,
+        "doc-43": 1,
+        "doc-44": 0,
+        "doc-45": 23,
+        "doc-46": 0,
+        "doc-47": 0,
+        "doc-48": 0,
+        "doc-49": 38,
+        "doc-50": 0,
+        "doc-51": 0,
+        "doc-52": 16,
+        "doc-53": 0,
+        "doc-54": 0,
+        "doc-55": 97,
+        "doc-56": 0,
+        "doc-57": 0,
+        "doc-58": 0,
+        "doc-59": 0,
+        "doc-60": 0,
+        "doc-61": 0,
+        "doc-62": 37,
+        "doc-63": 0
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "mcmp",
+        "num_agents": 96,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 3,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 3,
+              "python_random_seed": 3
+            }
+          },
+          "python_random_seed": 3
+        },
+        "seed": 3,
+        "steps": 50,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "frontier_documents_added": 0,
+      "frontier_expansions": 0,
+      "independent_run_count": 1,
+      "mcmp_steps": 50,
+      "metrics": {
+        "candidate_count": 14,
+        "mrr": 0.2,
+        "ndcg_at_k": 0.15101961822780524,
+        "novel_candidates": [
+          "doc-02",
+          "doc-10",
+          "doc-16",
+          "doc-21",
+          "doc-27",
+          "doc-43",
+          "doc-45",
+          "doc-49"
+        ],
+        "novel_relevant_candidates": [
+          "doc-43"
+        ],
+        "recall_at_k": 0.25,
+        "reciprocal_rank": 0.2,
+        "unique_relevant_documents": 1
+      },
+      "nearest_search_calls": 14282,
+      "pheromone_trails": 36,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "doc-02",
+          "doc-06",
+          "doc-10",
+          "doc-16",
+          "doc-21",
+          "doc-27",
+          "doc-30",
+          "doc-32",
+          "doc-43",
+          "doc-45",
+          "doc-49",
+          "doc-52",
+          "doc-55",
+          "doc-62"
+        ],
+        "initial_candidate_ids": [
+          "doc-06",
+          "doc-20",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-52",
+          "doc-55",
+          "doc-62"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "doc-02",
+            "doc-06",
+            "doc-10",
+            "doc-16",
+            "doc-21",
+            "doc-27",
+            "doc-30",
+            "doc-32",
+            "doc-43",
+            "doc-45",
+            "doc-49",
+            "doc-52",
+            "doc-55",
+            "doc-62"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-20",
+            "doc-55",
+            "doc-62",
+            "doc-41"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-55",
+            "doc-62",
+            "doc-10",
+            "doc-21"
+          ]
+        },
+        "ranked_document_ids": [
+          "doc-32",
+          "doc-06",
+          "doc-52",
+          "doc-30",
+          "doc-55",
+          "doc-62",
+          "doc-10",
+          "doc-21"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 1045.4014999995707
+      }
+    },
+    "D": {
+      "candidate_comparisons": 1829056,
+      "candidate_overlap": {
+        "q-main|q-related": 0.2
+      },
+      "document_visits": {
+        "doc-00": 0,
+        "doc-01": 0,
+        "doc-02": 98,
+        "doc-03": 0,
+        "doc-04": 0,
+        "doc-05": 0,
+        "doc-06": 175,
+        "doc-07": 0,
+        "doc-08": 0,
+        "doc-09": 0,
+        "doc-10": 19,
+        "doc-11": 0,
+        "doc-12": 0,
+        "doc-13": 0,
+        "doc-14": 0,
+        "doc-15": 0,
+        "doc-16": 1,
+        "doc-17": 0,
+        "doc-18": 0,
+        "doc-19": 0,
+        "doc-20": 0,
+        "doc-21": 76,
+        "doc-22": 0,
+        "doc-23": 0,
+        "doc-24": 0,
+        "doc-25": 0,
+        "doc-26": 0,
+        "doc-27": 6,
+        "doc-28": 0,
+        "doc-29": 0,
+        "doc-30": 48,
+        "doc-31": 0,
+        "doc-32": 4177,
+        "doc-33": 0,
+        "doc-34": 0,
+        "doc-35": 0,
+        "doc-36": 0,
+        "doc-37": 0,
+        "doc-38": 0,
+        "doc-39": 0,
+        "doc-40": 0,
+        "doc-41": 125,
+        "doc-42": 0,
+        "doc-43": 200,
+        "doc-44": 0,
+        "doc-45": 23,
+        "doc-46": 1,
+        "doc-47": 441,
+        "doc-48": 0,
+        "doc-49": 38,
+        "doc-50": 0,
+        "doc-51": 0,
+        "doc-52": 16,
+        "doc-53": 0,
+        "doc-54": 0,
+        "doc-55": 97,
+        "doc-56": 1935,
+        "doc-57": 10,
+        "doc-58": 0,
+        "doc-59": 0,
+        "doc-60": 0,
+        "doc-61": 2077,
+        "doc-62": 37,
+        "doc-63": 0
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "mcmp",
+        "num_agents": 96,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 3,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 3,
+              "python_random_seed": 3
+            },
+            "q-related": {
+              "numpy_random_seed": 4,
+              "python_random_seed": 4
+            }
+          },
+          "python_random_seed": 3
+        },
+        "seed": 3,
+        "steps": 50,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "frontier_documents_added": 0,
+      "frontier_expansions": 0,
+      "independent_run_count": 2,
+      "mcmp_steps": 50,
+      "metrics": {
+        "candidate_count": 20,
+        "mrr": 0.1,
+        "ndcg_at_k": 0.3327372413301053,
+        "novel_candidates": [
+          "doc-02",
+          "doc-16",
+          "doc-21",
+          "doc-27",
+          "doc-43",
+          "doc-45",
+          "doc-46",
+          "doc-49",
+          "doc-57",
+          "doc-61"
+        ],
+        "novel_relevant_candidates": [
+          "doc-43"
+        ],
+        "recall_at_k": 0.25,
+        "reciprocal_rank": 1.0,
+        "unique_relevant_documents": 2
+      },
+      "nearest_search_calls": 28579,
+      "pheromone_trails": 64,
+      "query_ids": [
+        "q-main",
+        "q-related"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "doc-02",
+          "doc-06",
+          "doc-10",
+          "doc-16",
+          "doc-21",
+          "doc-27",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-43",
+          "doc-45",
+          "doc-46",
+          "doc-47",
+          "doc-49",
+          "doc-52",
+          "doc-55",
+          "doc-56",
+          "doc-57",
+          "doc-61",
+          "doc-62"
+        ],
+        "initial_candidate_ids": [
+          "doc-03",
+          "doc-06",
+          "doc-10",
+          "doc-20",
+          "doc-29",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-44",
+          "doc-47",
+          "doc-52",
+          "doc-55",
+          "doc-56",
+          "doc-62"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "doc-02",
+            "doc-06",
+            "doc-10",
+            "doc-16",
+            "doc-21",
+            "doc-27",
+            "doc-30",
+            "doc-32",
+            "doc-43",
+            "doc-45",
+            "doc-49",
+            "doc-52",
+            "doc-55",
+            "doc-62"
+          ],
+          "q-related": [
+            "doc-02",
+            "doc-10",
+            "doc-32",
+            "doc-41",
+            "doc-43",
+            "doc-46",
+            "doc-47",
+            "doc-56",
+            "doc-57",
+            "doc-61"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-20",
+            "doc-55",
+            "doc-62",
+            "doc-41"
+          ],
+          "q-related": [
+            "doc-41",
+            "doc-47",
+            "doc-56",
+            "doc-10",
+            "doc-03",
+            "doc-44",
+            "doc-29",
+            "doc-32"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-55",
+            "doc-62",
+            "doc-10",
+            "doc-21"
+          ],
+          "q-related": [
+            "doc-41",
+            "doc-47",
+            "doc-56",
+            "doc-10",
+            "doc-61",
+            "doc-43",
+            "doc-57",
+            "doc-32"
+          ]
+        },
+        "ranked_document_ids": [
+          "doc-41",
+          "doc-32",
+          "doc-06",
+          "doc-47",
+          "doc-52",
+          "doc-30",
+          "doc-56",
+          "doc-55"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 753.8540000095963
+      }
+    },
+    "E": {
+      "candidate_comparisons": 114408,
+      "candidate_overlap": {},
+      "document_visits": {
+        "doc-00": 0,
+        "doc-01": 0,
+        "doc-02": 0,
+        "doc-03": 0,
+        "doc-04": 0,
+        "doc-05": 0,
+        "doc-06": 351,
+        "doc-07": 0,
+        "doc-08": 0,
+        "doc-09": 0,
+        "doc-10": 0,
+        "doc-11": 0,
+        "doc-12": 0,
+        "doc-13": 0,
+        "doc-14": 0,
+        "doc-15": 0,
+        "doc-16": 0,
+        "doc-17": 0,
+        "doc-18": 0,
+        "doc-19": 0,
+        "doc-20": 0,
+        "doc-21": 0,
+        "doc-22": 0,
+        "doc-23": 0,
+        "doc-24": 0,
+        "doc-25": 0,
+        "doc-26": 0,
+        "doc-27": 0,
+        "doc-28": 0,
+        "doc-29": 0,
+        "doc-30": 1716,
+        "doc-31": 0,
+        "doc-32": 224,
+        "doc-33": 0,
+        "doc-34": 0,
+        "doc-35": 0,
+        "doc-36": 0,
+        "doc-37": 0,
+        "doc-38": 0,
+        "doc-39": 0,
+        "doc-40": 0,
+        "doc-41": 0,
+        "doc-42": 0,
+        "doc-43": 0,
+        "doc-44": 0,
+        "doc-45": 0,
+        "doc-46": 0,
+        "doc-47": 0,
+        "doc-48": 0,
+        "doc-49": 0,
+        "doc-50": 0,
+        "doc-51": 0,
+        "doc-52": 6,
+        "doc-53": 0,
+        "doc-54": 0,
+        "doc-55": 2503,
+        "doc-56": 0,
+        "doc-57": 0,
+        "doc-58": 0,
+        "doc-59": 0,
+        "doc-60": 0,
+        "doc-61": 0,
+        "doc-62": 0,
+        "doc-63": 0
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "mcmp",
+        "num_agents": 96,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 3,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 3,
+              "python_random_seed": 3
+            }
+          },
+          "python_random_seed": 3
+        },
+        "seed": 3,
+        "steps": 50,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "frontier_documents_added": 0,
+      "frontier_expansions": 0,
+      "independent_run_count": 1,
+      "mcmp_steps": 50,
+      "metrics": {
+        "candidate_count": 5,
+        "mrr": 0.2,
+        "ndcg_at_k": 0.41322699210894576,
+        "novel_candidates": [],
+        "novel_relevant_candidates": [],
+        "recall_at_k": 0.75,
+        "reciprocal_rank": 0.2,
+        "unique_relevant_documents": 3
+      },
+      "nearest_search_calls": 14294,
+      "pheromone_trails": 10,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "doc-06",
+          "doc-30",
+          "doc-32",
+          "doc-52",
+          "doc-55"
+        ],
+        "initial_candidate_ids": [
+          "doc-06",
+          "doc-20",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-52",
+          "doc-55",
+          "doc-62"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "doc-06",
+            "doc-30",
+            "doc-32",
+            "doc-52",
+            "doc-55"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-20",
+            "doc-55",
+            "doc-62",
+            "doc-41"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-55",
+            "doc-20",
+            "doc-62",
+            "doc-41"
+          ]
+        },
+        "ranked_document_ids": [
+          "doc-32",
+          "doc-06",
+          "doc-52",
+          "doc-30",
+          "doc-55",
+          "doc-20",
+          "doc-62",
+          "doc-41"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 363.46139998931903
+      }
+    },
+    "F": {
+      "candidate_comparisons": 614464,
+      "candidate_overlap": {},
+      "document_visits": {
+        "doc-00": 0,
+        "doc-01": 0,
+        "doc-02": 0,
+        "doc-03": 0,
+        "doc-04": 0,
+        "doc-05": 0,
+        "doc-06": 1673,
+        "doc-07": 0,
+        "doc-08": 0,
+        "doc-09": 0,
+        "doc-10": 9,
+        "doc-11": 0,
+        "doc-12": 0,
+        "doc-13": 0,
+        "doc-14": 0,
+        "doc-15": 0,
+        "doc-16": 1,
+        "doc-17": 0,
+        "doc-18": 0,
+        "doc-19": 0,
+        "doc-20": 0,
+        "doc-21": 77,
+        "doc-22": 0,
+        "doc-23": 0,
+        "doc-24": 0,
+        "doc-25": 0,
+        "doc-26": 0,
+        "doc-27": 6,
+        "doc-28": 0,
+        "doc-29": 0,
+        "doc-30": 108,
+        "doc-31": 0,
+        "doc-32": 2799,
+        "doc-33": 0,
+        "doc-34": 0,
+        "doc-35": 0,
+        "doc-36": 0,
+        "doc-37": 0,
+        "doc-38": 0,
+        "doc-39": 0,
+        "doc-40": 0,
+        "doc-41": 0,
+        "doc-42": 0,
+        "doc-43": 1,
+        "doc-44": 0,
+        "doc-45": 22,
+        "doc-46": 0,
+        "doc-47": 0,
+        "doc-48": 0,
+        "doc-49": 0,
+        "doc-50": 0,
+        "doc-51": 0,
+        "doc-52": 7,
+        "doc-53": 0,
+        "doc-54": 0,
+        "doc-55": 97,
+        "doc-56": 0,
+        "doc-57": 0,
+        "doc-58": 0,
+        "doc-59": 0,
+        "doc-60": 0,
+        "doc-61": 0,
+        "doc-62": 0,
+        "doc-63": 0
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "mcmp",
+        "num_agents": 96,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 3,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 3,
+              "python_random_seed": 3
+            }
+          },
+          "python_random_seed": 3
+        },
+        "seed": 3,
+        "steps": 50,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "frontier_documents_added": 0,
+      "frontier_expansions": 0,
+      "independent_run_count": 1,
+      "mcmp_steps": 50,
+      "metrics": {
+        "candidate_count": 11,
+        "mrr": 0.2,
+        "ndcg_at_k": 0.15101961822780524,
+        "novel_candidates": [
+          "doc-10",
+          "doc-16",
+          "doc-21",
+          "doc-27",
+          "doc-43",
+          "doc-45"
+        ],
+        "novel_relevant_candidates": [
+          "doc-43"
+        ],
+        "recall_at_k": 0.25,
+        "reciprocal_rank": 0.2,
+        "unique_relevant_documents": 1
+      },
+      "nearest_search_calls": 9601,
+      "pheromone_trails": 0,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "doc-06",
+          "doc-10",
+          "doc-16",
+          "doc-21",
+          "doc-27",
+          "doc-30",
+          "doc-32",
+          "doc-43",
+          "doc-45",
+          "doc-52",
+          "doc-55"
+        ],
+        "initial_candidate_ids": [
+          "doc-06",
+          "doc-20",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-52",
+          "doc-55",
+          "doc-62"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "doc-06",
+            "doc-10",
+            "doc-16",
+            "doc-21",
+            "doc-27",
+            "doc-30",
+            "doc-32",
+            "doc-43",
+            "doc-45",
+            "doc-52",
+            "doc-55"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-20",
+            "doc-55",
+            "doc-62",
+            "doc-41"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-55",
+            "doc-10",
+            "doc-21",
+            "doc-45"
+          ]
+        },
+        "ranked_document_ids": [
+          "doc-32",
+          "doc-06",
+          "doc-52",
+          "doc-30",
+          "doc-55",
+          "doc-10",
+          "doc-21",
+          "doc-45"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 318.60620000225026
+      }
+    },
+    "G": {
+      "candidate_comparisons": 174824,
+      "candidate_overlap": {},
+      "document_visits": {
+        "doc-00": 0,
+        "doc-01": 0,
+        "doc-02": 0,
+        "doc-03": 0,
+        "doc-04": 0,
+        "doc-05": 0,
+        "doc-06": 339,
+        "doc-07": 0,
+        "doc-08": 0,
+        "doc-09": 0,
+        "doc-10": 0,
+        "doc-11": 0,
+        "doc-12": 0,
+        "doc-13": 0,
+        "doc-14": 0,
+        "doc-15": 0,
+        "doc-16": 0,
+        "doc-17": 0,
+        "doc-18": 0,
+        "doc-19": 0,
+        "doc-20": 0,
+        "doc-21": 0,
+        "doc-22": 0,
+        "doc-23": 0,
+        "doc-24": 0,
+        "doc-25": 0,
+        "doc-26": 0,
+        "doc-27": 0,
+        "doc-28": 0,
+        "doc-29": 0,
+        "doc-30": 2476,
+        "doc-31": 0,
+        "doc-32": 231,
+        "doc-33": 0,
+        "doc-34": 0,
+        "doc-35": 35,
+        "doc-36": 0,
+        "doc-37": 0,
+        "doc-38": 0,
+        "doc-39": 0,
+        "doc-40": 0,
+        "doc-41": 0,
+        "doc-42": 0,
+        "doc-43": 0,
+        "doc-44": 0,
+        "doc-45": 0,
+        "doc-46": 0,
+        "doc-47": 0,
+        "doc-48": 0,
+        "doc-49": 0,
+        "doc-50": 0,
+        "doc-51": 0,
+        "doc-52": 6,
+        "doc-53": 0,
+        "doc-54": 0,
+        "doc-55": 1713,
+        "doc-56": 0,
+        "doc-57": 0,
+        "doc-58": 0,
+        "doc-59": 0,
+        "doc-60": 0,
+        "doc-61": 0,
+        "doc-62": 0,
+        "doc-63": 0
+      },
+      "execution": {
+        "clock_mode": "fixed",
+        "clock_value": 2.0,
+        "execution_backend": "faiss-cpu",
+        "exploration_bonus": 0.1,
+        "faiss_factory": "Flat",
+        "faiss_metric": "inner_product",
+        "force_cpu": true,
+        "initial_k": 8,
+        "mode": "mcmp",
+        "num_agents": 96,
+        "pheromone_decay": 0.95,
+        "random_seed_provenance": {
+          "numpy_random_seed": 3,
+          "per_query": {
+            "q-main": {
+              "numpy_random_seed": 3,
+              "python_random_seed": 3
+            }
+          },
+          "python_random_seed": 3
+        },
+        "seed": 3,
+        "steps": 50,
+        "top_k": 8
+      },
+      "execution_backend": "faiss-cpu",
+      "frontier_documents_added": 9,
+      "frontier_expansions": 4,
+      "independent_run_count": 1,
+      "mcmp_steps": 50,
+      "metrics": {
+        "candidate_count": 6,
+        "mrr": 0.2,
+        "ndcg_at_k": 0.2811463015585058,
+        "novel_candidates": [
+          "doc-35"
+        ],
+        "novel_relevant_candidates": [],
+        "recall_at_k": 0.5,
+        "reciprocal_rank": 0.2,
+        "unique_relevant_documents": 2
+      },
+      "nearest_search_calls": 14293,
+      "pheromone_trails": 13,
+      "query_ids": [
+        "q-main"
+      ],
+      "raw_ids": {
+        "discovered_candidate_ids": [
+          "doc-06",
+          "doc-30",
+          "doc-32",
+          "doc-35",
+          "doc-52",
+          "doc-55"
+        ],
+        "initial_candidate_ids": [
+          "doc-06",
+          "doc-20",
+          "doc-30",
+          "doc-32",
+          "doc-41",
+          "doc-52",
+          "doc-55",
+          "doc-62"
+        ],
+        "per_query_candidate_ids": {
+          "q-main": [
+            "doc-06",
+            "doc-30",
+            "doc-32",
+            "doc-35",
+            "doc-52",
+            "doc-55"
+          ]
+        },
+        "per_query_initial_candidate_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-20",
+            "doc-55",
+            "doc-62",
+            "doc-41"
+          ]
+        },
+        "per_query_ranked_document_ids": {
+          "q-main": [
+            "doc-32",
+            "doc-06",
+            "doc-52",
+            "doc-30",
+            "doc-55",
+            "doc-35",
+            "doc-20",
+            "doc-62"
+          ]
+        },
+        "ranked_document_ids": [
+          "doc-32",
+          "doc-06",
+          "doc-52",
+          "doc-30",
+          "doc-55",
+          "doc-35",
+          "doc-20",
+          "doc-62"
+        ]
+      },
+      "timing": {
+        "elapsed_ms": 375.879300001543
+      }
+    }
+  }
+}

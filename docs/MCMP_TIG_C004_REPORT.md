@@ -25,7 +25,11 @@ Facts and interpretation are kept in separate sections on purpose.
 >   agent budget fixed at 24 and read the resulting limit as a property of the
 >   mechanism. It is not: at 192 agents MCMP traverses the whole manifold in 12 of
 >   12 seeds.
-> - **Section 11 corrects section 10 in turn, and carries the current reading.**
+> - **Section 12 is the current state.** Method G — a bounded frontier that starts
+>   on the FAISS pool and expands toward where the walk goes — matches method C's
+>   recall at 16% of the comparisons and discovers more of the chain, while holding
+>   about a fifth of the corpus. That is the scaling answer section 11.3 asked for.
+> - **Section 11 corrects section 10 in turn.**
 >   Section 10 read `steps` as inert and concluded the agents work as parallel
 >   random restarts rather than as a colony. Method F — the same walk with the
 >   pheromone switched off — refutes that: F reaches exactly one chain document at
@@ -738,3 +742,104 @@ GPU. The renormalised variant — rescaling the remaining force weights so F
 matches C's total force magnitude — was not run; F therefore differs from C in
 two ways, no trail guidance and a slightly smaller total force, and the manifold
 difference cannot be attributed to guidance alone without it.
+
+---
+
+## 12. Method G: a bounded frontier, and the scaling answer
+
+Section 11.3 named the open design problem: MCMP walks the entire corpus, method E
+shows a pool-confined colony finds nothing on a chain, and a large-corpus design
+therefore needs a working set that is **bounded but not pool-confined**. Method G
+is that, and it is measured here.
+
+**Method G** starts on the FAISS top-`initial_k` pool. Every `expand_every` steps
+the most-visited not-yet-expanded document contributes its `expand_k` nearest
+neighbours from the full corpus, capped at `frontier_cap`. It needs no production
+change: `add_documents` appends and rebuilds the index without resetting agents,
+trails or visit counts, so the colony survives each expansion.
+
+**Declared design, fixed before execution:** fixtures `manifold` and `neutral`,
+seeds 1-12, 96 agents, 50 steps, `top_k = initial_k = 8`, `expand_every 10`,
+`expand_k 4`, `frontier_cap 24` of a 64-document corpus. Evidence:
+`benchmarks/results/method-g/`.
+
+**A prerequisite had to be fixed first.** `candidate_comparisons` was calls
+multiplied by the *final* corpus size, which is correct only while the working set
+is constant. It overstated method E — a limitation carried since the Gate 1 review
+— and would have made G's entire point unmeasurable. Comparisons now accumulate
+against the corpus present at each call.
+
+### 12.1 Facts
+
+Means over 12 seeds:
+
+| fixture | method | recall@8 | nDCG@8 | comparisons | vs C |
+|---|---|---|---|---|---|
+| manifold | A | 0.000 | 0.000 | 64 | 0% |
+| manifold | C | 0.722 | 0.345 | 915 456 | 100% |
+| manifold | E | 0.000 | 0.000 | 114 488 | 13% |
+| manifold | **G** | **0.722** | 0.337 | **143 224** | **16%** |
+| neutral | A | **0.438** | 0.341 | 64 | 0% |
+| neutral | C | 0.375 | 0.305 | 914 923 | 100% |
+| neutral | E | 0.438 | 0.339 | 114 442 | 13% |
+| neutral | G | 0.375 | 0.305 | 178 458 | 20% |
+
+Relevant chain documents discovered, manifold: A 0.00/3, E 0.00/3, C 2.67/3,
+**G 3.00/3**. Paired per seed on recall, C against G: 3 / 2 / 7 tied.
+
+G added 4.0 documents on average to its 8-document pool — a working set of about
+12 of 64 documents.
+
+`frontier_cap` sweep (12, 16, 24, 40): **identical results and identical
+comparison counts at every value.** The cap was never binding, because only 4
+documents were ever added. It is inert at this configuration, which is not the
+same as irrelevant.
+
+`expand_every` sweep, the parameter that does bind:
+
+| `expand_every` | rounds | recall@8 | discovered | comparisons | vs C |
+|---|---|---|---|---|---|
+| 5 | 9 | 0.694 | 2.83 / 3 | 156 304 | 17% |
+| 10 | 4 | **0.722** | **3.00 / 3** | 143 224 | 16% |
+| 25 | 1 | **0.000** | 0.00 / 3 | 121 624 | 13% |
+
+### 12.2 Interpretation
+
+1. **G is the scaling answer for this structure.** It matches C's recall exactly
+   at 16% of the comparisons, and discovers *more* of the chain — 3.00 of 3
+   against C's 2.67 — while holding about a fifth of the corpus. E, confined to
+   the same starting pool, finds nothing at all. The difference between E and G
+   is one mechanism: the ability to leave the starting neighbourhood.
+
+2. **The optimum in `expand_every` is explained, not tuned.** A single expansion
+   round gives 0.000, exactly matching E: with no walking between expansions the
+   colony has laid no trails, so there is nothing to tell it where to expand.
+   Nine rounds is slightly worse than four, because each round then expands from
+   a less settled trail. Expansion has to be interleaved with enough walking for
+   the pheromone to identify the frontier — which is the same mechanism section 11
+   established, seen from a different angle.
+
+3. **On the neutral control G behaves exactly like C**, and both are worse than
+   plain FAISS. G does not rescue MCMP where there is no structure; it makes the
+   structured case affordable. That is the correct division and it is what the
+   control is for.
+
+4. **`frontier_cap` was inert here and must not be reported as unimportant.**
+   It never bound, because expansion added only 4 documents. On a corpus where
+   the walk ranges further it would bind, and it is untested in that regime.
+
+5. **The cost saving is measured at 64 documents; its growth with corpus size is
+   an extrapolation.** G's per-call cost is bounded by its working set, C's scales
+   with the corpus, so the ratio should widen roughly linearly — at 103 000
+   chunks C scans 103 000 per call where G scans a few dozen. That follows from
+   the cost model, and it is *not* measured. A corpus-size sweep is the obvious
+   next measurement and this report does not anticipate its result.
+
+### 12.3 Non-claims
+
+No production MCMP behaviour was changed; G is a benchmark-side orchestration over
+existing public methods. Frontier expansions are reported as their own counters
+and never folded into `candidate_comparisons`, because in production they are ANN
+index queries whose cost is not comparable to the walk's linear scans; any
+end-to-end cost claim needs that index's cost model, which this report does not
+have. No Gate 2 run, no TIG C004, no live service of any kind.
