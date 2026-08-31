@@ -17,7 +17,7 @@ from benchmarks.mcmp.run_gate1 import (
 def test_gate1_runner_orchestrates_fixed_ablation_and_round_trips_evidence(tmp_path) -> None:
     payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=24, steps=10)
 
-    assert list(payload["runs"]) == ["A", "B", "C", "D", "E"]
+    assert list(payload["runs"]) == ["A", "B", "C", "D", "E", "F"]
     assert payload["config"] == {
         "seed": 7,
         "top_k": 4,
@@ -167,9 +167,15 @@ def test_writer_persists_full_schema_with_sorted_format_and_final_newline(tmp_pa
     assert text.endswith("\n")
     assert text.startswith('{\n  "comparisons"')
     assert reloaded == payload
-    assert list(reloaded["runs"]) == ["A", "B", "C", "D", "E"]
+    assert list(reloaded["runs"]) == ["A", "B", "C", "D", "E", "F"]
     assert reloaded["runs"]["D"]["independent_run_count"] == 2
-    assert reloaded["comparisons"].keys() == {"A_vs_C", "B_vs_D", "A_vs_E", "C_vs_E"}
+    assert reloaded["comparisons"].keys() == {
+        "A_vs_C",
+        "B_vs_D",
+        "A_vs_E",
+        "C_vs_E",
+        "C_vs_F",
+    }
     for run in reloaded["runs"].values():
         assert {"raw_ids", "metrics", "timing", "candidate_comparisons", "nearest_search_calls", "document_visits", "pheromone_trails"} <= run.keys()
 
@@ -362,9 +368,51 @@ def test_conclusion_ignores_method_e() -> None:
 
 def test_validator_accepts_a_legacy_four_run_payload() -> None:
     payload = run_gate1(seed=7, top_k=4, initial_k=1, num_agents=4, steps=2)
+    del payload["runs"]["F"]
     del payload["runs"]["E"]
+    del payload["comparisons"]["C_vs_F"]
     del payload["comparisons"]["A_vs_E"]
     del payload["comparisons"]["C_vs_E"]
+    del payload["dataset"]["fixture"]
+
+    validate_gate1_evidence(payload)
+
+
+def test_method_f_runs_the_colony_switched_off() -> None:
+    """F is C without pheromone. Zero trails in the payload is the
+    self-verifying evidence that the control is actually pheromone-free."""
+    payload = run_gate1(seed=7, top_k=4, initial_k=4, num_agents=8, steps=5)
+
+    assert payload["runs"]["F"]["pheromone_trails"] == 0
+    assert payload["runs"]["C"]["pheromone_trails"] > 0
+    # C pays for the pheromone in comparisons; F does not.
+    assert (
+        payload["runs"]["F"]["candidate_comparisons"]
+        < payload["runs"]["C"]["candidate_comparisons"]
+    )
+
+
+def test_c_vs_f_isolates_the_colony() -> None:
+    """The load-bearing comparison: same corpus, same agents, same steps, same
+    seed -- pheromone on versus off."""
+    payload = run_gate1(seed=7, top_k=4, initial_k=4, num_agents=8, steps=5)
+
+    assert "C_vs_F" in payload["comparisons"]
+    assert set(payload["comparisons"]["C_vs_F"]) >= {
+        "ranked_document_ids_equal",
+        "recall_at_k_delta",
+        "mrr_delta",
+        "ndcg_at_k_delta",
+    }
+
+
+def test_validator_accepts_payloads_without_e_and_f() -> None:
+    """Evidence written before E and F existed must keep validating."""
+    payload = run_gate1(seed=7, top_k=4, initial_k=4, num_agents=4, steps=2)
+    for method in ("F", "E"):
+        del payload["runs"][method]
+    for name in ("C_vs_F", "A_vs_E", "C_vs_E"):
+        del payload["comparisons"][name]
     del payload["dataset"]["fixture"]
 
     validate_gate1_evidence(payload)

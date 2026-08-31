@@ -31,6 +31,7 @@ _RUN_SPECS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("C", ("q-main",)),
     ("D", ("q-main", "q-related")),
     ("E", ("q-main",)),
+    ("F", ("q-main",)),
 )
 
 
@@ -60,6 +61,7 @@ def run_gate1(
                 num_agents,
                 steps,
                 pool_only=method == "E",
+                pheromone_free=method == "F",
             )
         runs[method] = _run_payload(
             dataset, run, evidence, seed, top_k, initial_k, num_agents, steps
@@ -182,7 +184,7 @@ def _run_execution_snapshot(
     clock_mode: str = DETERMINISTIC_CLOCK_MODE,
     clock_value: float = DETERMINISTIC_CLOCK_VALUE,
 ) -> dict[str, object]:
-    is_mcmp = method in {"C", "D", "E"}
+    is_mcmp = method in {"C", "D", "E", "F"}
     random_seed_provenance: dict[str, object] = {
         "python_random_seed": seed if is_mcmp else None,
         "numpy_random_seed": seed if is_mcmp else None,
@@ -243,6 +245,10 @@ def _comparison_payload(runs: dict[str, dict[str, object]]) -> dict[str, dict[st
     if "E" in runs:
         comparisons["A_vs_E"] = _compare_runs(runs["A"], runs["E"])
         comparisons["C_vs_E"] = _compare_runs(runs["C"], runs["E"])
+    if "F" in runs:
+        # The load-bearing comparison for the colony question: same corpus,
+        # same agents, same steps, same seed -- pheromone on versus off.
+        comparisons["C_vs_F"] = _compare_runs(runs["C"], runs["F"])
     return comparisons
 
 
@@ -332,8 +338,12 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
         raise ValueError("query geometry does not match the dataset")
 
     runs = _mapping(payload["runs"], "runs")
-    if list(runs) not in (["A", "B", "C", "D"], ["A", "B", "C", "D", "E"]):
-        raise ValueError("runs must be ordered A-D, optionally followed by E")
+    if list(runs) not in (
+        ["A", "B", "C", "D"],
+        ["A", "B", "C", "D", "E"],
+        ["A", "B", "C", "D", "E", "F"],
+    ):
+        raise ValueError("runs must be ordered A-D, optionally followed by E and F")
     present = set(runs)
     for method, query_ids in _RUN_SPECS:
         if method not in present:
@@ -351,11 +361,11 @@ def validate_gate1_evidence(payload: Mapping[str, object]) -> None:
         )
 
     comparisons = _mapping(payload["comparisons"], "comparisons")
-    expected_pairs = (
-        (("A_vs_C", "A", "C"), ("B_vs_D", "B", "D"), ("A_vs_E", "A", "E"), ("C_vs_E", "C", "E"))
-        if "E" in present
-        else (("A_vs_C", "A", "C"), ("B_vs_D", "B", "D"))
-    )
+    expected_pairs = (("A_vs_C", "A", "C"), ("B_vs_D", "B", "D"))
+    if "E" in present:
+        expected_pairs += (("A_vs_E", "A", "E"), ("C_vs_E", "C", "E"))
+    if "F" in present:
+        expected_pairs += (("C_vs_F", "C", "F"),)
     if list(comparisons) != [name for name, _left, _right in expected_pairs]:
         raise ValueError("comparisons must match the runs present")
     for name, left, right in expected_pairs:
@@ -471,7 +481,7 @@ def _validate_run_evidence(
     visits = _mapping(run["document_visits"], f"runs.{method}.document_visits")
     if method in {"A", "B"} and visits:
         raise ValueError(f"runs.{method} must not report MCMP visits")
-    if method in {"C", "D", "E"} and set(visits) != documents:
+    if method in {"C", "D", "E", "F"} and set(visits) != documents:
         raise ValueError(f"runs.{method} must report every document visit count")
     visit_counts = {
         document_id: _positive_int(value, "document visit", allow_zero=True)

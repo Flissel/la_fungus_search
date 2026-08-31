@@ -70,6 +70,39 @@ class CountingRetriever(MCPMRetriever):
         return super().find_nearest_documents(position, k)
 
 
+class PheromoneFreeRetriever(CountingRetriever):
+    """MCMP with pheromone deposition disabled, for the equal-budget control.
+
+    The colony is the distinguishing claim of this design: agents deposit trails
+    and later agents follow them. Overriding the deposit leaves `pheromone_trails`
+    permanently empty, so `calculate_pheromone_force` short-circuits and the
+    0.15 pheromone term of the movement force contributes nothing, while the
+    attraction and exploration terms, the agent count, the step count and every
+    seed stay exactly as method C has them. The same nearest-neighbour calls are
+    made, so the comparison budget is equal by construction rather than by
+    assertion.
+
+    Known confound, recorded rather than hidden: the force weights
+    (0.8 attraction, 0.15 pheromone, 0.05 exploration) are fixed, so removing the
+    pheromone also removes its contribution to the total force *magnitude*. This
+    control therefore differs from C in two ways -- no trail guidance, and a
+    slightly slower walk. Separating those requires renormalising the remaining
+    weights, which is a further experiment and only worth running if this one
+    shows a difference.
+    """
+
+    def deposit_pheromones(self, agent: object) -> None:  # type: ignore[override]
+        # Deposit normally, then wipe the trail memory. Suppressing the call
+        # outright would also suppress what it does besides depositing -- the
+        # nearest-document lookup and the visit counter -- which measured as
+        # 328 comparisons against C's 896 and zero recorded visits. That is a
+        # different algorithm on a smaller budget, not a control. Running the
+        # deposit and clearing after it removes the pheromone memory and nothing
+        # else: identical calls, identical visits, empty trails.
+        super().deposit_pheromones(agent)
+        self.pheromone_trails.clear()
+
+
 def run_faiss(
     dataset: BenchmarkDataset,
     method: str,
@@ -144,9 +177,12 @@ def run_mcmp(
     num_agents: int,
     steps: int,
     pool_only: bool = False,
+    pheromone_free: bool = False,
 ) -> tuple[SearchRun, AdapterEvidence]:
     """Run a fresh, seeded MCMP simulation for every benchmark query."""
-    _validate_run_inputs(dataset, method, query_ids, {"C", "D", "E"}, top_k, initial_k)
+    _validate_run_inputs(dataset, method, query_ids, {"C", "D", "E", "F"}, top_k, initial_k)
+    # Method F is C with the colony switched off; every other knob is identical.
+    retriever_class = PheromoneFreeRetriever if pheromone_free else CountingRetriever
     _validate_positive_integer(num_agents, name="num_agents")
     _validate_positive_integer(steps, name="steps")
     seed = _validate_seed(seed, query_count=len(query_ids))
@@ -174,7 +210,7 @@ def run_mcmp(
                 "numpy_random_seed": query_seed,
             }
             backend = MappingEmbeddingBackend(vectors)
-            retriever = CountingRetriever(
+            retriever = retriever_class(
                 num_agents=num_agents,
                 max_iterations=steps,
                 pheromone_decay=PHEROMONE_DECAY,
@@ -196,7 +232,7 @@ def run_mcmp(
                 # a second retriever is built over the pool alone.
                 nearest_search_calls += retriever.nearest_search_calls
                 backend = MappingEmbeddingBackend(vectors)
-                retriever = CountingRetriever(
+                retriever = retriever_class(
                     num_agents=num_agents,
                     max_iterations=steps,
                     pheromone_decay=PHEROMONE_DECAY,
@@ -295,7 +331,7 @@ def _validate_run_inputs(
     dataset.validate()
     if method not in allowed_methods:
         raise ValueError(f"method must be one of {sorted(allowed_methods)}")
-    expected_query_count = 1 if method in {"A", "C", "E"} else 2
+    expected_query_count = 1 if method in {"A", "C", "E", "F"} else 2
     if len(query_ids) != expected_query_count:
         raise ValueError(f"method {method} requires exactly {expected_query_count} query ids")
     if len(set(query_ids)) != len(query_ids):

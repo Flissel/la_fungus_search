@@ -324,3 +324,67 @@ def test_method_e_is_deterministic_for_a_fixed_seed() -> None:
     second, _ = run_mcmp(dataset, "E", ("q-main",), **kwargs)
 
     assert first.ranked_document_ids == second.ranked_document_ids
+
+
+def test_method_f_deposits_no_pheromone_while_c_does() -> None:
+    """F is C with pheromone deposition disabled and nothing else changed.
+
+    The trail count is self-verifying evidence: if F ever reports a non-zero
+    count, the control is not pheromone-free and its comparison against C means
+    nothing.
+    """
+    dataset = build_synthetic_dataset()
+    kwargs = dict(top_k=4, initial_k=4, seed=7, num_agents=8, steps=5)
+
+    with_pheromone, _ = run_mcmp(dataset, "C", ("q-main",), **kwargs)
+    without, _ = run_mcmp(dataset, "F", ("q-main",), **kwargs, pheromone_free=True)
+
+    assert without.pheromone_trails == 0
+    assert with_pheromone.pheromone_trails > 0
+
+
+def test_method_f_costs_less_than_c_because_the_pheromone_costs_comparisons() -> None:
+    """The control runs C's parameters with the colony off -- and is cheaper.
+
+    The design assumed the budgets would be identical by construction. Measured,
+    they are not: the pheromone force computation makes its own
+    nearest-neighbour calls, so C spends 896 comparisons where F spends 648 at
+    the same agent and step count. That ~28% is the colony's own overhead, and
+    it is a finding rather than a defect: if F matches C on results while
+    costing less, the pheromone is not paying for itself.
+
+    What must match is everything the control is supposed to hold fixed --
+    agents, steps, visits, and the documents reached.
+    """
+    dataset = build_synthetic_dataset()
+    kwargs = dict(top_k=4, initial_k=4, seed=7, num_agents=8, steps=5)
+
+    with_pheromone, _ = run_mcmp(dataset, "C", ("q-main",), **kwargs)
+    without, _ = run_mcmp(dataset, "F", ("q-main",), **kwargs, pheromone_free=True)
+
+    assert without.mcmp_steps == with_pheromone.mcmp_steps
+    # The walk budget is held fixed: every agent deposits once per step, so the
+    # total visit count is agents x steps either way.
+    assert sum(without.document_visits.values()) == sum(
+        with_pheromone.document_visits.values()
+    )
+    # But the walk itself changes -- if the distribution were identical the
+    # control would be testing nothing.
+    assert without.document_visits != with_pheromone.document_visits
+    # And it costs less, because the pheromone force computation makes its own
+    # nearest-neighbour calls.
+    assert without.candidate_comparisons < with_pheromone.candidate_comparisons
+
+
+def test_method_f_is_single_query_and_deterministic() -> None:
+    dataset = build_synthetic_dataset()
+    kwargs = dict(
+        top_k=4, initial_k=4, seed=7, num_agents=8, steps=5, pheromone_free=True
+    )
+
+    first, _ = run_mcmp(dataset, "F", ("q-main",), **kwargs)
+    second, _ = run_mcmp(dataset, "F", ("q-main",), **kwargs)
+
+    assert first.ranked_document_ids == second.ranked_document_ids
+    with pytest.raises(ValueError, match="requires exactly 1 query"):
+        run_mcmp(dataset, "F", ("q-main", "q-related"), **kwargs)
