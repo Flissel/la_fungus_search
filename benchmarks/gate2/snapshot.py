@@ -73,11 +73,22 @@ class ServiceEmbeddingClient:
         return self._client.encode(texts)
 
 
-def build_service_snapshot(manifest: Manifest, client: object, batch_size: int = 32) -> Snapshot:
+def build_service_snapshot(
+    manifest: Manifest,
+    client: object,
+    batch_size: int = 32,
+    backend: str = "embedding-service",
+) -> Snapshot:
     """Materialise the production snapshot through an injected embedding client.
 
     The client is injected rather than constructed so this stays testable offline.
     Production passes ``EmbeddingServiceClient()``, which is fail-closed HTTP.
+
+    ``backend`` names where the vectors came from and must be changed whenever the
+    client is not the embedding-service. It is not cosmetic: a snapshot built by a
+    local model and labelled "embedding-service" would claim a provenance it does
+    not have, and the whole point of the fail-closed ``model_id`` read below is
+    that provenance survives an unattended run.
     """
     if len(manifest.documents) == 0:
         raise ValueError("manifest has no documents to embed")
@@ -100,10 +111,12 @@ def build_service_snapshot(manifest: Manifest, client: object, batch_size: int =
         raise ValueError(
             "embedding client exposes no model_id; snapshot provenance would be empty"
         )
+    if not isinstance(backend, str) or not backend:
+        raise ValueError("backend must be a non-empty string")
     return Snapshot(
         document_ids=document_ids,
         vectors=(matrix / norms).astype(np.float32),
-        backend="embedding-service",
+        backend=backend,
         model=model,
         dimension=int(matrix.shape[1]),
         manifest_digest=manifest_digest(manifest),

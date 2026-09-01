@@ -278,12 +278,28 @@ class SnapshotStreamer:
         if not isinstance(results, list):
             return []
         deg_map = self._trail_degree_map()
+        # `MCPMRetriever.search()` returns content/metadata/relevance_score and
+        # nothing else -- no `id`, no `score`. Reading those keys directly made
+        # every lookup below miss: the cosine read 0.0, the id resolved to -1, and
+        # visits, trail degree, the LLM vote and the boost all resolved against a
+        # document that does not exist, leaving `epsilon * len_prior` as the only
+        # surviving term. The blend ranked by document length, and nothing raised,
+        # because the arithmetic was correct on inputs that were all zero.
+        # Resolving by content keeps this right whether or not the caller enriched.
+        id_by_content: dict[str, int] = {}
+        if self.retr is not None:
+            for d in getattr(self.retr, 'documents', []):
+                id_by_content[str(getattr(d, 'content', ''))] = int(getattr(d, 'id', -1))
         blended: list[dict] = []
         for it in results:
             try:
-                doc_id = int(it.get('id', it.get('doc_id', -1)))
-                cosine = float(it.get('score', 0.0))
                 content = str(it.get('content', ''))
+                doc_id = int(it.get('id', it.get('doc_id', id_by_content.get(content, -1))))
+                # `relevance_score` is what search_direct writes the similarity
+                # into. `score`, when an enrichment pass has set it, carries the
+                # simulation's relevance -- which already contains a visit bonus
+                # and would double-count against the beta term below.
+                cosine = float(it.get('relevance_score', it.get('score', 0.0)))
                 visits = 0.0
                 if self.retr is not None:
                     d = self._doc_by_id(doc_id)

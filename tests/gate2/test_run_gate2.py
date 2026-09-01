@@ -204,6 +204,10 @@ def test_main_records_all_four_geometry_parameters(
         "max_hops": 2,
         "hop_threshold": 0.25,
         "stage1_seeds": 4,
+        # Which seeds, not only how many. The split-sample protocol addresses two
+        # disjoint halves by explicit list, so a payload recording a count alone
+        # could not say which half it came from.
+        "seeds": [0, 1, 2, 3],
         "null_permutations": 5,
         "null_seed": 0,
         "exploratory": True,

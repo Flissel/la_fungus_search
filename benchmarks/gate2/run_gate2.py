@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,7 @@ def characterise_pooled(
     null_permutations: int = NULL_PERMUTATIONS,
     null_seed: int = 0,
     exploratory: bool = False,
+    seeds: Sequence[int] | None = None,
 ) -> dict[str, object]:
     """Pool stage 1 across seeds and score the pre-registered gate on the pool.
 
@@ -54,9 +56,20 @@ def characterise_pooled(
     Pooling makes the measurement match the pre-registration; it does not
     change what is measured. ``characterise`` is therefore untouched, and each
     seed keeps its own summary alongside the pooled one.
+
+    ``seeds`` overrides the default ``range(stage1_seeds)``. It exists for the
+    split-sample protocol report section 16 makes binding: the operating point is
+    chosen on one set of query pairs and the gate is scored on a disjoint set, so
+    the two halves must be addressable as explicit seed lists rather than a count.
     """
-    if stage1_seeds < 1:
-        raise ValueError("--stage1-seeds must be at least 1")
+    if seeds is None:
+        if stage1_seeds < 1:
+            raise ValueError("--stage1-seeds must be at least 1")
+        seed_list = list(range(stage1_seeds))
+    else:
+        seed_list = list(seeds)
+        if not seed_list:
+            raise ValueError("seeds must not be empty")
     if null_permutations < 1:
         raise ValueError("--null-permutations must be at least 1")
     if null_permutations < NULL_PERMUTATIONS and not exploratory:
@@ -77,7 +90,7 @@ def characterise_pooled(
     # across all permutations. That is what makes the null affordable.
     measured: list[tuple[int, BenchmarkDataset, GeometryCache]] = []
 
-    for seed in range(stage1_seeds):
+    for seed in seed_list:
         try:
             dataset = build_gate2_dataset(manifest, snapshot, seed)
         except ValueError as error:
@@ -114,7 +127,7 @@ def characterise_pooled(
         # not a run to report a 0.0 signature for. The last seed's own error is
         # chained so the real cause is not swallowed by the summary.
         raise ValueError(
-            f"every stage 1 seed in range(0, {stage1_seeds}) was skipped, so the "
+            f"every stage 1 seed in {seed_list} was skipped, so the "
             "pooled manifold signature has no population to measure; the last "
             f"seed failed with: {last_skip}"
         ) from last_skip
@@ -172,7 +185,8 @@ def characterise_pooled(
             "knn_k": knn_k,
             "max_hops": max_hops,
             "hop_threshold": hop_threshold,
-            "stage1_seeds": stage1_seeds,
+            "stage1_seeds": len(seed_list),
+            "seeds": seed_list,
             "null_permutations": null_permutations,
             "null_seed": null_seed,
             "exploratory": exploratory,
