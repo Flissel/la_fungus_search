@@ -121,9 +121,14 @@ def test_active_embedding_paths_have_no_local_model_fallback_or_provider_bypass(
 
 def test_importing_mcp_before_a_query_does_not_import_local_embedding_stacks(monkeypatch):
     pytest.importorskip("mcp.server.fastmcp")
+    # Removed via monkeypatch so every module comes BACK after the test. A bare
+    # sys.modules.pop left later tests importing fresh copies of embeddinggemma
+    # modules, and an isinstance across two identities of the same class fails --
+    # observed as test_env_corpora_config_builds_multi breaking only in full runs
+    # once `mcp` was installed and this test stopped being skipped.
     for module_name in tuple(sys.modules):
         if module_name == "mcp_server" or module_name.startswith("embeddinggemma"):
-            sys.modules.pop(module_name, None)
+            monkeypatch.delitem(sys.modules, module_name, raising=False)
     monkeypatch.syspath_prepend(str(ROOT))
 
     importlib.import_module("mcp_server")
