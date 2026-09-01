@@ -8,7 +8,7 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read sections 22, 24 and 25 first.** Section 22 reverses the verdict of everything
+> **Read sections 22, 24, 25 and 26 first.** Section 22 reverses the verdict of everything
 > before it and says why; section 24 is the measurement the whole report was built
 > to reach — **stage 2 has run**, and MCMP ties FAISS exactly on ranking while
 > discovering a quarter more relevant documents, at 14 300x the comparisons.
@@ -16,7 +16,13 @@ Facts and interpretation are kept in separate sections on purpose.
 > the two paths that were still open**: the documents FAISS misses sit at median
 > rank 200 of 3 998 and MCMP ranks 0 of 8 of them better, so no reranker can reach
 > them; and the bounded frontier -- the only affordable variant -- discovers exactly
-> what FAISS discovers. Sections 17, 18 and 21 ran Gate 2 stage 1 on a 238-document corpus
+> what FAISS discovers. **Section 26 builds the successor** — the colony moved
+> onto the discrete k-NN graph, with PPR and pheromone-free controls — and
+> falsifies it against pre-registered criteria: reach is solved completely and
+> cheaply, and reach identifies nothing, because the reachable ball holds
+> hundreds of documents and the gate's 3.5x likelihood ratio cannot pick one.
+> At equal candidate budget, similarity's top-N beats the walk's visited set
+> at every N measured. Sections 17, 18 and 21 ran Gate 2 stage 1 on a 238-document corpus
 > and the gate closed, at one point on an exact tie. Section 22 runs the same
 > protocol on two independent 4 000-document samples of a second repository and
 > **the gate opens on both, on every condition, by a factor of two.** The confound
@@ -2202,3 +2208,113 @@ against 0.50/0.62 there) because the seed sets differ — the gap is the same si
 in both. Method G's frontier ran at its defaults; section 19 measured that opening
 it five-fold adds documents and no relevant ones, on a different corpus. The
 production 3072-dimensional embedding space remains unmeasured.
+
+---
+
+## 26. MCMP-D: the successor candidate, built, controlled, and falsified
+
+Sections 17-25 left one live contradiction: stage 1 proves far relevant documents
+are reachable in the mutual k-NN graph (0.44-0.62 against a null of 0.03-0.14,
+§22), and the continuous walk cannot traverse it — 80% of its force law anchors
+agents to the query's basin (§25). The natural successor is a colony that walks
+the graph the gate actually measures. It was specified
+(`docs/superpowers/specs/2026-09-01-mcmp-d-design.md`), built with its controls,
+and measured against pre-registered success criteria, all on the §22 corpus.
+Reproduce with `benchmarks/probes/mcmp_d.py`.
+
+**Design in one line:** agents occupy nodes of the mutual k-NN graph (`knn_k = 8`,
+the operating point every real-data selection chose), hop with probability
+`weight x (1 + pheromone)^beta`, restart to the FAISS pool with `alpha = 0.15`,
+rank by visit distribution — the signal §14 proved carries MCMP's ranking.
+Controls from day one: exact personalized PageRank (`ppr`) and the pheromone-free
+walk (`walk`), because the design visibly converges toward PPR and had to prove it
+is more.
+
+### 26.1 Facts
+
+brain sample 0, 24 seeds, 192 agents x 200 steps (32 577 hops per query — 4.5x
+cheaper than method G, 1 750x cheaper than C):
+
+| variant | recall@8 | far-doc median rank | reached, of BFS ceiling |
+|---|---|---|---|
+| FAISS | 0.410 | 66 | — |
+| ppr | 0.410 | 435 | **9 / 9** |
+| walk | 0.410 | 498 | **9 / 9** |
+| colony | 0.410 | 622 | 8 / 9 |
+| rank within visited set by similarity | 0.410 | 114 | — |
+
+Reachable far documents, FAISS rank → rank when only the visited set competes:
+`9→9, 10→10, 12→12, 12→12, 22→18, 55→44, 58→57, 159→144, 205→190`.
+
+**The equal-budget candidate-generator test**, at two operating points:
+
+| walk support size | relevant in walk support | relevant in FAISS top-\|support\| |
+|---|---|---|
+| 320 of 3 998 | 0.83 of 1.25 | **1.08** of 1.25 |
+| 1 549 of 3 998 | 1.04 of 1.25 | **1.21** of 1.25 |
+
+### 26.2 Verdict against the pre-registered criteria
+
+1. **Reach — passed, decisively.** The discrete walk reaches the entire BFS
+   ceiling (9/9) where the continuous walk reached none of it, at a fraction of
+   every previous budget. The §25 diagnosis was correct: the failure was the
+   continuous dynamics, not the graph.
+2. **Promotion — failed.** Median far-document rank 435-622 against FAISS's 66;
+   the best scoring variant reaches 114. Stationary mass decays geometrically with
+   hop distance, so a four-hop document can never out-mass the start pool, and no
+   tested transform of the walk's state removes that without destroying the rest.
+3. **Ranking — a tie**, again, in every variant.
+4. **Cost — passed.**
+5. **The pheromone — worse than its own controls.** `colony` reaches 8/9 where
+   `walk` and `ppr` reach 9/9, with a worse median rank. By the spec's own rule
+   the answer is PPR — and PPR itself adds nothing over FAISS.
+
+### 26.3 Why the gate opens and retrieval still ties: the likelihood-ratio bridge
+
+The equal-budget test is the instrument that finally connects the two results
+that looked contradictory.
+
+Stage 1's gate certifies `P(reachable | relevant, far) ≈ 0.5` against
+`P(reachable | random, far) ≈ 0.14` — a likelihood ratio of roughly 3.5. That is
+a real population-level property, replicated twice (§22). But the reachable set —
+the ball the walk can visit — measures 320 to 1 549 documents, and inside it, one
+to two are relevant. A 3.5x likelihood ratio on a base rate that small moves the
+posterior from about 0.0005 to about 0.0017 per document. Promotion from rank 200
+into the top 8 needs a discrimination factor in the hundreds. **Reachability is
+evidence about the corpus, not about any document.** The gate answered the
+question it was designed to answer — is there structure worth spending compute on
+— and the compute was spent, and this is what it bought: the structure exists at a
+strength that identifies nothing.
+
+And the equal-budget rows say the harder half out loud: at every support size, the
+visited set holds *fewer* relevant documents than similarity's top-that-many. The
+graph ball around the FAISS pool is a noisier copy of the similarity ranking, not
+an alternative source of candidates.
+
+### 26.4 What stands at the end of the line
+
+- **The mechanism does one thing well on real code**: cheap certified reach over
+  the k-NN graph — 9/9 of the BFS ceiling at 1/4 of G's budget. Nothing measured
+  turns that reach into retrieval, because reach is shared by hundreds of
+  documents and relevance is not.
+- **Every ranking path is now measured shut**: continuous MCMP (§24-25), the
+  visit-term family (§15, §23), discrete mass, mass-over-diffusion, and
+  support-filtered similarity (§26). All tie FAISS or lose to it.
+- **The candidate-generator framing is measured shut at equal budget**, which is
+  the fair form of the question sections 19 and 25 approached obliquely.
+- **What was never in question still stands**: the colony traverses planted
+  chains (§11); call-graph structure is statistically present in real embedding
+  geometry (§22); the serving-path bug fix (§ commit ce4743b) is real engineering
+  independent of any of this.
+
+### 26.5 Non-claims
+
+One corpus sample, one embedding space, 24 seeds, 18 far relevant documents of
+which 9 reachable — small numbers throughout, reported not hidden. Parameters
+`alpha`, `beta`, deposit and decay were fixed at sensible defaults and not swept;
+a sweep could shift the promotion numbers and has no visible route past the
+equal-budget deficit, which is parameter-free. The hybrid graph (k-NN ∪ call
+edges, evaluated against the sibling oracle) from the spec was not built: it
+answers a different question than the one that closed here, and it should only be
+attempted with the equal-budget test as its primary metric from the start. The
+production 3072-dimensional space remains unmeasured.
