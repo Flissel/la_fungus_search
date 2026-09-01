@@ -8,8 +8,11 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read section 22 first — it reverses the verdict of everything before it and
-> says why.** Sections 17, 18 and 21 ran Gate 2 stage 1 on a 238-document corpus
+> **Read sections 22 and 24 first.** Section 22 reverses the verdict of everything
+> before it and says why; section 24 is the measurement the whole report was built
+> to reach — **stage 2 has run**, and MCMP ties FAISS exactly on ranking while
+> discovering a quarter more relevant documents, at 14 300x the comparisons.
+> Discovery is real; not one extra discovery enters the top 8. Sections 17, 18 and 21 ran Gate 2 stage 1 on a 238-document corpus
 > and the gate closed, at one point on an exact tie. Section 22 runs the same
 > protocol on two independent 4 000-document samples of a second repository and
 > **the gate opens on both, on every condition, by a factor of two.** The confound
@@ -2032,3 +2035,74 @@ identical comparison counts do establish is that the two visit terms drove the
 same walk. Methods B and D (multi-query) were not run. The pre-registered stage 2
 remains unrun, and running it is still the right next step: this probe says what
 to expect, not what the record shows.
+
+---
+
+## 24. Stage 2, run: discovery is real, ranking is a tie, cost is four orders of magnitude
+
+The question this report was built to reach. Gate 2 stage 1 opened in section 22;
+this runs stage 2 on the same evaluation half, at the operating point the gate
+opened at (`knn_k = 8`, `max_hops = 6`), on the brain sample 0 corpus.
+
+**Scope, stated because it is smaller than intended:** 8 of the 24 evaluation
+seeds, 96 agents, 50 steps. Full-corpus MCMP costs 57 million comparisons per
+query and the multi-query variant twice that; 24 seeds did not finish inside the
+available window. The seeds used are the first 8 of the evaluation half in order,
+chosen before the results were seen, not selected after.
+
+### 24.1 Facts
+
+| method | recall@8 | nDCG@8 | relevant discovered | relevant ranked | comparisons |
+|---|---|---|---|---|---|
+| A — FAISS, single query | **0.500** | **0.248** | 0.50 | 0.50 | 3 998 |
+| B — FAISS, multi-query | 0.271 | 0.183 | 1.12 | 0.62 | 7 996 |
+| C — MCMP, full corpus | **0.500** | **0.248** | **0.62** | 0.50 | 57 173 899 |
+| D — MCMP, multi-query | 0.302 | 0.201 | **1.50** | 0.75 | 114 349 297 |
+| E — MCMP on the FAISS pool | **0.500** | **0.248** | 0.50 | 0.50 | 118 395 |
+
+### 24.2 Interpretation
+
+1. **MCMP ties FAISS exactly, at 14 300x the cost.** Method C matches A to three
+   decimals on both recall and nDCG, having spent 57.2 million comparisons against
+   3 998. Method E, which reranks only the FAISS pool, ties as well. Three
+   different amounts of work, one ranking.
+
+2. **Discovery is genuinely better, and it is the only thing that is.** C
+   discovers 0.62 relevant documents against A's 0.50 — a quarter more — and D
+   discovers 1.50 against B's 1.12. The walk reaches material similarity does not.
+   Then `relevant ranked` stays at 0.50 for both A and C: **not one of the extra
+   discoveries enters the top 8.** The discovery/ranking split that sections 10 to
+   15 established on synthetic fixtures is confirmed here on real code, in the
+   pre-registered measurement.
+
+3. **This sharpens section 19 rather than contradicting it.** There the walk found
+   *zero* novel relevant documents, on a 238-document corpus. Here it finds 0.12
+   more per query on a 4 000-document one. Both are consistent with section 22's
+   corpus-size finding: the small corpus was too dense for anything to be novel.
+   The extra material is real and it is thin.
+
+4. **An open tension, stated rather than resolved.** Section 23 measured that no
+   visit-term change moves recall on this corpus — yet this section shows there
+   *is* extra discovered material for a better ranker to promote. Either those
+   documents are visited too rarely to be promoted by any monotone visit term, or
+   the promotion happens below rank 8. Which of those it is has not been measured,
+   and it is the one place where sections 14-15's work could still matter on real
+   data.
+
+5. **Multi-query is worse, not better.** B and D discover more than A and C and
+   score materially lower — 0.271 and 0.302 against 0.500. Whatever the fusion
+   across two queries does, it costs more relevant documents in the top 8 than the
+   extra discovery returns. This was visible in section 2 on the legacy fixture and
+   it survives to real code.
+
+### 24.3 Non-claims
+
+Eight evaluation seeds is a third of the half the gate opened on, and the recall
+figures move with the seed subset: section 23 measured 0.375 on a different
+12-seed sample of the same corpus where this measures 0.500. Relevance averages
+one to two documents per query, so recall@8 is quantised coarsely. One corpus
+sample, one embedding space, one model, 96 agents, one step count; the design's
+agent sweep `{24, 48, 96, 192, 384}` was not run. Method G is absent from
+`_RUN_SPECS` and therefore from this table — section 23 measured it separately and
+found it ties as well, at 37x rather than 14 300x. Neither model is the production
+3072-dimensional one.
