@@ -8,7 +8,7 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read section 14 first — it carries the current state. Section 9 carries the
+> **Read section 15 first — it carries the current state. Section 9 carries the
 > standing Gate 2 decision.**
 >
 > This document was written in rounds and is kept whole rather than rewritten,
@@ -26,7 +26,16 @@ Facts and interpretation are kept in separate sections on purpose.
 >   agent budget fixed at 24 and read the resulting limit as a property of the
 >   mechanism. It is not: at 192 agents MCMP traverses the whole manifold in 12 of
 >   12 seeds.
-> - **Section 14 is the current state.** It opens the relevance function, which
+> - **Section 15 is the current state, and it corrects section 14 twice.** Section
+>   14 compared four shapes of the visit term at one weight; the weight turns out to
+>   be the dominant variable. On the corpus where the shipped ceiling returns
+>   nothing, a swept term reaches recall 1.000, and the collapse under agent count is
+>   inverted rather than mitigated. Separately: the visit term's damage was in the
+>   *steering*, not the ranking — `relevance_score` both ranks the result and feeds
+>   the attraction force, and splitting those two jobs is a structural fix that costs
+>   no parameter. Section 15 also introduces the neutral control into this line of
+>   work, which is what separates candidates that manifold alone cannot.
+> - **Section 14.** It opens the relevance function, which
 >   sections 10, 11 and 13 all pointed at without examining. Removing the visit
 >   term drops recall to 0.000 in every configuration measured — it is the entire
 >   ranking signal — and it saturates at five visits, which is a mechanism for both
@@ -1094,3 +1103,185 @@ right. The combination of repaired pheromone code with a non-saturating visit te
 was not run. No production code was changed on the strength of any of this, and
 nothing here says real code retrieval behaves this way — that remains Gate 2's
 question, and Gate 2 remains unrun.
+
+---
+
+## 15. The visit term, swept: weight beats shape, and the damage was in the steering
+
+Section 14 identified the visit term as MCMP's whole ranking signal and its
+five-visit ceiling as the mechanism behind both collapses. It then compared four
+*shapes* of the term at a single weight. **That weight, 0.5, was held fixed in
+every measurement in section 14, and it was the dominant variable.** Two of
+section 14's conclusions do not survive being swept, and are corrected in 15.5.
+
+**Declared design, fixed before execution:** fixtures `manifold` (256 and 1024
+documents) and `neutral`, seeds 1-6, `agents in {96, 192, 384}`, `steps 50`,
+`top_k = initial_k = 8`, methods C and G, shapes
+`{capped, uncapped, log, rank, visited_rank, normalised}`,
+`alpha in {0.1, 0.25, 0.5, 1.0, 2.0, 4.0}`, coupled and decoupled. All results
+reported. Reproduce with `benchmarks/probes/visit_term.py`, experiments `alpha`,
+`confirm`, `decouple`, `final`.
+
+`neutral` is run as a control throughout: its relevant documents are drawn from
+the FAISS top-16, so similarity is the correct signal there and a visit term that
+overrides similarity must *hurt*. Resolution on neutral is 1/24 = 0.042 (four
+relevant documents, six seeds); on manifold it is 1/18 = 0.056.
+
+### 15.1 Facts: sweeping the weight
+
+manifold, 1024 documents, 192 agents, coupled:
+
+| shape | 0.1 | 0.25 | 0.5 | 1.0 | 2.0 | 4.0 |
+|---|---|---|---|---|---|---|
+| C capped | 0.000 | | | | | |
+| C uncapped | 0.000 | | | | | |
+| C log | 0.000 | 0.000 | 0.333 | 0.500 | 0.444 | 0.389 |
+| C rank | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| C visited_rank | 0.000 | 0.000 | 0.000 | 0.278 | 0.333 | 0.333 |
+| C normalised | 0.000 | 0.000 | 0.333 | 0.778 | **1.000** | 0.500 |
+| G capped | 0.333 | | | | | |
+| G log | 0.000 | 0.222 | 0.389 | 0.667 | **1.000** | **1.000** |
+| G rank | 0.000 | 0.167 | 0.389 | **1.000** | 0.667 | **1.000** |
+| G normalised | 0.000 | 0.222 | 0.556 | 0.778 | **1.000** | 0.833 |
+
+The neutral control at the same setting separates the shapes, which manifold does
+not:
+
+| shape | 0.1 | 0.25 | 0.5 | 1.0 | 2.0 | 4.0 |
+|---|---|---|---|---|---|---|
+| C capped | 0.458 | | | | | |
+| C log | 0.542 | 0.458 | 0.458 | 0.417 | 0.375 | 0.375 |
+| C rank | 0.542 | 0.542 | 0.458 | 0.417 | 0.417 | 0.375 |
+| C visited_rank | 0.500 | 0.458 | 0.417 | 0.375 | 0.333 | 0.333 |
+| C normalised | 0.542 | 0.542 | 0.542 | 0.542 | 0.500 | 0.542 |
+
+### 15.2 Facts: across the agent budget
+
+manifold 1024, coupled, against the shipped ceiling:
+
+| method | agents | capped | normalised a=1 | normalised a=2 |
+|---|---|---|---|---|
+| C | 96 | 0.056 | 0.389 | 0.167 |
+| C | 192 | 0.000 | 0.778 | **1.000** |
+| C | 384 | 0.000 | 0.667 | **1.000** |
+| G | 96 | **0.667** | 0.556 | 0.111 |
+| G | 192 | 0.333 | 0.778 | **1.000** |
+| G | 384 | 0.333 | 0.667 | **1.000** |
+
+### 15.3 Facts: separating steering from ranking
+
+`relevance_score` is read twice: by the attraction force through its `(1 + r)`
+weight, and by the harness as the final ranking. Decoupled runs steer with the
+shipped term for every step but the last, and apply the replacement only to the
+final scoring. manifold, 192 agents:
+
+| corpus | method | shape | coupled | decoupled |
+|---|---|---|---|---|
+| 256 | C | uncapped | 0.667 | **1.000** |
+| 256 | G | uncapped | 0.000 | **1.000** |
+| 1024 | C | uncapped | 0.000 | 0.722 |
+| 1024 | G | uncapped | 0.000 | **1.000** |
+
+`uncapped` decoupled beats the shipped ceiling in all twelve manifold cells,
+including the sparse regime where every coupled candidate fails (G at 96 agents,
+1024 documents: 1.000 against 0.667). On the control it does systematic damage
+that grows with the agent count:
+
+| method | agents | capped | uncapped decoupled |
+|---|---|---|---|
+| C | 96 | 0.417 | 0.375 |
+| C | 192 | 0.458 | 0.333 |
+| C | 384 | 0.542 | **0.292** |
+
+### 15.4 Facts: the candidate that has both properties
+
+`normalised` at alpha = 2.0, decoupled, against the shipped ceiling:
+
+| fixture | method | agents | capped | normalised a=2 decoupled |
+|---|---|---|---|---|
+| manifold 256 | C | 96 | **0.389** | 0.167 |
+| manifold 256 | C | 192 | 0.278 | **0.778** |
+| manifold 256 | C | 384 | 0.000 | **1.000** |
+| manifold 256 | G | 96 | 0.722 | 0.722 |
+| manifold 256 | G | 192 | 0.500 | **1.000** |
+| manifold 256 | G | 384 | 0.389 | **0.944** |
+| manifold 1024 | C | 96 | 0.056 | **0.278** |
+| manifold 1024 | C | 192 | 0.000 | **0.556** |
+| manifold 1024 | C | 384 | 0.000 | **1.000** |
+| manifold 1024 | G | 96 | 0.667 | **0.722** |
+| manifold 1024 | G | 192 | 0.333 | **1.000** |
+| manifold 1024 | G | 384 | 0.333 | **1.000** |
+| neutral | C | 96 | 0.417 | **0.458** |
+| neutral | C | 192 | 0.458 | **0.542** |
+| neutral | C | 384 | 0.542 | 0.542 |
+| neutral | G | 96 | 0.458 | **0.500** |
+| neutral | G | 192 | 0.500 | **0.542** |
+| neutral | G | 384 | **0.583** | 0.500 |
+
+Ten of twelve manifold cells improve, one ties, one is worse. Four of six control
+cells improve, one ties, one is worse by two documents.
+
+### 15.5 Corrections to section 14
+
+1. **"Log compression is the only shape that never fails" was an artifact of
+   alpha = 0.5.** At alpha >= 1 several shapes reach 1.000 on the corpus where the
+   shipped ceiling returns nothing, and `log` is not the best of them. Section 14.4
+   point 4 is withdrawn.
+
+2. **"The correct shape depends on the size of the set being scored" was the wrong
+   axis.** Section 14.4 point 3 read the C/G split as a working-set effect. The
+   sweep shows the split is mostly a weight effect: at alpha = 2 the same shape wins
+   in both. What genuinely differs by shape is behaviour on the *control*, which
+   section 14 did not measure at all.
+
+3. This is the sixth conclusion in this report drawn from a parameter held fixed
+   outside the regime it was generalised over, and the third that was mine.
+
+### 15.6 Interpretation
+
+1. **The damage was in the steering, not the ranking.** `uncapped` was dismissed in
+   section 14 as swamping similarity. It does not: applied to the ranking alone it
+   is the strongest signal measured, 1.000 in three of four cells. Coupled, it
+   destroys the walk, because feeding an aggressive visit term back through
+   `(1 + r)` is positive feedback that collapses the colony onto what it has
+   already visited. The two jobs `relevance_score` does are in conflict, and
+   separating them is a structural fix that costs no parameter.
+
+2. **Two properties are needed, and no single tested candidate has both cleanly.**
+   Decoupling makes a strong ranking signal usable. Boundedness protects the
+   control — an unbounded term ranks by traffic alone, which is wrong wherever
+   similarity is right. `uncapped` decoupled has the first and not the second;
+   coupled `normalised` has the second and not the first. `normalised` at
+   alpha = 2 decoupled has both, and is the recommendation this evidence supports.
+
+3. **Its limitation is the sparse regime.** The one manifold cell where it loses is
+   C at 96 agents on 256 documents. With few agents the visit distribution is noisy,
+   and weighting noise at twice the similarity is worse than the ceiling. A weight
+   that scales with walk density is the obvious next step and is untested.
+
+4. **The agent-count collapse is inverted, not merely mitigated.** The shipped term
+   goes 0.389 to 0.278 to 0.000 as agents grow. `normalised` at alpha = 2 goes 0.333
+   to 0.889 to 1.000. More agents now help. Section 10's collapse and section 13's
+   collapse were the same ceiling reached two ways, and lifting the ceiling
+   addresses both.
+
+5. **`rank` failed for method C in every cell of every run — 18 of 18 — and it was
+   predicted.** A spread diagnostic run before the sweep showed the empirical CDF
+   collapses when almost nothing is visited: with 990 of 1000 documents unvisited,
+   all visited documents share the top percentile and score within 0.005 of each
+   other. The prediction held exactly. `visited_rank` was then derived to fix that,
+   and it is the worst shape on the control (0.250 at alpha = 4, 384 agents) — the
+   derivation optimised for maximum spread, which is not the objective.
+
+### 15.7 Non-claims
+
+Synthetic fixtures. Six seeds, one query; resolution 0.056 on manifold and 0.042
+on neutral, so single-cell differences of that size are one or two documents.
+`steps` held at 50 throughout, frontier parameters at their defaults, the
+exploration term still never ablated. The decoupling is implemented by applying
+the replacement on the final relevance call only, which is a clean separation for
+this harness but is not the same as a production design that maintains two scores
+throughout. The combination of these findings with the section 14.3 pheromone
+repairs has not been run. **No production code was changed, and none is proposed
+on this evidence**: a fixture with a deliberately planted chain is grounds for
+testing this on real data, not for shipping it. Gate 2 remains unrun.

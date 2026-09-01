@@ -12,24 +12,25 @@ each number is named, and the things that were *not* measured are listed at the
 end.
 
 Evidence lives in `benchmarks/results/` and
-`docs/MCMP_TIG_C004_REPORT.md` sections 9–14. The probes below are reproducible:
+`docs/MCMP_TIG_C004_REPORT.md` sections 9–15. The probes below are reproducible:
 
 ```bash
 # from the repository root; `embeddinggemma` is not installed in the venv,
 # so src/ has to be on the path explicitly
 PYTHONPATH=src .venv/Scripts/python.exe -m benchmarks.probes.visit_term \
-    --experiment ablate --documents 256
+    --experiment alpha --fixture manifold
 PYTHONPATH=src .venv/Scripts/python.exe -m benchmarks.probes.visit_term \
-    --experiment terms
-PYTHONPATH=src .venv/Scripts/python.exe -m benchmarks.probes.visit_term \
-    --experiment defects --documents 256
+    --experiment alpha --fixture neutral
 ```
 
-`terms` takes roughly ten minutes; the other two are faster.
+`--experiment` takes `ablate`, `terms`, `defects`, `alpha`, `confirm`, `decouple`
+or `final`. The sweeps take roughly ten to twenty minutes each; the ablations are
+faster. **Always run the `neutral` fixture alongside `manifold`** — it is the
+control, and it is what separates candidates that manifold alone cannot.
 
-All figures are recall@8 on the `manifold` fixture over six seeds and one query
-with three relevant documents, so the smallest resolvable difference is
-1/18 ≈ 0.056. A gap that size is one document in one seed. Read the large gaps.
+Figures are recall@8 over six seeds and one query: three relevant documents on
+`manifold` (resolution 1/18 ≈ 0.056) and four on `neutral` (1/24 ≈ 0.042). A gap
+that size is one or two documents in one seed. Read the large gaps.
 
 ---
 
@@ -157,28 +158,103 @@ Three shapes that cannot saturate, against the shipped cap:
 | G, 192 | 0.333 | 0.000 | 0.389 | **0.556** |
 | G, 384 | 0.333 | 0.000 | 0.389 | 0.167 |
 
-Three things to take from this:
+> **Both tables above were measured at one weight, and that weight was the
+> dominant variable.** Every column here uses α = 0.5. Sweeping it changes the
+> ranking of the shapes and lifts the best cells to 1.000. The two conclusions
+> originally drawn from these tables — "log compression is the only shape that
+> never fails" and "the right shape depends on the working-set size" — are both
+> withdrawn. See the next section, and report section 15.5.
 
-1. **Uncapping fixes full-corpus MCMP and destroys the bounded frontier.** For C
-   at 256 documents it removes the agent-driven collapse outright: 0.556 / 0.667 /
-   0.667 where the shipped term gives 0.389 / 0.278 / 0.000. For G it gives 0.000
-   in all six cells, because inside a 12-document working set an unbounded visit
-   term swamps similarity entirely and the ranking becomes "most trafficked",
-   which in a frontier seeded from the FAISS pool means the pool.
+What survives from these two tables is narrower: **uncapping helps full-corpus C
+and destroys the bounded frontier at α = 0.5**, which turns out to be a fact about
+coupling rather than about magnitude — see "The two jobs" below.
 
-2. **Log compression is the only shape that never fails.** It roughly matches the
-   cap wherever the cap works and beats it by a wide margin where the cap
-   saturates — 0.333 against 0.056 and 0.000 for C on the large corpus. It is
-   marginally below the cap in the sparse cells (96 agents), by one document in
-   one seed.
+---
 
-3. **The right shape depends on the working-set size**, which is exactly the trap
-   this project has fallen into five times: do not generalise this table past the
-   two corpus sizes and three agent counts in it.
+## The weight, not the shape
 
-**No production code was changed on the strength of this.** These are synthetic
-fixtures with a chain placed there by design. The recommendation this evidence
-supports is to *test* a log-compressed visit term on real data, not to ship one.
+Sweeping α on the corpus where the shipped ceiling returns nothing at all
+(manifold 1024, 192 agents, coupled):
+
+| shape | 0.1 | 0.25 | 0.5 | 1.0 | 2.0 | 4.0 |
+|---|---|---|---|---|---|---|
+| C capped | 0.000 | | | | | |
+| C log | 0.000 | 0.000 | 0.333 | 0.500 | 0.444 | 0.389 |
+| C normalised | 0.000 | 0.000 | 0.333 | 0.778 | **1.000** | 0.500 |
+| G capped | 0.333 | | | | | |
+| G log | 0.000 | 0.222 | 0.389 | 0.667 | **1.000** | **1.000** |
+| G normalised | 0.000 | 0.222 | 0.556 | 0.778 | **1.000** | 0.833 |
+
+At α = 0.5 the shapes look different and none of them is good. At α ≥ 1 several
+reach 1.000. The apparent shape-dependence was a weight artifact.
+
+**And the collapse under agent count inverts.** The shipped term goes
+0.389 → 0.278 → 0.000 as agents grow from 96 to 384; `normalised` at α = 2 goes
+0.333 → 0.889 → 1.000. More agents now help. Section 10's collapse and section
+13's collapse were the same ceiling reached along two different axes, so lifting
+the ceiling addresses both at once.
+
+### The control is what separates the shapes
+
+manifold cannot tell the shapes apart at high α — the neutral fixture can, because
+its relevant documents are drawn from the FAISS top-16 and similarity is therefore
+the *correct* signal there. A visit term that overrides similarity must hurt.
+Method C, 192 agents:
+
+| shape | 0.1 | 0.25 | 0.5 | 1.0 | 2.0 | 4.0 |
+|---|---|---|---|---|---|---|
+| capped | 0.458 | | | | | |
+| log | 0.542 | 0.458 | 0.458 | 0.417 | 0.375 | 0.375 |
+| rank | 0.542 | 0.542 | 0.458 | 0.417 | 0.417 | 0.375 |
+| visited_rank | 0.500 | 0.458 | 0.417 | 0.375 | 0.333 | 0.333 |
+| normalised | 0.542 | 0.542 | 0.542 | 0.542 | 0.500 | 0.542 |
+
+`log`, `rank` and `visited_rank` all decay as the weight rises; `normalised` does
+not. The shapes that discard the *magnitude* of the visit distribution — a
+document visited once scoring nearly as high as one visited two hundred times —
+are the ones that damage the control. **Any result on manifold that was not
+checked here is tuned to one fixture, not improved.**
+
+---
+
+## The two jobs: steering and ranking are in conflict
+
+`update_document_relevance` writes `relevance_score`, and that field is read
+twice: by the attraction force through its `(1 + r)` weight, and by the harness as
+the final ranking. Those are different jobs and they want different things.
+
+Applying the replacement term to the **ranking only** — steering with the shipped
+term for every step but the last — at 192 agents:
+
+| corpus | method | shape | coupled | decoupled |
+|---|---|---|---|---|
+| 256 | C | uncapped | 0.667 | **1.000** |
+| 256 | G | uncapped | 0.000 | **1.000** |
+| 1024 | C | uncapped | 0.000 | 0.722 |
+| 1024 | G | uncapped | 0.000 | **1.000** |
+
+`uncapped` was dismissed above as swamping similarity. It does not. Applied to the
+ranking alone it is the strongest signal measured. Coupled, it destroys the
+*walk*: an aggressive visit term fed back through `(1 + r)` is positive feedback
+that collapses the colony onto what it has already visited. The damage was never
+in the scoring.
+
+This is a structural fix and it costs no parameter. It is also not free: `uncapped`
+decoupled does systematic damage on the control that grows with agent count
+(C: 0.375 → 0.333 → 0.292 against a baseline of 0.417 → 0.458 → 0.542), because an
+unbounded term ranks by traffic alone.
+
+**Two properties are needed.** Decoupling makes a strong ranking signal usable;
+boundedness protects the control. `normalised` at α = 2, decoupled, has both:
+ten of twelve manifold cells improve over the shipped ceiling, one ties, one is
+worse — and on the control four of six improve, one ties, one is worse by two
+documents. Its weak spot is the sparse regime (96 agents), where the visit
+distribution is too noisy to weight at twice the similarity.
+
+**No production code was changed on the strength of any of this,** and none is
+proposed. These are synthetic fixtures with a chain placed there by design. The
+evidence supports testing a bounded, decoupled visit term on real data. It does
+not support shipping one.
 
 ---
 
@@ -233,21 +309,36 @@ visit term. That is the obvious next experiment and it has not been done.
 The standing goal is MCMP that produces better results on large codebases. The
 measured position:
 
-1. **Full-corpus MCMP does not scale, and the reason is the scoring, not the
-   walk.** At 1024 documents C reaches 2.33 of 3 relevant documents and ranks
-   0.056 of them into the top 8, spending 14.6 million comparisons to do it
-   (section 13). Search over 103k chunks is not supported by anything measured
-   here.
+1. **Full-corpus MCMP does not scale *as shipped*, and the reason is the scoring,
+   not the walk.** At 1024 documents C reaches 2.33 of 3 relevant documents and
+   ranks 0.056 of them into the top 8, spending 14.6 million comparisons to do it
+   (section 13). With the visit term swept, that same configuration reaches
+   **1.000** — so the scaling failure is a property of the relevance function, not
+   of full-corpus MCMP as such. The cost is unchanged and still ruinous, so this
+   does not make full-corpus search viable; it means the bottleneck moved from
+   "cannot rank" to "cannot afford". Search over 103k chunks remains unsupported by
+   anything measured here.
 
 2. **The bounded frontier (method G) is the only variant that survives scaling** —
    constant 143 224 comparisons at 64, 256 and 1024 documents, recall flat around
    0.667. It works by keeping the *scored* set small, which is consistent with the
    scoring being the bottleneck.
 
-3. **The next lever is the relevance function**, specifically the visit term's
-   ceiling. It is the whole ranking signal and it saturates by construction.
+3. **The relevance function has been pulled, and it moved a long way.** Bounded,
+   decoupled, weighted above similarity: ten of twelve manifold cells improve, the
+   agent-count collapse inverts, and the control takes no systematic damage. What
+   remains untested there is a weight that adapts to walk density, which is the
+   named weakness of the current best candidate.
 
-4. **The pheromone repairs come after that, not before.**
+4. **Cost is now the binding constraint, not quality.** G holds a constant
+   143 224 comparisons against FAISS's 8. Nothing in this repository models what
+   that costs against a production ANN index, and no latency has ever been measured.
+   For a retrieval path that gap decides everything; for a batch crawler it may not
+   matter at all.
+
+5. **The pheromone repairs come after the relevance work, not before** — section
+   14.3 showed they degrade retrieval while the ceiling is in place. Whether they
+   compose with a swept, decoupled term is a prediction and has not been run.
 
 ---
 
@@ -256,13 +347,18 @@ measured position:
 - Synthetic fixtures throughout, with a chain placed there by design. Nothing here
   says real code retrieval has this geometry; that is Gate 2's question and Gate 2
   has never run.
-- Six seeds, one query, three relevant documents per configuration. Differences
-  below 0.056 are not resolvable.
+- Six seeds, one query, three relevant documents per configuration on manifold
+  (resolution 0.056) and four on neutral (0.042). Differences that size are one or
+  two documents.
 - Two corpus sizes and three agent counts. `steps` was held at 50 throughout;
   `expand_every`, `expand_k` and `frontier_cap` were left at their defaults.
 - The exploration term has never been ablated.
-- The alternative visit terms were not tuned. `log` and `normalised` both scale to
-  the same 0.5 ceiling the shipped term has, chosen for comparability, not because
-  0.5 is right.
+- The decoupling is implemented by applying the replacement on the final relevance
+  call only. That is a clean separation for this harness; it is not the same as a
+  production design maintaining two scores throughout, and no such design has been
+  built or measured.
+- The weight was swept over six values on a log-ish grid. Nothing says α = 2 is
+  optimal, only that it is the best of those six on this evidence, and its weakness
+  in the sparse regime is visible in the same tables.
 - No production code was changed. Every variant in this document is an override
   applied inside a probe.
