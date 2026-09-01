@@ -43,6 +43,11 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--seeds", type=int, default=96)
+    # Control for authored-link leakage on prose corpora: the query note
+    # names its targets inside [[...]], so BM25 may be scoring the link text
+    # rather than the content. Stripping wikilinks from the *query only*
+    # quantifies that share.
+    parser.add_argument("--strip-query-links", action="store_true")
     arguments = parser.parse_args()
 
     manifest = load_manifest(arguments.manifest)
@@ -65,6 +70,9 @@ def main() -> None:
             continue
         query_document = query_id[len(QUERY_PREFIX):]
         query_text = source_of[query_document]
+        if arguments.strip_query_links:
+            import re
+            query_text = re.sub(r"\[\[[^\]]*\]\]", " ", query_text)
 
         similarities = dataset.query_vectors[0] @ dataset.document_vectors.T
         dense = [dataset.document_ids[int(i)] for i in np.argsort(-similarities)]

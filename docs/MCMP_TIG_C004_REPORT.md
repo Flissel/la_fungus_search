@@ -2426,3 +2426,88 @@ comparison used non-overlapping windows; production strides may differ. Nothing
 here is wired into serving: these are measurements that justify changes, and the
 changes — fusing BM25, adding expansion, swapping granularity, moving the gitlink
 — are decisions, not defaults.
+
+---
+
+## 28. Prose: the same instruments on a wikilink vault, and what generalises
+
+Section 27's numbers came from code, where BM25 enjoys identifier overlap and the
+call graph is mechanical truth. This runs the identical instruments on a private
+markdown vault — 192 notes, 189 linked, 1 263 resolved directed wikilink edges,
+zero ambiguous stems — converted into the Gate 2 manifest schema so nothing in
+the measurement stack changed. The oracle is *authored* (links measure "finds
+what the writer already connected") and the corpus is small (§22's caveat
+applies to any gate decision; the comparative questions are what this section is
+for). **The vault is private and every derived artifact is gitignored; this
+section carries aggregate numbers only.**
+
+### 28.1 Facts
+
+Query = a note, relevant = its resolved link neighbours, 96 seeds, Qwen 1024-dim
+snapshot, same protocol as §27.
+
+**Base retrievers** (`bm25_hybrid`):
+
+| | recall@8 | recall@16 | recall@32 |
+|---|---|---|---|
+| dense | 0.327 | 0.487 | 0.624 |
+| BM25 | 0.377 | 0.513 | 0.688 |
+| **RRF fusion** | **0.384** | **0.551** | **0.726** |
+
+**The leakage control** (`--strip-query-links`): the query note names its targets
+inside `[[...]]`. Stripping wikilinks from the query text only:
+
+| | recall@8 | recall@16 | recall@32 |
+|---|---|---|---|
+| BM25, links stripped | 0.280 | 0.405 | 0.533 |
+
+**Link expansion, union base** (`callgraph_expand --base union`, one hop):
+
+| | value |
+|---|---|
+| candidate-set size | 60.5 (notes average ~11 relevant, ~8 links each) |
+| relevant in expansion candidates | **9.98** of 11.04 |
+| relevant in FAISS top-\|candidates\| | 9.04 of 11.04 |
+| recall@16, base / expanded-RRF | 0.544 / **0.635** (both halves positive) |
+| recall@32, base / expanded-cosine | 0.730 / **0.790** |
+| recall@8 | 0.412 / 0.422 (a tie) |
+
+### 28.2 Interpretation
+
+1. **Graph expansion generalises; it is not a code artifact.** The equal-budget
+   test — the instrument that killed the walk (§26) and crowned the expansion on
+   code (§27) — the expansion wins on prose too, and recall@16 gains nine points,
+   replicated on both halves. Edges recover what similarity misses, whether the
+   edges are calls or links.
+
+2. **BM25's code dominance does not generalise, and the control says why.** On
+   code BM25 led dense by 15 points at recall@8; on prose by 5 — and with the
+   authored links stripped from the query, BM25 falls *below* dense (0.280 vs
+   0.327). A large share of its prose performance was the link text itself. The
+   §27.2 honesty note about identifier overlap was the right instinct; here it is
+   quantified. (The control is asymmetric — the dense query vector still contains
+   the link text, since re-embedding stripped queries was not done — so it bounds
+   the effect rather than isolating it exactly.)
+
+3. **Fusion flips from harmful to winning across corpora.** On code, full-list
+   RRF was worse than BM25 alone (0.613 vs 0.638); on prose it beats both arms at
+   every k. The classic hybrid story holds exactly where neither arm dominates.
+   Consequence for serving: retrieval v2 ranks within candidates by BM25 score, a
+   rule measured best *on code*. On a prose corpus the within-candidate RRF is
+   the better rule (0.635 vs 0.587 at recall@16). The ranking rule is a
+   corpus-dependent knob and is recorded as one, not silently universalised.
+
+4. **The two corpora answer the user-facing question differently and coherently.**
+   For code, the winning stack is BM25-led with call-graph expansion. For notes,
+   it is fusion-led with link expansion. Same machinery, one config flag apart —
+   and both conclusions came out of the same pre-registered instruments, which is
+   the point of having them.
+
+### 28.3 Non-claims
+
+One vault, 192 notes, an authored oracle with its stated bias. The link-strip
+control degrades only the BM25 query side. Note-to-note queries, not
+natural-language questions. No gate was run and no gate decision is claimed at
+this corpus size (§22). No serving change is made on this evidence; the
+corpus-dependent ranking rule is recorded for whoever wires a vault corpus into
+retrieval v2.

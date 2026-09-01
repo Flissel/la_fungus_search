@@ -32,3 +32,6 @@ models
 # Graphify code-graph output (local dev tool, ~MB) — rebuilt via `graphify update .`, never commit.
 graphify-out/
 .graphifyignore
+
+# Private vault-derived benchmark artifacts (personal notes) - NEVER commit.
+benchmarks/results/vault/
