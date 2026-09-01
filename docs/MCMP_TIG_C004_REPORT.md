@@ -8,11 +8,14 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read sections 17-19 first — they are the only measurements in this document
+> **Read sections 17-20 first — they are the only measurements in this document
 > taken on real code. Gate 2 stage 1 ran in two independent embedding spaces and
-> the gate does not open in either (17, 18); the crawler framing, which the gate
-> does not govern, finds nothing the FAISS pool did not already hold (19).
-> Sections 1-16 are synthetic throughout.**
+> the gate does not open in either (17, 18); the crawler framing finds nothing the
+> FAISS pool did not already hold *on the call-graph relation* (19). **Section 20
+> corrects how far that may be generalised**: on the sibling relation, which the
+> call-graph oracle cannot see, the walk finds targets at two to four times chance
+> and one pre-registered significance condition passes — while the gate still
+> closes on effect size. Sections 1-16 are synthetic throughout.**
 >
 > This document was written in rounds and is kept whole rather than rewritten,
 > so the reasoning stays auditable.
@@ -1674,3 +1677,104 @@ this measurement. That niche is untested and this section does not touch it; wha
 it rules out is the call-graph case, which is the one with a free oracle. Method G
 was the only walk measured; full-corpus C was not run, on the section 13 finding
 that it does not survive scale.
+
+---
+
+## 20. The niche sections 17-19 were blind to: a real, small, above-chance effect
+
+Sections 17-19 used the call graph as the relevance oracle and closed on it. All
+three are blind by construction to the category MCMP's remaining case rests on:
+documents that belong together while neither calls the other. Section 19.3 says a
+walk that found exactly those would have scored zero there. **This section removes
+that excuse rather than leaving it as a defence**, and the answer is not the one
+the preceding three sections would predict.
+
+**The sibling relation.** Two documents are siblings when they share at least *n*
+callees or at least *n* callers **and** neither calls the other. Direct call-graph
+neighbours are excluded outright, so this oracle and section 17's are disjoint by
+construction and this cannot re-measure the same thing under a new name. It is
+mechanical, derived from the manifest already committed, and requires no judgement.
+
+**Both thresholds were run and both are reported.** They disagree on one condition
+and that disagreement is part of the result, not something to select away.
+
+### 20.1 Facts
+
+Qwen snapshot (1024-dim), manifest `embeddinggemma-local-v1`, `top_k = 8`,
+`knn_k = 8`, `max_hops = 4`, 100-permutation nulls.
+
+| | shared ≥ 2 | shared ≥ 1 |
+|---|---|---|
+| documents with siblings | 34 | 128 |
+| usable seeds | 24 | 48 |
+| pair_count | 199 | 688 |
+| far_rate | 0.794 | 0.823 |
+| reach_given_far | 0.462 | 0.371 |
+| null reach_given_far | 0.358 | 0.264 |
+| signature | 0.367 | 0.305 |
+| null median / p95 | 0.347 / 0.402 | 0.254 / **0.283** |
+| **exceeds null p95** | False | **True** |
+| meets absolute minimum | True | True |
+| meets relative excess | False | False (0.051 vs 0.075) |
+
+Crawl, `agents 192`, `expand_every 2`, `expand_k 12`, `cap 200`:
+
+| | shared ≥ 2 | shared ≥ 1 |
+|---|---|---|
+| relevant per query | 4.29 | 6.46 |
+| of those in FAISS pool | 0.50 | 1.48 |
+| documents visited | 11.5 | 11.9 |
+| relevant visited | 0.75 | 1.75 |
+| **novel relevant** | **0.250** | **0.271** |
+| novel under permuted labels | 0.062 | 0.137 |
+| **ratio** | **4.03x** | **1.97x** |
+
+### 20.2 Interpretation
+
+1. **The walk finds something here, and it did not on the call graph.** Section 19
+   measured novel relevant at exactly 0.00 in four configurations. On siblings it
+   is 0.25 to 0.27 against a permuted-label chance level of 0.06 to 0.14 — two to
+   four times chance. `relevant visited` exceeds `in FAISS pool` in both, which
+   never happened in section 19. The category that oracle could not see is a
+   category where the mechanism does something.
+
+2. **The effect is real and small.** At threshold 2 the walk recovers 0.25 of the
+   3.79 relevant documents lying outside the pool — about 7% — for roughly 1.3
+   million comparisons. Four times chance on a small base is still a small
+   absolute number: six novel finds across 24 queries. Nothing here says this pays
+   for itself; it says the mechanism is not inert on this relation.
+
+3. **The geometry significance test passes once, at the larger sample.** At
+   threshold 1 the signature exceeds the null's 95th percentile (0.305 > 0.283) —
+   the first time any pre-registered significance condition has passed on real
+   data. It fails at threshold 2 (0.367 < 0.402), where the sample is a third the
+   size and the null correspondingly wider. The pattern is consistent with a real
+   effect being resolved by the larger sample rather than with noise, but two
+   thresholds is not a sample of thresholds and this is stated as suggestive.
+
+4. **The full gate still does not open, and on a different condition than before.**
+   Both thresholds fail the relative-excess condition (0.051 against a required
+   0.075 at threshold 1). Sections 17 and 18 failed the significance condition
+   *and* the excess; here the significance condition passes and the effect size
+   does not. That is a materially different failure: the structure is
+   distinguishable from chance, and the margin over chance is too small to carry
+   the compute.
+
+5. **This corrects the summary of sections 17-19, not their contents.** Those
+   measurements stand exactly as published. What changes is what may be concluded
+   from them: "MCMP does not transfer to real code" was too broad. The supported
+   statement is narrower — **it does not transfer to the call-graph relation, and
+   on the sibling relation it produces a small above-chance effect that still
+   falls short of the pre-registered bar.**
+
+### 20.3 Non-claims
+
+One corpus, one embedding space, one manifest. Two thresholds were run and both
+are reported; the p95 pass appears at one of them, so it is a single observation
+and not a replication. The crawl null redraws labels while holding the walk and
+the pool fixed, which is the right null for "did the walk find these on purpose",
+and it does not control for the walk preferring documents that are large, central
+or heavily connected for reasons unrelated to relevance. `knn_k = 8` and
+`max_hops = 4` were carried over from section 18's split-sample selection, which
+was performed against the *call-graph* oracle — they are not tuned for this
+relation, and no sweep was run here. Stage 2 has still never run.
