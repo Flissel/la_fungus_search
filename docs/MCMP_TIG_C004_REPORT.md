@@ -8,7 +8,14 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read sections 22, 24, 25 and 26 first.** Section 22 reverses the verdict of everything
+> **Read section 27 first if you want the constructive result, sections 22-26 for
+> how it was earned.** Section 27 is the application phase: BM25 sits unused in
+> the serving path and alone beats the dense embedding by 15 points; one-hop
+> call-graph expansion of the hits wins the same equal-budget test that killed
+> the walk; function granularity beats the production 200-line windows by 37-76%
+> per shown line. BM25 + expansion reaches recall@16 = 0.818 against serving's
+> 0.606 — a 21-point gap larger than every MCMP effect in this document combined,
+> from assets that already exist. Section 22 reverses the verdict of everything
 > before it and says why; section 24 is the measurement the whole report was built
 > to reach — **stage 2 has run**, and MCMP ties FAISS exactly on ranking while
 > discovering a quarter more relevant documents, at 14 300x the comparisons.
@@ -2318,3 +2325,104 @@ edges, evaluated against the sibling oracle) from the spec was not built: it
 answers a different question than the one that closed here, and it should only be
 attempted with the equal-budget test as its primary metric from the start. The
 production 3072-dimensional space remains unmeasured.
+
+---
+
+## 27. The application phase: what actually improves retrieval, measured
+
+Sections 1-26 closed every MCMP path. This section spends the same instruments on
+the serving stack itself — three measurements (A, B, C), each using assets that
+already exist in the repository, none of them touching `src/`. Probes:
+`callgraph_expand.py`, `bm25_hybrid.py`, `granularity.py`. Corpus: brain
+(4 000-sample for A/C, full 16 497 for B), Qwen snapshot, call-graph oracle,
+96 queries.
+
+### 27.1 A — deterministic call-graph expansion of the hits
+
+The §26 spec outcome said it: on a known graph, direct queries beat walks. So:
+FAISS top-8, each hit contributes its callers and callees, one hop. No leakage —
+relevance is defined by the *query document's* edges and only the *hits'* edges
+are ever read.
+
+| | equal-budget containment | recall@8 | recall@16 |
+|---|---|---|---|
+| dense alone | 0.79 of 1.53 | 0.487 | 0.606 |
+| dense + expansion (12.0 candidates) | **0.93** of 1.53 | 0.487 | **0.679** |
+| BM25 alone | 0.97 of 1.53 | 0.638 | 0.726 |
+| BM25 + expansion (12.6 candidates) | **1.09** of 1.53 | 0.638 | **0.818** |
+
+Replicated on both halves (dense: selection +0.102 / evaluation +0.045; BM25:
++0.076 / +0.107). The equal-budget test — the instrument that killed the walk in
+§26 — is the same one the expansion *wins*: a 12-document candidate set holds more
+relevant documents than similarity's top-12, on both bases. recall@8 does not move
+under cosine or RRF ranking; the newcomers sit at positions 9-12 and displacing
+original hits needs a semantic reranker over twelve documents — cheap in
+production, not measurable in this harness, and left stated rather than simulated.
+
+### 27.2 C — BM25 is unused in serving, and it is the best single retriever measured
+
+The finding needed no benchmark: the only "bm25" in `realtime/server.py` is a
+comment calling the length prior "bm25-like" — the same `len_prior` the ce4743b
+blend bug ranked by. The 30 MB `bm25.npz` in the production cache is never read
+by the query path.
+
+| | recall@8 | recall@16 | recall@32 |
+|---|---|---|---|
+| dense (what serving uses) | 0.487 | 0.606 | 0.661 |
+| **BM25 (what serving ignores)** | **0.638** | **0.726** | **0.826** |
+| full-list RRF fusion | 0.613 | 0.670 | 0.790 |
+
+Fifteen points of recall@8 were sitting in an unused file. The honesty note is in
+the probe and belongs here too: the query is the function's own source, which
+names its callees, so BM25 partially rediscovers the very relation the oracle is
+built from — through raw text, production-realistically, but this oracle flatters
+BM25. Note also that naive full-list fusion is *worse* than BM25 alone here: the
+dense ranking drags it down, which is a warning against wiring "hybrid" blindly.
+
+### 27.3 B — function granularity beats the production windows per line shown
+
+The full corpus now exists as a function-level, digest-bound snapshot: 16 497
+documents, embedded in ~14 GPU-minutes — the artifact that replaces the truncated
+`chunks.json` whenever the swap is decided. The measurement behind the rebuild:
+same files, same model, same oracle, only the unit differs (2 049 production-style
+200-line windows, headers included as shipped).
+
+| comparison | functions | windows |
+|---|---|---|
+| recall@8, per *unit* (misleading) | 0.311 | **0.477** |
+| recall per **1 600 shown lines** | **0.653** | 0.477 |
+| recall per **200 shown lines** | **0.332** | 0.189 |
+
+Per retrieval slot, windows look better — each slot carries ten times the code.
+Fix the budget at what the reader actually sees and functions deliver 37-76% more
+relevant material per line. The Gate 2 spec's objection to window chunking is
+confirmed quantitatively, with the per-unit number shown alongside so nobody
+re-runs the misleading version and calls it a refutation.
+
+### 27.4 The measured stack, end to end
+
+recall@16 against the call-graph oracle, brain-4000, one query protocol:
+
+| | recall@16 |
+|---|---|
+| dense cosine (serving today, modulo granularity) | 0.606 |
+| BM25 | 0.726 |
+| **BM25 + one-hop call-graph expansion** | **0.818** |
+
+Plus function granularity worth another large step at equal shown-code budget,
+measured on the full corpus. Everything in this table is deterministic, uses
+assets already in the repository, costs O(edges) or an unused index file, and
+contains no colony. **The 21-point gap between the first and last row is larger
+than every MCMP effect measured in twenty-six sections combined.**
+
+### 27.5 Non-claims
+
+One repository, one embedding space, function-as-query protocol throughout —
+natural-language queries would shift the dense/BM25 balance toward dense and are
+unmeasured. The oracle favours BM25 (identifier overlap) and the expansion
+(call edges), in ways §27.2 and §27.1 state. recall@8 improvements from the
+candidate sets require a reranker that does not exist in the repo. The window
+comparison used non-overlapping windows; production strides may differ. Nothing
+here is wired into serving: these are measurements that justify changes, and the
+changes — fusing BM25, adding expansion, swapping granularity, moving the gitlink
+— are decisions, not defaults.
