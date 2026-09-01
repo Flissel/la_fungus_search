@@ -116,3 +116,65 @@ def test_matching_embedder_arms_the_union(assets: dict[str, Path]) -> None:
     result = engine.search("parse_config", top_k=2)
     assert result["results"]
     assert engine.engine.startswith("v2:union+expand")
+
+
+def test_rank_rule_rejects_unknown(assets: dict[str, Path]) -> None:
+    with pytest.raises(ValueError, match="rank_rule"):
+        RetrievalV2(load_index(assets["manifest"]), rank_rule="cosine")
+
+
+def test_rrf_rank_rule_serves_and_keeps_the_expansion(assets: dict[str, Path]) -> None:
+    engine = RetrievalV2(load_index(assets["manifest"]), rank_rule="rrf")
+    result = engine.search("parse_config", top_k=4)
+    symbols = {row["metadata"]["symbol"] for row in result["results"]}
+    assert {"parse_config", "normalise_settings"} <= symbols
+
+
+def _second_corpus(tmp_path: Path) -> dict[str, Path]:
+    corpus = tmp_path / "second"
+    corpus.mkdir()
+    (corpus / "notes.py").write_text(
+        "def weekly_review(entries):\n    return summarise_entries(entries)\n\n"
+        "def summarise_entries(entries):\n    return entries[:3]\n",
+        encoding="utf-8",
+    )
+    manifest = build_manifest(corpus, "sha2", "second")
+    manifest_path = tmp_path / "second-manifest.json"
+    save_manifest(manifest, manifest_path)
+    return {"manifest": manifest_path}
+
+
+def test_multi_retrieval_tags_the_corpus_and_fuses(assets: dict[str, Path], tmp_path: Path) -> None:
+    from embeddinggemma.retrieval_v2 import MultiRetrieval
+
+    second = _second_corpus(tmp_path)
+    multi = MultiRetrieval(
+        {
+            "code": RetrievalV2(load_index(assets["manifest"])),
+            "vault": RetrievalV2(load_index(second["manifest"]), rank_rule="rrf"),
+        }
+    )
+    result = multi.search("parse_config weekly_review", top_k=6)
+    corpora = {row["metadata"]["corpus"] for row in result["results"]}
+    assert corpora == {"code", "vault"}, "both corpora must contribute"
+    assert result["engine"].startswith("multi(")
+
+
+def test_env_corpora_config_builds_multi(assets: dict[str, Path], tmp_path: Path) -> None:
+    from embeddinggemma.retrieval_v2 import MultiRetrieval
+
+    second = _second_corpus(tmp_path)
+    config_path = tmp_path / "corpora.json"
+    config_path.write_text(
+        json.dumps(
+            [
+                {"name": "code", "manifest": str(assets["manifest"])},
+                {"name": "vault", "manifest": str(second["manifest"]), "rank_rule": "rrf"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    engine = build_from_env(
+        {"FUNGUS_RETRIEVAL_V2": "1", "FUNGUS_V2_CORPORA": str(config_path)}
+    )
+    assert isinstance(engine, MultiRetrieval)

@@ -152,7 +152,16 @@ class RetrievalV2:
         self,
         index: V2Index,
         embed_query: Callable[[str], Sequence[float]] | None = None,
+        rank_rule: str = "bm25",
     ) -> None:
+        # Report section 28: the within-candidate ranking rule is corpus-
+        # dependent. "bm25" measured best on code (recall@8 0.712); "rrf" --
+        # reciprocal-rank fusion of the BM25 ordering with the graph-provenance
+        # ordering -- measured best on the prose vault (recall@16 0.635 vs
+        # 0.587). It is a knob, not a universal.
+        if rank_rule not in ("bm25", "rrf"):
+            raise ValueError(f"unknown rank_rule {rank_rule!r}")
+        self.rank_rule = rank_rule
         self._index = index
         self._embed_query = embed_query
         if index.vectors is None:
@@ -226,9 +235,35 @@ class RetrievalV2:
                 if neighbour_position is not None:
                     candidates.add(neighbour_position)
 
-        # Rank within candidates by BM25 score -- the rule that measured 0.712
-        # recall@8 -- with document order as the deterministic tie-break.
-        ordered = sorted(candidates, key=lambda position: (-float(scores[position]), position))
+        # Rank within candidates. "bm25": plain score order (code-measured).
+        # "rrf": fuse the score order with graph provenance -- hits in retrieval
+        # order, expansions under their best-ranked parent (prose-measured).
+        score_order = sorted(candidates, key=lambda position: (-float(scores[position]), position))
+        if self.rank_rule == "bm25":
+            ordered = score_order
+        else:
+            hit_rank = {position: rank + 1 for rank, position in enumerate(merged)}
+            parent_rank: dict[int, int] = dict(hit_rank)
+            for position in candidates - set(merged):
+                document_id = index.documents[position].document_id
+                parents = [
+                    hit_rank[h]
+                    for h in merged
+                    if document_id in index.neighbours.get(index.documents[h].document_id, frozenset())
+                ]
+                parent_rank[position] = (min(parents) if parents else HIT_BUDGET) + HIT_BUDGET
+            graph_order = sorted(
+                candidates, key=lambda p: (parent_rank[p], -float(scores[p]), p)
+            )
+            graph_pos = {p: i + 1 for i, p in enumerate(graph_order)}
+            score_pos = {p: i + 1 for i, p in enumerate(score_order)}
+            ordered = sorted(
+                candidates,
+                key=lambda p: (
+                    -(1.0 / (60 + score_pos[p]) + 1.0 / (60 + graph_pos[p])),
+                    p,
+                ),
+            )
         results = []
         for position in ordered[: max(1, int(top_k))]:
             document = index.documents[position]
@@ -247,6 +282,36 @@ class RetrievalV2:
                 }
             )
         return {"results": results, "engine": self.engine}
+
+
+class MultiRetrieval:
+    """Several corpora, one query: per-corpus engines fused by reciprocal rank.
+
+    Each corpus keeps its own ranking rule (section 28's knob); across corpora
+    only ranks are comparable, so fusion is RRF over each engine's ordering and
+    every result row names its corpus.
+    """
+
+    def __init__(self, engines: dict[str, "RetrievalV2"]) -> None:
+        if not engines:
+            raise ValueError("MultiRetrieval needs at least one engine")
+        self._engines = engines
+
+    @property
+    def engine(self) -> str:
+        parts = ", ".join(f"{name}={engine.engine}" for name, engine in self._engines.items())
+        return f"multi({parts})"
+
+    def search(self, query: str, top_k: int = 10) -> dict[str, object]:
+        fused: list[tuple[float, str, dict]] = []
+        for name, engine in self._engines.items():
+            for rank, row in enumerate(engine.search(query, top_k=top_k)["results"], start=1):
+                row = dict(row)
+                row["metadata"] = {**row["metadata"], "corpus": name}
+                fused.append((1.0 / (60 + rank), name, row))
+        fused.sort(key=lambda item: (-item[0], item[1]))
+        return {"results": [row for _score, _name, row in fused[: max(1, int(top_k))]],
+                "engine": self.engine}
 
 
 class HttpQueryEmbedder:
@@ -284,6 +349,25 @@ def build_from_env(environ: dict[str, str]) -> RetrievalV2 | None:
     silently degrade."""
     if environ.get("FUNGUS_RETRIEVAL_V2", "0") != "1":
         return None
+    corpora_config = environ.get("FUNGUS_V2_CORPORA", "")
+    if corpora_config:
+        entries = json.loads(Path(corpora_config).read_text(encoding="utf-8"))
+        if not isinstance(entries, list) or not entries:
+            raise ValueError("FUNGUS_V2_CORPORA must be a JSON list of corpus entries")
+        engines: dict[str, RetrievalV2] = {}
+        for entry in entries:
+            name = str(entry["name"])
+            index = load_index(
+                Path(entry["manifest"]),
+                Path(entry["snapshot"]) if entry.get("snapshot") else None,
+            )
+            url = str(entry.get("embedder_url", "") or environ.get("FUNGUS_V2_EMBEDDER_URL", ""))
+            engines[name] = RetrievalV2(
+                index,
+                embed_query=HttpQueryEmbedder(url) if url else None,
+                rank_rule=str(entry.get("rank_rule", "bm25")),
+            )
+        return MultiRetrieval(engines)
     manifest_path = environ.get("FUNGUS_V2_MANIFEST", "")
     if not manifest_path:
         raise ValueError("FUNGUS_RETRIEVAL_V2=1 but FUNGUS_V2_MANIFEST is not set")
