@@ -77,12 +77,28 @@ def _collect(node: ast.AST, prefix: str, lines: list[str], file: str,
             _collect(child, document_id, lines, file, documents, raw_calls)
 
 
-def build_manifest(corpus_root: Path, commit_sha: str, manifest_id: str) -> Manifest:
-    """Extract documents and a fail-closed call graph from a Python corpus."""
+def build_manifest(
+    corpus_root: Path,
+    commit_sha: str,
+    manifest_id: str,
+    exclude_dirs: frozenset[str] = frozenset(),
+) -> Manifest:
+    """Extract documents and a fail-closed call graph from a Python corpus.
+
+    ``exclude_dirs`` prunes by directory *name*, checked against the path
+    relative to ``corpus_root`` — relative on purpose: a corpus that itself
+    lives under an excluded-sounding parent (say a `.claude` tree) must not go
+    blank because of where it is mounted. Default empty keeps the original
+    behaviour for every existing caller; the maintainer-evidence CLI passes the
+    vendor set, without which walking a repo means AST-parsing its virtualenv.
+    """
     documents: list[Document] = []
     raw_calls: dict[str, set[str]] = {}
     for path in sorted(corpus_root.rglob("*.py")):
-        if "__pycache__" in path.parts:
+        relative_parts = path.relative_to(corpus_root).parts
+        if "__pycache__" in relative_parts:
+            continue
+        if exclude_dirs and exclude_dirs.intersection(relative_parts[:-1]):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         try:
