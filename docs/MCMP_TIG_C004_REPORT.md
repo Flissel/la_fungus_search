@@ -1961,3 +1961,74 @@ dropped documents are removed, so each sample's graph is sparser than the real
 one, and how that interacts with reachability is not measured. The operating point
 sits at `knn_k = 8`, the grid edge, for the sixth independent time. Stage 2 has
 still not run — this section establishes that it may, not what it will find.
+
+---
+
+## 23. What stage 2 would find: nothing the configuration can fix
+
+Section 22 justified stage 2 for the first time. Before running it, the code that
+would run it was read.
+
+**The code finding.** `run_gate2._RUN_SPECS` is `(A, B, C, D, E)`. Method G — the
+bounded frontier section 13 established is the only variant surviving corpus scale
+— is absent, and `run_mcmp` is called with no visit-term override, so the walk
+ranks with the `min(0.1 × visits, 0.5)` ceiling sections 14 and 15 identified as
+the bottleneck. Run as coded on the 4 000-document corpus, stage 2 would measure
+full-corpus MCMP in the configuration this report already showed fails at scale.
+
+**The prediction that followed, and its refutation.** The expectation was that
+this configuration choice was decisive — that adding G and section 15's
+`normalised α=2 decoupled` would separate the methods. It does not. That
+expectation is recorded because it was wrong.
+
+### 23.1 Facts
+
+brain sample 0, 4 000 documents, 12 seeds, 96 agents, 50 steps, `top_k = 8`:
+
+| method | visit term | recall@8 | comparisons |
+|---|---|---|---|
+| A (FAISS) | — | **0.375** | 3 998 |
+| C (full corpus) | shipped | **0.375** | 57 177 730 |
+| C (full corpus) | norm α=2 decoupled | **0.375** | 57 177 730 |
+| G (bounded frontier) | shipped | **0.375** | 147 761 |
+| G (bounded frontier) | norm α=2 decoupled | **0.375** | 147 761 |
+
+Verified not to be a collapsed measurement: per seed, the ranked top-8 of A and C
+coincide exactly on seeds 0 and 2 and differ on seed 1. The walk does reorder. It
+never reorders in a way that changes which relevant documents are in the top 8.
+
+### 23.2 Interpretation
+
+1. **On real code MCMP's retrieval is indistinguishable from FAISS at top-8**, at
+   37x the comparisons for the bounded frontier and 14 300x for the full corpus.
+   Five configurations, one number.
+
+2. **The visit-term work does not transfer.** Sections 14 and 15 measured large,
+   repeatable differences between visit-term shapes on the manifold fixture —
+   recall 0.000 to 1.000 across the same grid. Here the shipped ceiling and the
+   best replacement produce identical recall to three decimals, with identical
+   comparison counts, which confirms the walk itself is unchanged and only the
+   scoring differed. A ranking improvement cannot show where there is nothing to
+   re-rank.
+
+3. **This is consistent with section 19 and explains it.** The walk never visits a
+   relevant document the FAISS pool did not already hold, so rescoring has no new
+   material to promote. Sections 14-15 fixed the scoring of a walk whose discovery
+   does not reach anything on real code; the fix is real and it is downstream of
+   the part that fails.
+
+4. **The configuration objection is therefore closed.** "Stage 2 would measure the
+   wrong configuration" was a reasonable reading of the code and it is not what
+   limits the result. Adding G and the better term changes the cost by two orders
+   of magnitude and the outcome by nothing.
+
+### 23.3 Non-claims
+
+**This is not stage 2.** It is exploratory, it selects its own configuration, and
+no gate decision may be read off it. One corpus sample, one embedding space, 12
+seeds, 96 agents. Relevance averages one to two documents per query here, so
+recall@8 is coarse and a genuine small difference could hide under it — what the
+identical comparison counts do establish is that the two visit terms drove the
+same walk. Methods B and D (multi-query) were not run. The pre-registered stage 2
+remains unrun, and running it is still the right next step: this probe says what
+to expect, not what the record shows.
