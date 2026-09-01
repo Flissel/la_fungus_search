@@ -73,3 +73,21 @@ and `ppr` is required before attributing anything to the pheromone.
 No change to `src/`. No production wiring. No claim about the 3072-dimensional
 production space. The continuous MCMP stays as measured; this is a successor
 candidate, not a patch.
+
+## Outcome (2026-09-01, report section 26)
+
+Built and falsified the same day, which is what a spec with pre-registered
+criteria is for. Reach passed decisively (9/9 of the BFS ceiling, 4.5x cheaper
+than G); promotion and the pheromone failed; the equal-budget test showed
+similarity's top-N beating the walk's visited set at every N. The likelihood-ratio
+bridge in §26.3 explains why the stage-1 gate and the retrieval tie were never in
+contradiction.
+
+**On the unbuilt hybrid variant, a warning to whoever considers it:** siblings
+share a callee by definition, so every sibling pair is exactly two call-edges
+apart — a hybrid walk would "find" them trivially, and so would a deterministic
+co-callee enumeration in O(edges) with no walk at all. For code, the real graph is
+known; stochastic traversal of a known graph competes against direct queries of
+it, and loses on arrival. The hybrid experiment is only meaningful on a corpus
+whose relation graph is *not* explicitly available, and its primary metric must be
+the equal-budget test from day one.
