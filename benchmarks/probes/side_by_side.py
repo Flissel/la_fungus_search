@@ -31,7 +31,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 import numpy as np
 
 from embeddinggemma.bm25_lite import BM25Lite
-from embeddinggemma.retrieval_v2 import RetrievalV2, load_index
+from embeddinggemma.retrieval_v2 import HttpQueryEmbedder, RetrievalV2, load_index
 
 MANIFEST = Path("benchmarks/gate2/manifests/brain-v1.json")
 SNAPSHOT = Path("benchmarks/results/gate2/snapshot-brain-full.npz")
@@ -50,7 +50,14 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, default=5)
     arguments = parser.parse_args()
 
-    engine = RetrievalV2(load_index(MANIFEST, SNAPSHOT))
+    # With FUNGUS_V2_EMBEDDER_URL set (the local embedding service), the dense
+    # arm arms and the comparison shows the full union configuration.
+    import os
+    embedder_url = os.environ.get("FUNGUS_V2_EMBEDDER_URL", "")
+    engine = RetrievalV2(
+        load_index(MANIFEST, SNAPSHOT),
+        embed_query=HttpQueryEmbedder(embedder_url) if embedder_url else None,
+    )
     windows = json.loads(WINDOW_TEXTS.read_text(encoding="utf-8"))
     meta = json.loads(WINDOW_META.read_text(encoding="utf-8"))
     window_bm25 = BM25Lite()

@@ -176,7 +176,14 @@ class RetrievalV2:
     def _dense_ranking(self, query: str) -> list[int] | None:
         if not self._dense_armed():
             return None
-        raw = np.asarray(self._embed_query(query), dtype=np.float32).reshape(-1)
+        try:
+            raw = np.asarray(self._embed_query(query), dtype=np.float32).reshape(-1)
+        except Exception as error:
+            # Same treatment as a dimension mismatch: disarm with the reason
+            # recorded and keep serving. A dead embedder degrades the ranking,
+            # never the endpoint.
+            self._index.dense_disabled_reason = f"query embedder failed: {error}"
+            return None
         expected = self._index.vectors.shape[1]
         if raw.shape[0] != expected:
             # Disarm rather than crash: the BM25 and expansion arms are still the
@@ -242,6 +249,35 @@ class RetrievalV2:
         return {"results": results, "engine": self.engine}
 
 
+class HttpQueryEmbedder:
+    """Query embeddings from the local embedding service's `/embed` contract.
+
+    Any failure raises; `RetrievalV2._dense_ranking` treats a raise the same way
+    it treats a dimension mismatch -- disarm the dense arm with the reason
+    recorded, keep serving BM25 + expansion. A dead embedder degrades the
+    ranking, never the endpoint.
+    """
+
+    def __init__(self, base_url: str, timeout: float = 10.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def __call__(self, text: str) -> Sequence[float]:
+        import urllib.request
+
+        request = urllib.request.Request(
+            f"{self.base_url}/embed",
+            data=json.dumps({"text": text}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            payload = json.load(response)
+        vector = payload.get("vector")
+        if not isinstance(vector, list) or not vector:
+            raise ValueError("embedder returned no vector")
+        return vector
+
+
 def build_from_env(environ: dict[str, str]) -> RetrievalV2 | None:
     """The single wiring point. Returns None when the flag is off; raises when
     the flag is on and the assets are broken -- an enabled v2 must never
@@ -253,4 +289,6 @@ def build_from_env(environ: dict[str, str]) -> RetrievalV2 | None:
         raise ValueError("FUNGUS_RETRIEVAL_V2=1 but FUNGUS_V2_MANIFEST is not set")
     snapshot_value = environ.get("FUNGUS_V2_SNAPSHOT", "")
     index = load_index(Path(manifest_path), Path(snapshot_value) if snapshot_value else None)
-    return RetrievalV2(index)
+    embedder_url = environ.get("FUNGUS_V2_EMBEDDER_URL", "")
+    embed_query = HttpQueryEmbedder(embedder_url) if embedder_url else None
+    return RetrievalV2(index, embed_query=embed_query)
