@@ -1,0 +1,1432 @@
+{
+  "protocol": "split-sample, criterion pre-registered in report section 16.3",
+  "snapshot_backend": "local-transformers",
+  "snapshot_model": "Qwen/Qwen3-Embedding-0.6B",
+  "selection_seeds": [
+    0,
+    2,
+    4,
+    6,
+    9,
+    10,
+    12,
+    14,
+    16,
+    18,
+    19,
+    22,
+    24,
+    25,
+    27,
+    30,
+    32,
+    35,
+    36,
+    38,
+    40,
+    43,
+    44
+  ],
+  "evaluation_seeds": [
+    1,
+    3,
+    5,
+    7,
+    8,
+    11,
+    13,
+    15,
+    17,
+    20,
+    21,
+    23,
+    26,
+    28,
+    29,
+    31,
+    33,
+    34,
+    37,
+    39,
+    42,
+    45,
+    46
+  ],
+  "dropped_seeds": [
+    41,
+    47
+  ],
+  "selection_sweep": [
+    {
+      "knn_k": 2,
+      "max_hops": 2,
+      "real_reach_given_far": 0.0,
+      "null_reach_given_far": 0.0021080820420301973,
+      "gap": -0.0021080820420301973
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 3,
+      "real_reach_given_far": 0.0,
+      "null_reach_given_far": 0.0021080820420301973,
+      "gap": -0.0021080820420301973
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 4,
+      "real_reach_given_far": 0.0,
+      "null_reach_given_far": 0.0021080820420301973,
+      "gap": -0.0021080820420301973
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 6,
+      "real_reach_given_far": 0.0,
+      "null_reach_given_far": 0.0021080820420301973,
+      "gap": -0.0021080820420301973
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 8,
+      "real_reach_given_far": 0.0,
+      "null_reach_given_far": 0.0021080820420301973,
+      "gap": -0.0021080820420301973
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 2,
+      "real_reach_given_far": 0.0,
+      "null_reach_given_far": 0.0050217682741255844,
+      "gap": -0.0050217682741255844
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 3,
+      "real_reach_given_far": 0.012658227848101266,
+      "null_reach_given_far": 0.010061111777486498,
+      "gap": 0.0025971160706147675
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 4,
+      "real_reach_given_far": 0.012658227848101266,
+      "null_reach_given_far": 0.014246045317718526,
+      "gap": -0.00158781746961726
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 6,
+      "real_reach_given_far": 0.012658227848101266,
+      "null_reach_given_far": 0.015514645941747257,
+      "gap": -0.0028564180936459915
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 8,
+      "real_reach_given_far": 0.012658227848101266,
+      "null_reach_given_far": 0.016785893249883894,
+      "gap": -0.004127665401782629
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 2,
+      "real_reach_given_far": 0.02531645569620253,
+      "null_reach_given_far": 0.009640882842800933,
+      "gap": 0.015675572853401598
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 3,
+      "real_reach_given_far": 0.0379746835443038,
+      "null_reach_given_far": 0.018050640714321765,
+      "gap": 0.019924042829982034
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 4,
+      "real_reach_given_far": 0.0379746835443038,
+      "null_reach_given_far": 0.02936984003349432,
+      "gap": 0.008604843510809479
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 6,
+      "real_reach_given_far": 0.0379746835443038,
+      "null_reach_given_far": 0.049145536574600954,
+      "gap": -0.011170853030297155
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 8,
+      "real_reach_given_far": 0.06329113924050633,
+      "null_reach_given_far": 0.06596465769972057,
+      "gap": -0.002673518459214236
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 2,
+      "real_reach_given_far": 0.08860759493670886,
+      "null_reach_given_far": 0.023927461503633098,
+      "gap": 0.06468013343307577
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 3,
+      "real_reach_given_far": 0.11392405063291139,
+      "null_reach_given_far": 0.06463676034957738,
+      "gap": 0.049287290283334007
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 4,
+      "real_reach_given_far": 0.16455696202531644,
+      "null_reach_given_far": 0.11310582069075201,
+      "gap": 0.05145114133456444
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 6,
+      "real_reach_given_far": 0.27848101265822783,
+      "null_reach_given_far": 0.2795825552915131,
+      "gap": -0.0011015426332852685
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 8,
+      "real_reach_given_far": 0.5063291139240507,
+      "null_reach_given_far": 0.46182589792427314,
+      "gap": 0.04450321599977752
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 2,
+      "real_reach_given_far": 0.17721518987341772,
+      "null_reach_given_far": 0.05236447512534188,
+      "gap": 0.12485071474807584
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 3,
+      "real_reach_given_far": 0.27848101265822783,
+      "null_reach_given_far": 0.14668292275300127,
+      "gap": 0.13179808990522657
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 4,
+      "real_reach_given_far": 0.5443037974683544,
+      "null_reach_given_far": 0.29214867988891,
+      "gap": 0.2521551175794444
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 6,
+      "real_reach_given_far": 0.810126582278481,
+      "null_reach_given_far": 0.6424330113494027,
+      "gap": 0.16769357092907833
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 8,
+      "real_reach_given_far": 0.8860759493670886,
+      "null_reach_given_far": 0.8472589568350157,
+      "gap": 0.038816992532072825
+    }
+  ],
+  "operating_point": {
+    "knn_k": 8,
+    "max_hops": 4,
+    "real_reach_given_far": 0.5443037974683544,
+    "null_reach_given_far": 0.29214867988891,
+    "gap": 0.2521551175794444
+  },
+  "evaluation": {
+    "config": {
+      "top_k": 8,
+      "knn_k": 8,
+      "max_hops": 4,
+      "hop_threshold": 0.0,
+      "stage1_seeds": 23,
+      "seeds": [
+        1,
+        3,
+        5,
+        7,
+        8,
+        11,
+        13,
+        15,
+        17,
+        20,
+        21,
+        23,
+        26,
+        28,
+        29,
+        31,
+        33,
+        34,
+        37,
+        39,
+        42,
+        45,
+        46
+      ],
+      "null_permutations": 100,
+      "null_seed": 0,
+      "exploratory": false
+    },
+    "dataset_id": "gate2-embeddinggemma-local-v1",
+    "snapshot_backend": "local-transformers",
+    "snapshot_model": "Qwen/Qwen3-Embedding-0.6B",
+    "manifest_digest": "114b6a669ae420c0c05e0557c0cd0d7d8758744136cc3b07c12bbebb22aedb7e",
+    "pair_count": 108,
+    "far_count": 58,
+    "far_and_reachable_count": 36,
+    "manifold_signature": 0.3333333333333333,
+    "null_signatures": [
+      0.2962962962962963,
+      0.2777777777777778,
+      0.2777777777777778,
+      0.2777777777777778,
+      0.2777777777777778,
+      0.26851851851851855,
+      0.25,
+      0.35185185185185186,
+      0.2962962962962963,
+      0.28703703703703703,
+      0.2777777777777778,
+      0.3425925925925926,
+      0.3333333333333333,
+      0.32407407407407407,
+      0.3148148148148148,
+      0.26851851851851855,
+      0.25925925925925924,
+      0.3425925925925926,
+      0.21296296296296297,
+      0.2962962962962963,
+      0.3055555555555556,
+      0.3333333333333333,
+      0.32407407407407407,
+      0.2777777777777778,
+      0.2777777777777778,
+      0.26851851851851855,
+      0.32407407407407407,
+      0.26851851851851855,
+      0.23148148148148148,
+      0.2222222222222222,
+      0.25925925925925924,
+      0.2962962962962963,
+      0.3333333333333333,
+      0.24074074074074073,
+      0.3055555555555556,
+      0.37962962962962965,
+      0.3425925925925926,
+      0.25925925925925924,
+      0.2222222222222222,
+      0.26851851851851855,
+      0.1574074074074074,
+      0.3055555555555556,
+      0.28703703703703703,
+      0.25925925925925924,
+      0.25925925925925924,
+      0.23148148148148148,
+      0.23148148148148148,
+      0.25925925925925924,
+      0.21296296296296297,
+      0.28703703703703703,
+      0.26851851851851855,
+      0.28703703703703703,
+      0.3148148148148148,
+      0.24074074074074073,
+      0.24074074074074073,
+      0.2777777777777778,
+      0.2962962962962963,
+      0.2222222222222222,
+      0.25,
+      0.25,
+      0.37037037037037035,
+      0.25925925925925924,
+      0.25,
+      0.26851851851851855,
+      0.2777777777777778,
+      0.24074074074074073,
+      0.23148148148148148,
+      0.28703703703703703,
+      0.23148148148148148,
+      0.2962962962962963,
+      0.28703703703703703,
+      0.26851851851851855,
+      0.3055555555555556,
+      0.24074074074074073,
+      0.26851851851851855,
+      0.3333333333333333,
+      0.2777777777777778,
+      0.2222222222222222,
+      0.3148148148148148,
+      0.26851851851851855,
+      0.25925925925925924,
+      0.26851851851851855,
+      0.28703703703703703,
+      0.25925925925925924,
+      0.25925925925925924,
+      0.2777777777777778,
+      0.17592592592592593,
+      0.3333333333333333,
+      0.21296296296296297,
+      0.25925925925925924,
+      0.3148148148148148,
+      0.32407407407407407,
+      0.2962962962962963,
+      0.2962962962962963,
+      0.2777777777777778,
+      0.25,
+      0.2777777777777778,
+      0.3055555555555556,
+      0.3055555555555556,
+      0.2777777777777778
+    ],
+    "null_median": 0.2777777777777778,
+    "null_p95": 0.3425925925925926,
+    "excess_over_null_median": 0.055555555555555525,
+    "required_excess": 0.07222222222222223,
+    "exceeds_null_p95": false,
+    "meets_absolute_minimum": true,
+    "meets_relative_excess": false,
+    "far_rate": 0.5370370370370371,
+    "reach_given_far": 0.6206896551724138,
+    "null_far_rate_median": 0.9722222222222222,
+    "null_reach_given_far_median": 0.284366576819407,
+    "per_seed": [
+      {
+        "seed": 1,
+        "pair_count": 3,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 3,
+        "pair_count": 3,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 5,
+        "pair_count": 4,
+        "far_count": 3,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 7,
+        "pair_count": 5,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.2
+      },
+      {
+        "seed": 8,
+        "pair_count": 6,
+        "far_count": 4,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 11,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 13,
+        "pair_count": 3,
+        "far_count": 0,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 15,
+        "pair_count": 4,
+        "far_count": 3,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.5
+      },
+      {
+        "seed": 17,
+        "pair_count": 6,
+        "far_count": 2,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.16666666666666666
+      },
+      {
+        "seed": 20,
+        "pair_count": 3,
+        "far_count": 3,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 21,
+        "pair_count": 4,
+        "far_count": 0,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 23,
+        "pair_count": 5,
+        "far_count": 4,
+        "far_and_reachable_count": 4,
+        "manifold_signature": 0.8
+      },
+      {
+        "seed": 26,
+        "pair_count": 6,
+        "far_count": 2,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 28,
+        "pair_count": 6,
+        "far_count": 4,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.16666666666666666
+      },
+      {
+        "seed": 29,
+        "pair_count": 9,
+        "far_count": 8,
+        "far_and_reachable_count": 5,
+        "manifold_signature": 0.5555555555555556
+      },
+      {
+        "seed": 31,
+        "pair_count": 11,
+        "far_count": 7,
+        "far_and_reachable_count": 6,
+        "manifold_signature": 0.5454545454545454
+      },
+      {
+        "seed": 33,
+        "pair_count": 3,
+        "far_count": 1,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 34,
+        "pair_count": 2,
+        "far_count": 1,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 37,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 39,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 42,
+        "pair_count": 8,
+        "far_count": 6,
+        "far_and_reachable_count": 6,
+        "manifold_signature": 0.75
+      },
+      {
+        "seed": 45,
+        "pair_count": 4,
+        "far_count": 0,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 46,
+        "pair_count": 4,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.25
+      }
+    ],
+    "skipped_seeds": [],
+    "pairs": [
+      {
+        "query_id": "q:ui.components.snippet_for",
+        "document_id": "mcmp_rag.MCPMRetriever.search",
+        "rank": 34,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 1
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_line_windows",
+        "document_id": "ui.corpus._path_boost_header",
+        "rank": 7,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 1
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_line_windows",
+        "document_id": "ui.corpus.chunk_python_file",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 1
+      },
+      {
+        "query_id": "q:ui.reports._progress_path",
+        "document_id": "ui.reports.write_progress",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 3
+      },
+      {
+        "query_id": "q:mcmp.indexing.faiss_search",
+        "document_id": "mcmp.indexing._l2_normalize_rows",
+        "rank": 136,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 3
+      },
+      {
+        "query_id": "q:mcmp.indexing.faiss_search",
+        "document_id": "mcmp_rag.MCPMRetriever.search",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 3
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 5
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "multivec.split_chunk_into_views",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 5
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._doc_by_id",
+        "rank": 105,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 5
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 43,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 5
+      },
+      {
+        "query_id": "q:realtime.server._prompt_default_for_mode",
+        "document_id": "realtime.server.http_prompts_get",
+        "rank": 7,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 7
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.__init__",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 7
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._post_with_retry",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 7
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._validate_vectors",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 7
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 10,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 7
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 8
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "multivec.split_chunk_into_views",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.apply_settings",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.save_settings_to_disk",
+        "rank": 18,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_dict",
+        "rank": 9,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_usage_lines",
+        "rank": 27,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.settings_usage_lines",
+        "document_id": "realtime.server.http_settings_get",
+        "rank": 14,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 11
+      },
+      {
+        "query_id": "q:realtime.server.settings_usage_lines",
+        "document_id": "realtime.server.http_settings_post",
+        "rank": 50,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 11
+      },
+      {
+        "query_id": "q:mcmp.simulation.spawn_agents",
+        "document_id": "mcmp_rag.Agent",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 11
+      },
+      {
+        "query_id": "q:rag.vectorstore._create_collection",
+        "document_id": "rag.vectorstore.ensure_collection",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 13
+      },
+      {
+        "query_id": "q:codespace_analyzer.main",
+        "document_id": "codespace_analyzer.CodeSpaceAnalyzer",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 13
+      },
+      {
+        "query_id": "q:codespace_analyzer.main",
+        "document_id": "codespace_analyzer.CodeSpaceAnalyzer.analyze_script",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 13
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._is_import_only",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 15
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 99,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 15
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_python_file_ast",
+        "document_id": "ui.corpus._path_boost_header",
+        "rank": 14,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 15
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_python_file_ast",
+        "document_id": "ui.corpus.chunk_python_file",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 15
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.__init__",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 17
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._post_with_retry",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 17
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._validate_vectors",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 17
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 10,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 17
+      },
+      {
+        "query_id": "q:realtime.server.http_prompts_get",
+        "document_id": "bm25_lite.BM25Lite.load",
+        "rank": 179,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 17
+      },
+      {
+        "query_id": "q:realtime.server.http_prompts_get",
+        "document_id": "realtime.server._prompt_default_for_mode",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 17
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._is_import_only",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 20
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 100,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 20
+      },
+      {
+        "query_id": "q:realtime.server._build_report_prompt",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 74,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 20
+      },
+      {
+        "query_id": "q:ui.corpus._cache_key",
+        "document_id": "ui.corpus._file_sha1",
+        "rank": 7,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 21
+      },
+      {
+        "query_id": "q:ui.corpus._cache_key",
+        "document_id": "ui.corpus._load_cached_chunks",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 21
+      },
+      {
+        "query_id": "q:ui.corpus._cache_key",
+        "document_id": "ui.corpus._save_cached_chunks",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 21
+      },
+      {
+        "query_id": "q:realtime.server._report_schema_hint",
+        "document_id": "prompts.__init__.report_schema_hint",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 21
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 30,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "ui.mcmp_runner._cos_sim",
+        "rank": 151,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "ui.mcmp_runner._extract_source",
+        "rank": 195,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 90,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 23
+      },
+      {
+        "query_id": "q:rag.search._keyword_search",
+        "document_id": "rag.search.hybrid_search",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.reports.write_progress",
+        "document_id": "ui.reports._progress_path",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 26
+      },
+      {
+        "query_id": "q:ui.reports.write_progress",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 26
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.__init__",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 26
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._post_with_retry",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 26
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._validate_vectors",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 26
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 10,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 26
+      },
+      {
+        "query_id": "q:ast_scan.scan_with_detector",
+        "document_id": "ast_scan._get_cached_ast",
+        "rank": 7,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 28
+      },
+      {
+        "query_id": "q:ast_scan.scan_with_detector",
+        "document_id": "ast_scan.walk_python_files",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._compute_blended_topk",
+        "document_id": "realtime.server.SnapshotStreamer._doc_by_id",
+        "rank": 173,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._compute_blended_topk",
+        "document_id": "realtime.server.SnapshotStreamer._is_import_only",
+        "rank": 204,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._compute_blended_topk",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 37,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._compute_blended_topk",
+        "document_id": "realtime.server.SnapshotStreamer._trail_degree_map",
+        "rank": 27,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server.SnapshotStreamer._broadcast",
+        "rank": 217,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 22,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server.SnapshotStreamer.stop",
+        "rank": 234,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server._encode_texts",
+        "rank": 76,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server._load_embed_client",
+        "rank": 117,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server._parse_chunk_header_line",
+        "rank": 206,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "ui.corpus.chunk_python_file",
+        "rank": 72,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "ui.corpus.list_code_files",
+        "rank": 41,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:mcmp.simulation.spawn_agents",
+        "document_id": "mcmp_rag.Agent",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_update_file",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 37,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_update_file",
+        "document_id": "realtime.server.http_corpus_add_file",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp_rag.Document",
+        "rank": 10,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp_rag.MCPMRetriever.add_documents_incremental",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp_rag.MCPMRetriever.save_persistent_index",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 61,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "realtime.server.http_corpus_reindex",
+        "rank": 17,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "realtime.server.http_jobs_start",
+        "rank": 57,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "ui.mcmp_runner.quick_search_with_mcmp",
+        "rank": 80,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 63,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:tools.judge_runner.main",
+        "document_id": "bm25_lite.BM25Lite.load",
+        "rank": 165,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 33
+      },
+      {
+        "query_id": "q:ui.corpus._save_cached_chunks",
+        "document_id": "ui.corpus._cache_key",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 33
+      },
+      {
+        "query_id": "q:ui.corpus._save_cached_chunks",
+        "document_id": "ui.corpus.collect_codebase_chunks",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 33
+      },
+      {
+        "query_id": "q:rag.vectorstore._create_collection",
+        "document_id": "rag.vectorstore.ensure_collection",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 34
+      },
+      {
+        "query_id": "q:llm.config.OllamaConfig",
+        "document_id": "llm.config._resolve_model",
+        "rank": 16,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 34
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._doc_by_id",
+        "rank": 105,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 37
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 43,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 37
+      },
+      {
+        "query_id": "q:mcmp.simulation.spawn_agents",
+        "document_id": "mcmp_rag.Agent",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 37
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.save_persistent_index",
+        "document_id": "mcmp_rag.MCPMRetriever._cache_path",
+        "rank": 97,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 39
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.save_persistent_index",
+        "document_id": "mcmp_rag.MCPMRetriever.add_documents",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 39
+      },
+      {
+        "query_id": "q:realtime.server._build_report_prompt",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 74,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 39
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 32,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 42
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 42
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "realtime.server.http_corpus_reindex",
+        "rank": 54,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 42
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "realtime.server.http_jobs_start",
+        "rank": 19,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 42
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 44,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 42
+      },
+      {
+        "query_id": "q:realtime.server.settings_dict",
+        "document_id": "realtime.server.http_settings_get",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 42
+      },
+      {
+        "query_id": "q:realtime.server.settings_dict",
+        "document_id": "realtime.server.http_settings_post",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 42
+      },
+      {
+        "query_id": "q:realtime.server.settings_dict",
+        "document_id": "realtime.server.save_settings_to_disk",
+        "rank": 29,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 42
+      },
+      {
+        "query_id": "q:ui.queries._normalize_query_text",
+        "document_id": "ui.queries._token_set",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:ui.queries._normalize_query_text",
+        "document_id": "ui.queries._trigram_set",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:prompts.__init__._default_instructions",
+        "document_id": "llm.prompts.get_report_instructions",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:prompts.__init__._default_instructions",
+        "document_id": "prompts.__init__.get_report_instructions",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:ui.queries._token_set",
+        "document_id": "ui.queries._normalize_query_text",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 46
+      },
+      {
+        "query_id": "q:ui.queries._token_set",
+        "document_id": "ui.queries.dedup_multi_queries",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 46
+      },
+      {
+        "query_id": "q:rag.generation.generate_judge_text",
+        "document_id": "rag.generation._generate_completion",
+        "rank": 13,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 46
+      },
+      {
+        "query_id": "q:rag.generation.generate_judge_text",
+        "document_id": "realtime.server._generate_judge",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 46
+      }
+    ]
+  },
+  "stage_two_justified": false
+}

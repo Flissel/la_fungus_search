@@ -35,6 +35,12 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-seq-length", type=int, default=1024)
     parser.add_argument(
+        "--device",
+        default="cpu",
+        help="torch device; 'cuda' is roughly two orders of magnitude faster here "
+             "and was the whole reason a 0.6B model measured at 55 s/document",
+    )
+    parser.add_argument(
         "--chunk",
         type=int,
         default=0,
@@ -75,11 +81,12 @@ def main() -> None:
     take = len(remaining) if arguments.chunk <= 0 else min(arguments.chunk, len(remaining))
     batch = remaining[:take]
 
-    model = SentenceTransformer(arguments.model, device="cpu")
+    model = SentenceTransformer(arguments.model, device=arguments.device)
     # Code documents are long; the default 32-token truncation on some configs
     # would embed little more than a signature.
     model.max_seq_length = arguments.max_seq_length
     print(f"model         : {arguments.model}")
+    print(f"device        : {arguments.device}")
     print(f"max_seq_length: {model.max_seq_length}")
     print(f"this run      : documents {done}..{done + take - 1}")
 

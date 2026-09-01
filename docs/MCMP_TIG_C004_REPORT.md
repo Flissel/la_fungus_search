@@ -8,9 +8,10 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read section 17 first — Gate 2 stage 1 has run on real code and the gate does
-> not open. Section 15 carries the retrieval work; section 16 the pre-condition
-> that unblocked the run.**
+> **Read sections 17 and 18 first — Gate 2 stage 1 has run on real code, in two
+> independent embedding spaces, and the gate does not open in either. Section 15
+> carries the retrieval work; section 16 the pre-condition that unblocked the run,
+> and section 18.2 point 4 corrects it against real geometry.**
 >
 > This document was written in rounds and is kept whole rather than rewritten,
 > so the reasoning stays auditable.
@@ -1511,3 +1512,97 @@ invisible to the measurement. `hop_threshold` was held at 0.0 throughout, making
 reachability a pure graph property. Stage 2 was not run, so nothing here says what
 MCMP's retrieval would have scored — only that the geometry does not justify
 spending the compute to find out.
+
+---
+
+## 18. Replication in a stronger embedding space: the same verdict, and a harder finding
+
+Section 17's obvious objection is that its verdict came from a 384-dimensional
+general-purpose model, which may simply fail to resolve structure that a better
+one would find. This section answers that objection by running the identical
+pre-registered protocol on the same manifest in a different space. It is a new
+measurement, not a re-run: nothing about the criterion, the grid, the split or
+the null was changed, and the earlier result stands as published.
+
+**Why it was possible at all.** `embed_local.py` had `device="cpu"` hard-coded,
+which is the entire reason section 17 measured Qwen at 55 s/document and settled
+for MiniLM. This host has an RTX 3060 with 12 GB, 1.8 GB in use, and torch sees
+it. On CUDA the same 238 documents embed in **61 seconds** — against 37 minutes
+for 40 of them on CPU. The model choice in section 17 was forced by a defect in
+the measuring apparatus, not by the hardware.
+
+### 18.1 Facts
+
+Same manifest (`114b6a66…`, 238 documents), same split (23/23, 2 dropped), same
+grid and criterion. Model `Qwen/Qwen3-Embedding-0.6B`, 1024 dimensions.
+
+Selection half — `reach_given_far`, real / null / gap:
+
+| knn_k | hops=2 | hops=3 | hops=4 | hops=6 | hops=8 |
+|---|---|---|---|---|---|
+| 2 | 0.000/0.002/-0.002 | 0.000/0.002/-0.002 | 0.000/0.002/-0.002 | 0.000/0.002/-0.002 | 0.000/0.002/-0.002 |
+| 3 | 0.000/0.005/-0.005 | 0.013/0.010/+0.003 | 0.013/0.014/-0.002 | 0.013/0.016/-0.003 | 0.013/0.017/-0.004 |
+| 4 | 0.025/0.010/+0.016 | 0.038/0.018/+0.020 | 0.038/0.029/+0.009 | 0.038/0.049/-0.011 | 0.063/0.066/-0.003 |
+| 6 | 0.089/0.024/+0.065 | 0.114/0.065/+0.049 | 0.165/0.113/+0.051 | 0.278/0.280/-0.001 | 0.506/0.462/+0.045 |
+| 8 | 0.177/0.052/+0.125 | 0.278/0.147/+0.132 | 0.544/0.292/**+0.252** | 0.810/0.642/+0.168 | 0.886/0.847/+0.039 |
+
+Operating point: `knn_k = 8`, `max_hops = 4`.
+
+Evaluation half, side by side with section 17:
+
+| quantity | MiniLM (384) | Qwen (1024) |
+|---|---|---|
+| far_rate | 0.602 | **0.537** |
+| reach_given_far | 0.292 | **0.621** |
+| null reach_given_far | 0.155 | 0.284 |
+| manifold_signature | 0.176 | **0.333** |
+| null median | 0.148 | 0.278 |
+| null p95 | 0.204 | 0.343 |
+| excess over null median | 0.028 | 0.056 |
+| required excess | 0.085 | 0.072 |
+| exceeds null p95 | False | False |
+| meets relative excess | False | False |
+
+**STAGE 2 JUSTIFIED: False**, in both spaces.
+
+### 18.2 Interpretation
+
+1. **The negative result is not an artifact of the weak model.** The stronger
+   embedding nearly doubles the signature, 0.176 to 0.333 — and the null rises
+   with it, 0.148 to 0.278. Signal and chance move almost in proportion, so the
+   excess barely improves (0.028 to 0.056) and the verdict does not change. Two
+   independent spaces, one protocol, one answer.
+
+2. **But it is now marginal, and that must be said as plainly as the verdict.**
+   The signature misses the 95th percentile by 0.010 — on 108 pairs that is about
+   one pair — and the relative excess by 0.017. This is not a comfortable No. A
+   third space, or a larger corpus, could plausibly land on the other side. What
+   it is not is evidence *for* the mechanism: a gate that closes by one pair has
+   still closed, and the pre-registration exists precisely so a near miss cannot
+   be read as a pass.
+
+3. **A better embedding shrinks the territory MCMP exists to occupy.** `far_rate`
+   falls from 0.602 to 0.537: the stronger model already places more call-graph
+   neighbours inside the FAISS top-8, so there is less for a walk to recover. This
+   generalises uncomfortably. MCMP's value is bounded above by what the embedding
+   misses, and embeddings keep improving. Any case for the mechanism has to be
+   made against the best available embedding, not the one that flatters it most.
+
+4. **Both spaces put the operating point at `knn_k = 8`, the grid edge.** Section
+   16 derived from synthetic fixtures that the null inflates above `knn_k = 6` and
+   capped the grid accordingly. Real geometry contradicts that in both spaces
+   independently. In the Qwen space the small end is not merely worse but dead —
+   reachability is exactly 0.000 at `knn_k = 2` and 0.013 at `knn_k = 3`, because
+   that space's mutual k-NN graph is too sparse at small k to connect anything.
+   The synthetic finding does not transfer, and the grid is now known to be
+   mis-centred for real data. That is a correction to section 16.3, and it is
+   binding on the next pre-registration rather than on this run.
+
+### 18.3 Non-claims
+
+Still one corpus and one manifest; the two spaces share every relevance label, so
+these are not independent samples of code, only of embedding. Neither model is the
+3072-dimensional production one, which remains unmeasured and unreachable while
+the OpenAI account has no credit. The `knn_k = 8` grid edge means neither run
+observed its own optimum. `hop_threshold` was 0.0 throughout. Stage 2 has still
+never run, in any space.
