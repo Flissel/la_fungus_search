@@ -42,7 +42,7 @@ def main() -> None:
     # The base retriever whose hits get expanded. bm25 exists because the C
     # probe measured it beating dense by 15 points on this oracle; expansion
     # should be tested on the strongest base, not the weakest.
-    parser.add_argument("--base", choices=("dense", "bm25"), default="dense")
+    parser.add_argument("--base", choices=("dense", "bm25", "union"), default="dense")
     arguments = parser.parse_args()
 
     manifest = load_manifest(arguments.manifest)
@@ -50,7 +50,7 @@ def main() -> None:
     bm25 = None
     bm25_position: dict[str, int] = {}
     source_of: dict[str, str] = {}
-    if arguments.base == "bm25":
+    if arguments.base in ("bm25", "union"):
         from embeddinggemma.bm25_lite import BM25Lite
 
         source_of = {document.document_id: document.source for document in manifest.documents}
@@ -78,7 +78,7 @@ def main() -> None:
             continue
         corpus = set(dataset.document_ids)
         query_vector = dataset.query_vectors[0]
-        if arguments.base == "bm25":
+        if arguments.base in ("bm25", "union"):
             query_document = query_id[len(QUERY_PREFIX):]
             base_scores = bm25.score(source_of[query_document])
             score_of_id = {
@@ -86,6 +86,18 @@ def main() -> None:
                 for document_id in dataset.document_ids
             }
             ranked_ids = sorted(dataset.document_ids, key=lambda d: -score_of_id[d])
+            if arguments.base == "union":
+                # The production shape: half the hit budget from each arm, so the
+                # candidate set stays the same size as the single-base variants.
+                dense_sims = query_vector @ dataset.document_vectors.T
+                dense_order = np.argsort(-dense_sims)
+                dense_ranked = [dataset.document_ids[int(i)] for i in dense_order]
+                merged: list[str] = []
+                for pair in zip(ranked_ids, dense_ranked):
+                    for document_id in pair:
+                        if document_id not in merged:
+                            merged.append(document_id)
+                ranked_ids = merged
         else:
             similarities = query_vector @ dataset.document_vectors.T
             order = np.argsort(-similarities)

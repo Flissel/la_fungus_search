@@ -1667,11 +1667,42 @@ async def http_settings_post(req: Request) -> JSONResponse:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
 
 
+# --- Retrieval v2 (report section 27): BM25+dense candidate union, one-hop
+# call-graph expansion, function-granularity documents. Off unless
+# FUNGUS_RETRIEVAL_V2=1; loaded once; an enabled flag with broken assets is a
+# hard error at request time, never a silent fall-back to v1.
+_retrieval_v2_cache: dict[str, object] = {}
+
+
+def _retrieval_v2():
+    if "engine" not in _retrieval_v2_cache:
+        from embeddinggemma import retrieval_v2 as _v2
+        _retrieval_v2_cache["engine"] = _v2.build_from_env(dict(os.environ))
+    return _retrieval_v2_cache["engine"]
+
+
+def _v2_or_error():
+    """Returns (engine, error_response). engine None + error None means v1."""
+    try:
+        return _retrieval_v2(), None
+    except Exception as e:
+        return None, JSONResponse(
+            {"status": "error", "message": f"retrieval v2 enabled but failed to load: {e}"},
+            status_code=500,
+        )
+
+
 @app.post("/search")
 async def http_search(req: Request) -> JSONResponse:
     body = await req.json()
     query = str(body.get("query", ""))
     top_k = int(body.get("top_k", 5))
+    v2, v2_error = _v2_or_error()
+    if v2_error is not None:
+        return v2_error
+    if v2 is not None:
+        res = v2.search(query, top_k=top_k)
+        return JSONResponse({"status": "ok", "results": res["results"], "engine": res["engine"]})
     retr = streamer.retr
     if retr is None:
         return JSONResponse({"status": "error", "message": "retriever not started"}, status_code=400)
@@ -1687,10 +1718,16 @@ async def http_answer(req: Request) -> JSONResponse:
     body = await req.json()
     query = str(body.get("query", ""))
     top_k = int(body.get("top_k", 5))
-    retr = streamer.retr
-    if retr is None:
-        return JSONResponse({"status": "error", "message": "retriever not started"}, status_code=400)
-    res = retr.search(query, top_k=top_k)
+    v2, v2_error = _v2_or_error()
+    if v2_error is not None:
+        return v2_error
+    if v2 is not None:
+        res = v2.search(query, top_k=top_k)
+    else:
+        retr = streamer.retr
+        if retr is None:
+            return JSONResponse({"status": "error", "message": "retriever not started"}, status_code=400)
+        res = retr.search(query, top_k=top_k)
     ctx = "\n\n".join([(it.get('content') or '')[:800] for it in res.get('results', [])])
     prompt = f"Kontext:\n{ctx}\n\nAufgabe:\n{query}\n\nAntwort:"
     answer_prompt_path = os.path.join(SETTINGS_DIR, "reports/answer_prompt.txt")
