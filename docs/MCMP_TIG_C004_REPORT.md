@@ -8,9 +8,9 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read section 15 first — it carries the current state of the retrieval work.
-> Section 16 unblocks Gate 2's binding pre-condition. Section 9 carries the
-> standing Gate 2 decision.**
+> **Read section 17 first — Gate 2 stage 1 has run on real code and the gate does
+> not open. Section 15 carries the retrieval work; section 16 the pre-condition
+> that unblocked the run.**
 >
 > This document was written in rounds and is kept whole rather than rewritten,
 > so the reasoning stays auditable.
@@ -1397,3 +1397,117 @@ would not be for a gate decision. `hop_threshold` was held at 0.0 throughout, so
 the whole table is a pure graph property and says nothing about similarity-gated
 hops. Nothing here is a Gate 2 result: the production snapshot does not exist, and
 this sweep does not create it.
+
+---
+
+## 17. Gate 2 stage 1, run on real code: the gate does not open
+
+This is the first measurement in this report taken on real data. Every section
+before it is synthetic.
+
+### 17.1 How it was made possible, and what that costs
+
+The production route is dead at the account level, not the infrastructure level.
+On 2026-09-01 the `embedding-service` image was built and started standalone: it
+reports `{"status":"ok","model":"text-embedding-3-large"}` and the first real call
+returns `429 insufficient_quota — "You have no credits remaining."` The service is
+a thin wrapper over OpenAI's embeddings API with no local model, so **Docker was
+never the blocker; OpenAI credit is.**
+
+The snapshot was therefore built from a locally cached model. Two were available:
+`Qwen/Qwen3-Embedding-0.6B` (1024-dim) and `sentence-transformers/all-MiniLM-L6-v2`
+(384-dim). Qwen measured at 37 minutes for 40 documents on this contended host —
+55 s/document with torch already using 24 of 32 threads — against 33 s for the
+same 40 with MiniLM, including model load. MiniLM was used.
+
+**What that costs, stated plainly.** This is a measurement of *this* embedding
+space. A 384-dimensional general-purpose sentence model is a weaker instrument
+than the 3072-dimensional production one, and it may under-resolve structure that
+is there. A negative result here does not establish a negative result for
+production, and `build_service_snapshot` records `backend="local-transformers"`
+and the model id so no reader can mistake one for the other.
+
+### 17.2 Facts
+
+Corpus `src/embeddinggemma/`, manifest `embeddinggemma-local-v1`, digest
+`114b6a66…`: **238 documents** (functions, methods, classes by AST), 156 query
+candidates, 11 ambiguous call names discarded fail-closed.
+
+Split-sample per section 16.3, criterion fixed before the run: 23 selection seeds,
+23 evaluation seeds, query-disjoint; 2 seeds dropped as unusable or straddling.
+
+Selection half — `reach_given_far`, real / null / gap:
+
+| knn_k | hops=2 | hops=3 | hops=4 | hops=6 | hops=8 |
+|---|---|---|---|---|---|
+| 2 | 0.082/0.003/+0.080 | 0.094/0.003/+0.092 | 0.094/0.003/+0.091 | 0.094/0.003/+0.091 | 0.094/0.003/+0.091 |
+| 3 | 0.094/0.005/+0.089 | 0.106/0.007/+0.099 | 0.118/0.011/+0.106 | 0.118/0.019/+0.099 | 0.118/0.024/+0.094 |
+| 4 | 0.129/0.013/+0.117 | 0.200/0.030/+0.170 | 0.212/0.055/+0.157 | 0.271/0.100/+0.170 | 0.294/0.153/+0.142 |
+| 6 | 0.176/0.027/+0.149 | 0.306/0.081/+0.225 | 0.376/0.147/+0.230 | 0.471/0.328/+0.143 | 0.647/0.529/+0.118 |
+| 8 | 0.271/0.051/+0.220 | 0.412/0.151/**+0.261** | 0.565/0.312/+0.253 | 0.882/0.683/+0.200 | 0.965/0.910/+0.055 |
+
+Operating point selected by the pre-registered rule: `knn_k = 8`, `max_hops = 3`.
+
+Evaluation half, 100-permutation null:
+
+| quantity | value |
+|---|---|
+| pair_count | 108 |
+| far_rate | **0.602** |
+| reach_given_far | 0.292 |
+| null reach_given_far (median) | 0.155 |
+| manifold_signature | 0.176 |
+| null median | 0.148 |
+| null p95 | 0.204 |
+| excess over null median | 0.028 |
+| required excess | 0.085 |
+| exceeds null p95 | **False** |
+| meets absolute minimum | True |
+| meets relative excess | **False** |
+
+**STAGE 2 JUSTIFIED: False.**
+
+### 17.3 Interpretation
+
+1. **MCMP's premise survives; its mechanism does not clear the bar.** 60% of
+   call-graph neighbours rank deeper than the FAISS top-8. Embedding similarity
+   really does miss most call-graph relations, which is exactly the gap MCMP
+   exists to close. What fails is the second half: those far documents are
+   chain-reachable at 0.292 where redrawn labels reach 0.155. The signal is real
+   and roughly two-fold, and it is still too small for the pre-registered gate.
+
+2. **The saturation worry does not apply to this corpus.** Sections 14-16 were
+   shaped by reachability measuring 1.000 and collapsing the signature into the
+   far rate. Here the real column runs 0.082 to 0.965 across the grid and sits at
+   0.412 at the chosen point. The measurement discriminates; the gate closes on
+   the evidence, not on a degenerate statistic.
+
+3. **The criterion picked the edge of its own grid, and that is reported rather
+   than repaired.** The gap is maximised at `knn_k = 8`, the largest value the
+   pre-registered grid allows — and the grid stopped at 8 precisely because
+   section 16 found the null inflating above it *on synthetic data*. Real geometry
+   disagrees with that synthetic finding. The honest reading is that the true
+   optimum may lie outside the grid; widening the grid now and re-running would
+   be exactly the post-hoc selection the split-sample protocol exists to prevent.
+   It is a finding for the next pre-registration, not a fix for this run.
+
+4. **Two of three conditions fail together, which is the informative pattern.**
+   The signature clears the absolute floor (0.176 ≥ 0.10) but misses both the 95th
+   percentile (0.176 < 0.204) and the relative excess (0.028 < 0.085). A gate that
+   failed only on the absolute floor would mean "too few far pairs to be worth the
+   compute"; failing on both null-relative conditions means the structure is not
+   distinguishable enough from chance. The Gate 1 cost argument — roughly 14 300x
+   FAISS for full-corpus MCMP, 143 224 comparisons for the bounded frontier — has
+   nothing to buy here.
+
+### 17.4 Non-claims
+
+One corpus, 238 documents, one embedding space, one model. A 384-dimensional
+general-purpose model may simply not resolve code structure that a 3072-dimensional
+one would; **this result does not transfer to the production embedding space and
+must not be quoted as if it did.** The call graph is resolved fail-closed, so 11
+ambiguous names are absent from the relevance oracle and their relations are
+invisible to the measurement. `hop_threshold` was held at 0.0 throughout, making
+reachability a pure graph property. Stage 2 was not run, so nothing here says what
+MCMP's retrieval would have scored — only that the geometry does not justify
+spending the compute to find out.

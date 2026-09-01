@@ -1,0 +1,1432 @@
+{
+  "protocol": "split-sample, criterion pre-registered in report section 16.3",
+  "snapshot_backend": "local-transformers",
+  "snapshot_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "selection_seeds": [
+    0,
+    2,
+    4,
+    6,
+    9,
+    10,
+    12,
+    14,
+    16,
+    18,
+    19,
+    22,
+    24,
+    25,
+    27,
+    30,
+    32,
+    35,
+    36,
+    38,
+    40,
+    43,
+    44
+  ],
+  "evaluation_seeds": [
+    1,
+    3,
+    5,
+    7,
+    8,
+    11,
+    13,
+    15,
+    17,
+    20,
+    21,
+    23,
+    26,
+    28,
+    29,
+    31,
+    33,
+    34,
+    37,
+    39,
+    42,
+    45,
+    46
+  ],
+  "dropped_seeds": [
+    41,
+    47
+  ],
+  "selection_sweep": [
+    {
+      "knn_k": 2,
+      "max_hops": 2,
+      "real_reach_given_far": 0.08235294117647059,
+      "null_reach_given_far": 0.00250104541396037,
+      "gap": 0.07985189576251021
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 3,
+      "real_reach_given_far": 0.09411764705882353,
+      "null_reach_given_far": 0.00250104541396037,
+      "gap": 0.09161660164486315
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 4,
+      "real_reach_given_far": 0.09411764705882353,
+      "null_reach_given_far": 0.0029212134811872604,
+      "gap": 0.09119643357763627
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 6,
+      "real_reach_given_far": 0.09411764705882353,
+      "null_reach_given_far": 0.0029212134811872604,
+      "gap": 0.09119643357763627
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 8,
+      "real_reach_given_far": 0.09411764705882353,
+      "null_reach_given_far": 0.0029212134811872604,
+      "gap": 0.09119643357763627
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 2,
+      "real_reach_given_far": 0.09411764705882353,
+      "null_reach_given_far": 0.005015992263499493,
+      "gap": 0.08910165479532403
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 3,
+      "real_reach_given_far": 0.10588235294117647,
+      "null_reach_given_far": 0.007113751287314206,
+      "gap": 0.09876860165386227
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 4,
+      "real_reach_given_far": 0.11764705882352941,
+      "null_reach_given_far": 0.011288412517813436,
+      "gap": 0.10635864630571598
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 6,
+      "real_reach_given_far": 0.11764705882352941,
+      "null_reach_given_far": 0.018853628833338788,
+      "gap": 0.09879342999019063
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 8,
+      "real_reach_given_far": 0.11764705882352941,
+      "null_reach_given_far": 0.023854789996078006,
+      "gap": 0.0937922688274514
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 2,
+      "real_reach_given_far": 0.12941176470588237,
+      "null_reach_given_far": 0.012511547605040477,
+      "gap": 0.11690021710084189
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 3,
+      "real_reach_given_far": 0.2,
+      "null_reach_given_far": 0.02965570909296984,
+      "gap": 0.17034429090703018
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 4,
+      "real_reach_given_far": 0.21176470588235294,
+      "null_reach_given_far": 0.054628513734354935,
+      "gap": 0.157136192147998
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 6,
+      "real_reach_given_far": 0.27058823529411763,
+      "null_reach_given_far": 0.10045982257774637,
+      "gap": 0.17012841271637125
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 8,
+      "real_reach_given_far": 0.29411764705882354,
+      "null_reach_given_far": 0.1525580108883596,
+      "gap": 0.14155963617046394
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 2,
+      "real_reach_given_far": 0.17647058823529413,
+      "null_reach_given_far": 0.027116990418163005,
+      "gap": 0.14935359781713112
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 3,
+      "real_reach_given_far": 0.3058823529411765,
+      "null_reach_given_far": 0.08085366582977144,
+      "gap": 0.22502868711140506
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 4,
+      "real_reach_given_far": 0.3764705882352941,
+      "null_reach_given_far": 0.1469667232137132,
+      "gap": 0.2295038650215809
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 6,
+      "real_reach_given_far": 0.47058823529411764,
+      "null_reach_given_far": 0.3275009173646317,
+      "gap": 0.14308731792948592
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 8,
+      "real_reach_given_far": 0.6470588235294118,
+      "null_reach_given_far": 0.5287163890320411,
+      "gap": 0.1183424344973707
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 2,
+      "real_reach_given_far": 0.27058823529411763,
+      "null_reach_given_far": 0.050866686379187155,
+      "gap": 0.21972154891493048
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 3,
+      "real_reach_given_far": 0.4117647058823529,
+      "null_reach_given_far": 0.15078470378661946,
+      "gap": 0.26098000209573347
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 4,
+      "real_reach_given_far": 0.5647058823529412,
+      "null_reach_given_far": 0.3121177068219809,
+      "gap": 0.25258817553096025
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 6,
+      "real_reach_given_far": 0.8823529411764706,
+      "null_reach_given_far": 0.6828254614723279,
+      "gap": 0.19952747970414264
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 8,
+      "real_reach_given_far": 0.9647058823529412,
+      "null_reach_given_far": 0.909565990395709,
+      "gap": 0.055139891957232234
+    }
+  ],
+  "operating_point": {
+    "knn_k": 8,
+    "max_hops": 3,
+    "real_reach_given_far": 0.4117647058823529,
+    "null_reach_given_far": 0.15078470378661946,
+    "gap": 0.26098000209573347
+  },
+  "evaluation": {
+    "config": {
+      "top_k": 8,
+      "knn_k": 8,
+      "max_hops": 3,
+      "hop_threshold": 0.0,
+      "stage1_seeds": 23,
+      "seeds": [
+        1,
+        3,
+        5,
+        7,
+        8,
+        11,
+        13,
+        15,
+        17,
+        20,
+        21,
+        23,
+        26,
+        28,
+        29,
+        31,
+        33,
+        34,
+        37,
+        39,
+        42,
+        45,
+        46
+      ],
+      "null_permutations": 100,
+      "null_seed": 0,
+      "exploratory": false
+    },
+    "dataset_id": "gate2-embeddinggemma-local-v1",
+    "snapshot_backend": "local-transformers",
+    "snapshot_model": "sentence-transformers/all-MiniLM-L6-v2",
+    "manifest_digest": "114b6a669ae420c0c05e0557c0cd0d7d8758744136cc3b07c12bbebb22aedb7e",
+    "pair_count": 108,
+    "far_count": 65,
+    "far_and_reachable_count": 19,
+    "manifold_signature": 0.17592592592592593,
+    "null_signatures": [
+      0.17592592592592593,
+      0.1111111111111111,
+      0.17592592592592593,
+      0.12962962962962962,
+      0.16666666666666666,
+      0.1574074074074074,
+      0.17592592592592593,
+      0.16666666666666666,
+      0.16666666666666666,
+      0.19444444444444445,
+      0.1574074074074074,
+      0.19444444444444445,
+      0.12962962962962962,
+      0.1574074074074074,
+      0.08333333333333333,
+      0.1388888888888889,
+      0.14814814814814814,
+      0.14814814814814814,
+      0.18518518518518517,
+      0.16666666666666666,
+      0.19444444444444445,
+      0.17592592592592593,
+      0.1574074074074074,
+      0.14814814814814814,
+      0.12037037037037036,
+      0.16666666666666666,
+      0.18518518518518517,
+      0.12037037037037036,
+      0.18518518518518517,
+      0.1111111111111111,
+      0.10185185185185185,
+      0.1574074074074074,
+      0.17592592592592593,
+      0.17592592592592593,
+      0.2222222222222222,
+      0.19444444444444445,
+      0.14814814814814814,
+      0.14814814814814814,
+      0.1574074074074074,
+      0.1574074074074074,
+      0.14814814814814814,
+      0.1388888888888889,
+      0.1388888888888889,
+      0.12037037037037036,
+      0.14814814814814814,
+      0.08333333333333333,
+      0.12037037037037036,
+      0.1574074074074074,
+      0.10185185185185185,
+      0.16666666666666666,
+      0.1388888888888889,
+      0.12962962962962962,
+      0.21296296296296297,
+      0.1111111111111111,
+      0.1111111111111111,
+      0.17592592592592593,
+      0.1574074074074074,
+      0.1111111111111111,
+      0.23148148148148148,
+      0.12962962962962962,
+      0.19444444444444445,
+      0.1111111111111111,
+      0.09259259259259259,
+      0.14814814814814814,
+      0.14814814814814814,
+      0.08333333333333333,
+      0.12962962962962962,
+      0.12962962962962962,
+      0.14814814814814814,
+      0.2222222222222222,
+      0.16666666666666666,
+      0.09259259259259259,
+      0.12962962962962962,
+      0.14814814814814814,
+      0.17592592592592593,
+      0.16666666666666666,
+      0.10185185185185185,
+      0.1388888888888889,
+      0.12037037037037036,
+      0.12962962962962962,
+      0.1574074074074074,
+      0.2037037037037037,
+      0.14814814814814814,
+      0.12962962962962962,
+      0.1388888888888889,
+      0.1574074074074074,
+      0.06481481481481481,
+      0.2037037037037037,
+      0.1111111111111111,
+      0.17592592592592593,
+      0.1111111111111111,
+      0.19444444444444445,
+      0.2037037037037037,
+      0.12037037037037036,
+      0.1111111111111111,
+      0.16666666666666666,
+      0.1574074074074074,
+      0.14814814814814814,
+      0.14814814814814814,
+      0.16666666666666666
+    ],
+    "null_median": 0.14814814814814814,
+    "null_p95": 0.2037037037037037,
+    "excess_over_null_median": 0.02777777777777779,
+    "required_excess": 0.0851851851851852,
+    "exceeds_null_p95": false,
+    "meets_absolute_minimum": true,
+    "meets_relative_excess": false,
+    "far_rate": 0.6018518518518519,
+    "reach_given_far": 0.2923076923076923,
+    "null_far_rate_median": 0.9629629629629629,
+    "null_reach_given_far_median": 0.1553398058252427,
+    "per_seed": [
+      {
+        "seed": 1,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 3,
+        "pair_count": 3,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 5,
+        "pair_count": 4,
+        "far_count": 2,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 7,
+        "pair_count": 5,
+        "far_count": 2,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.2
+      },
+      {
+        "seed": 8,
+        "pair_count": 6,
+        "far_count": 4,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 11,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 13,
+        "pair_count": 3,
+        "far_count": 0,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 15,
+        "pair_count": 4,
+        "far_count": 2,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 17,
+        "pair_count": 6,
+        "far_count": 3,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.16666666666666666
+      },
+      {
+        "seed": 20,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 21,
+        "pair_count": 4,
+        "far_count": 0,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 23,
+        "pair_count": 5,
+        "far_count": 4,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 26,
+        "pair_count": 6,
+        "far_count": 2,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.16666666666666666
+      },
+      {
+        "seed": 28,
+        "pair_count": 6,
+        "far_count": 3,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 29,
+        "pair_count": 9,
+        "far_count": 8,
+        "far_and_reachable_count": 3,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 31,
+        "pair_count": 11,
+        "far_count": 9,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.09090909090909091
+      },
+      {
+        "seed": 33,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 34,
+        "pair_count": 2,
+        "far_count": 1,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 37,
+        "pair_count": 3,
+        "far_count": 1,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 39,
+        "pair_count": 3,
+        "far_count": 3,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.6666666666666666
+      },
+      {
+        "seed": 42,
+        "pair_count": 8,
+        "far_count": 8,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.125
+      },
+      {
+        "seed": 45,
+        "pair_count": 4,
+        "far_count": 2,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.5
+      },
+      {
+        "seed": 46,
+        "pair_count": 4,
+        "far_count": 2,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.5
+      }
+    ],
+    "skipped_seeds": [],
+    "pairs": [
+      {
+        "query_id": "q:ui.components.snippet_for",
+        "document_id": "mcmp_rag.MCPMRetriever.search",
+        "rank": 63,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 1
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_line_windows",
+        "document_id": "ui.corpus._path_boost_header",
+        "rank": 13,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 1
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_line_windows",
+        "document_id": "ui.corpus.chunk_python_file",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 1
+      },
+      {
+        "query_id": "q:ui.reports._progress_path",
+        "document_id": "ui.reports.write_progress",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 3
+      },
+      {
+        "query_id": "q:mcmp.indexing.faiss_search",
+        "document_id": "mcmp.indexing._l2_normalize_rows",
+        "rank": 20,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 3
+      },
+      {
+        "query_id": "q:mcmp.indexing.faiss_search",
+        "document_id": "mcmp_rag.MCPMRetriever.search",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 3
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 37,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 5
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "multivec.split_chunk_into_views",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 5
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._doc_by_id",
+        "rank": 33,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 5
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 5
+      },
+      {
+        "query_id": "q:realtime.server._prompt_default_for_mode",
+        "document_id": "realtime.server.http_prompts_get",
+        "rank": 16,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 7
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.__init__",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 7
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._post_with_retry",
+        "rank": 10,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 7
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._validate_vectors",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 7
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 7
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 37,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 8
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "multivec.split_chunk_into_views",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.apply_settings",
+        "rank": 77,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.save_settings_to_disk",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_dict",
+        "rank": 35,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_usage_lines",
+        "rank": 44,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.settings_usage_lines",
+        "document_id": "realtime.server.http_settings_get",
+        "rank": 19,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 11
+      },
+      {
+        "query_id": "q:realtime.server.settings_usage_lines",
+        "document_id": "realtime.server.http_settings_post",
+        "rank": 95,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 11
+      },
+      {
+        "query_id": "q:mcmp.simulation.spawn_agents",
+        "document_id": "mcmp_rag.Agent",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 11
+      },
+      {
+        "query_id": "q:rag.vectorstore._create_collection",
+        "document_id": "rag.vectorstore.ensure_collection",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 13
+      },
+      {
+        "query_id": "q:codespace_analyzer.main",
+        "document_id": "codespace_analyzer.CodeSpaceAnalyzer",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 13
+      },
+      {
+        "query_id": "q:codespace_analyzer.main",
+        "document_id": "codespace_analyzer.CodeSpaceAnalyzer.analyze_script",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 13
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._is_import_only",
+        "rank": 31,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 15
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 15
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_python_file_ast",
+        "document_id": "ui.corpus._path_boost_header",
+        "rank": 39,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 15
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_python_file_ast",
+        "document_id": "ui.corpus.chunk_python_file",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 15
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.__init__",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 17
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._post_with_retry",
+        "rank": 10,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 17
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._validate_vectors",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 17
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 17
+      },
+      {
+        "query_id": "q:realtime.server.http_prompts_get",
+        "document_id": "bm25_lite.BM25Lite.load",
+        "rank": 157,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 17
+      },
+      {
+        "query_id": "q:realtime.server.http_prompts_get",
+        "document_id": "realtime.server._prompt_default_for_mode",
+        "rank": 25,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 17
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._is_import_only",
+        "rank": 31,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 20
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 20
+      },
+      {
+        "query_id": "q:realtime.server._build_report_prompt",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 67,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 20
+      },
+      {
+        "query_id": "q:ui.corpus._cache_key",
+        "document_id": "ui.corpus._file_sha1",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 21
+      },
+      {
+        "query_id": "q:ui.corpus._cache_key",
+        "document_id": "ui.corpus._load_cached_chunks",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 21
+      },
+      {
+        "query_id": "q:ui.corpus._cache_key",
+        "document_id": "ui.corpus._save_cached_chunks",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 21
+      },
+      {
+        "query_id": "q:realtime.server._report_schema_hint",
+        "document_id": "prompts.__init__.report_schema_hint",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 21
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 43,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "ui.mcmp_runner._cos_sim",
+        "rank": 88,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "ui.mcmp_runner._extract_source",
+        "rank": 97,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 34,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 23
+      },
+      {
+        "query_id": "q:rag.search._keyword_search",
+        "document_id": "rag.search.hybrid_search",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.reports.write_progress",
+        "document_id": "ui.reports._progress_path",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 26
+      },
+      {
+        "query_id": "q:ui.reports.write_progress",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 25,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 26
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.__init__",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 26
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._post_with_retry",
+        "rank": 10,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 26
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._validate_vectors",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 26
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceError",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 26
+      },
+      {
+        "query_id": "q:ast_scan.scan_with_detector",
+        "document_id": "ast_scan._get_cached_ast",
+        "rank": 18,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 28
+      },
+      {
+        "query_id": "q:ast_scan.scan_with_detector",
+        "document_id": "ast_scan.walk_python_files",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._compute_blended_topk",
+        "document_id": "realtime.server.SnapshotStreamer._doc_by_id",
+        "rank": 39,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._compute_blended_topk",
+        "document_id": "realtime.server.SnapshotStreamer._is_import_only",
+        "rank": 114,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._compute_blended_topk",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 7,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._compute_blended_topk",
+        "document_id": "realtime.server.SnapshotStreamer._trail_degree_map",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 28
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server.SnapshotStreamer._broadcast",
+        "rank": 103,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 17,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server.SnapshotStreamer.stop",
+        "rank": 69,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server._encode_texts",
+        "rank": 129,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server._load_embed_client",
+        "rank": 121,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server._parse_chunk_header_line",
+        "rank": 138,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "ui.corpus.chunk_python_file",
+        "rank": 42,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "ui.corpus.list_code_files",
+        "rank": 52,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:mcmp.simulation.spawn_agents",
+        "document_id": "mcmp_rag.Agent",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_update_file",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 43,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_update_file",
+        "document_id": "realtime.server.http_corpus_add_file",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp_rag.Document",
+        "rank": 25,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp_rag.MCPMRetriever.add_documents_incremental",
+        "rank": 20,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp_rag.MCPMRetriever.save_persistent_index",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 29,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "realtime.server.http_corpus_reindex",
+        "rank": 59,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "realtime.server.http_jobs_start",
+        "rank": 34,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "ui.mcmp_runner.quick_search_with_mcmp",
+        "rank": 33,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 37,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:tools.judge_runner.main",
+        "document_id": "bm25_lite.BM25Lite.load",
+        "rank": 121,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 33
+      },
+      {
+        "query_id": "q:ui.corpus._save_cached_chunks",
+        "document_id": "ui.corpus._cache_key",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 33
+      },
+      {
+        "query_id": "q:ui.corpus._save_cached_chunks",
+        "document_id": "ui.corpus.collect_codebase_chunks",
+        "rank": 9,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 33
+      },
+      {
+        "query_id": "q:rag.vectorstore._create_collection",
+        "document_id": "rag.vectorstore.ensure_collection",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 34
+      },
+      {
+        "query_id": "q:llm.config.OllamaConfig",
+        "document_id": "llm.config._resolve_model",
+        "rank": 14,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 34
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._doc_by_id",
+        "rank": 33,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 37
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 37
+      },
+      {
+        "query_id": "q:mcmp.simulation.spawn_agents",
+        "document_id": "mcmp_rag.Agent",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 37
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.save_persistent_index",
+        "document_id": "mcmp_rag.MCPMRetriever._cache_path",
+        "rank": 29,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 39
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.save_persistent_index",
+        "document_id": "mcmp_rag.MCPMRetriever.add_documents",
+        "rank": 9,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 39
+      },
+      {
+        "query_id": "q:realtime.server._build_report_prompt",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 67,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 39
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 42
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 25,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 42
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "realtime.server.http_corpus_reindex",
+        "rank": 221,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 42
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "realtime.server.http_jobs_start",
+        "rank": 102,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 42
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.initialize_simulation",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 65,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 42
+      },
+      {
+        "query_id": "q:realtime.server.settings_dict",
+        "document_id": "realtime.server.http_settings_get",
+        "rank": 57,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 42
+      },
+      {
+        "query_id": "q:realtime.server.settings_dict",
+        "document_id": "realtime.server.http_settings_post",
+        "rank": 128,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 42
+      },
+      {
+        "query_id": "q:realtime.server.settings_dict",
+        "document_id": "realtime.server.save_settings_to_disk",
+        "rank": 45,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 42
+      },
+      {
+        "query_id": "q:ui.queries._normalize_query_text",
+        "document_id": "ui.queries._token_set",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:ui.queries._normalize_query_text",
+        "document_id": "ui.queries._trigram_set",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:prompts.__init__._default_instructions",
+        "document_id": "llm.prompts.get_report_instructions",
+        "rank": 55,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 45
+      },
+      {
+        "query_id": "q:prompts.__init__._default_instructions",
+        "document_id": "prompts.__init__.get_report_instructions",
+        "rank": 26,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 45
+      },
+      {
+        "query_id": "q:ui.queries._token_set",
+        "document_id": "ui.queries._normalize_query_text",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 46
+      },
+      {
+        "query_id": "q:ui.queries._token_set",
+        "document_id": "ui.queries.dedup_multi_queries",
+        "rank": 82,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 46
+      },
+      {
+        "query_id": "q:rag.generation.generate_judge_text",
+        "document_id": "rag.generation._generate_completion",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 46
+      },
+      {
+        "query_id": "q:rag.generation.generate_judge_text",
+        "document_id": "realtime.server._generate_judge",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 46
+      }
+    ]
+  },
+  "stage_two_justified": false
+}
