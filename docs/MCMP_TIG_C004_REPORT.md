@@ -8,11 +8,15 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read sections 22 and 24 first.** Section 22 reverses the verdict of everything
+> **Read sections 22, 24 and 25 first.** Section 22 reverses the verdict of everything
 > before it and says why; section 24 is the measurement the whole report was built
 > to reach — **stage 2 has run**, and MCMP ties FAISS exactly on ranking while
 > discovering a quarter more relevant documents, at 14 300x the comparisons.
-> Discovery is real; not one extra discovery enters the top 8. Sections 17, 18 and 21 ran Gate 2 stage 1 on a 238-document corpus
+> Discovery is real; not one extra discovery enters the top 8. **Section 25 closes
+> the two paths that were still open**: the documents FAISS misses sit at median
+> rank 200 of 3 998 and MCMP ranks 0 of 8 of them better, so no reranker can reach
+> them; and the bounded frontier -- the only affordable variant -- discovers exactly
+> what FAISS discovers. Sections 17, 18 and 21 ran Gate 2 stage 1 on a 238-document corpus
 > and the gate closed, at one point on an exact tie. Section 22 runs the same
 > protocol on two independent 4 000-document samples of a second repository and
 > **the gate opens on both, on every condition, by a factor of two.** The confound
@@ -2106,3 +2110,95 @@ agent sweep `{24, 48, 96, 192, 384}` was not run. Method G is absent from
 `_RUN_SPECS` and therefore from this table — section 23 measured it separately and
 found it ties as well, at 37x rather than 14 300x. Neither model is the production
 3072-dimensional one.
+
+---
+
+## 25. The two measurements that close it
+
+Section 24 left one path open and section 23 left one tension unresolved. Both
+reduce to two questions, and both are cheap. They were run together.
+
+### 25.1 Question 1 — where do the relevant documents FAISS misses end up?
+
+If MCMP moves a missed document from rank 40 to rank 12, a reranker over a wider
+pool closes the gap and sections 14-15 still matter. If it leaves it at 40,
+nothing will.
+
+brain sample 0, 12 seeds, 96 agents, ranks over the full 3 998-document ordering:
+
+| | |
+|---|---|
+| relevant documents ranked deeper than top-8 | 8 |
+| median FAISS rank | **200** |
+| median MCMP rank | **203** |
+| MCMP ranks it better | **0 of 8** |
+| MCMP ranks it worse | 7 of 8 |
+| MCMP puts it in the top 16 | 1 of 8 |
+
+The eight, FAISS rank → MCMP rank:
+
+```
+    9 ->     9   same
+   22 ->    70   worse
+   55 ->    59   worse
+   76 ->    78   worse
+  323 ->   328   worse
+  533 ->   549   worse
+  722 ->   770   worse
+ 1572 ->  1581   worse
+```
+
+**MCMP does not promote what FAISS misses. It demotes it, slightly.** The one
+document in the top 16 is the rank-9 case MCMP leaves exactly where it found it.
+
+### 25.2 Question 2 — does the bounded frontier discover what the full corpus does?
+
+Method G was absent from `_RUN_SPECS`, so its discovery on real code had never
+been measured — section 23 compared only recall. C pays 57.2 million comparisons
+for its extra relevant documents; G pays 147 761, one four-hundredth.
+
+| method | relevant discovered | comparisons |
+|---|---|---|
+| A — FAISS | 0.42 | 3 998 |
+| C — MCMP full corpus | **0.50** | 57 177 730 |
+| G — MCMP bounded frontier | **0.42** | 147 761 |
+
+**G discovers exactly what FAISS discovers.** The entire discovery advantage — the
+one thing MCMP measurably does better — belongs to the full-corpus walk and costs
+14 300x. The affordable variant contributes nothing.
+
+### 25.3 Interpretation
+
+1. **Both remaining paths are closed.** The ranking path fails because the missed
+   documents sit at median rank 200 of 3 998 and MCMP leaves them there — no
+   reranker sees rank 200, and MCMP supplies no signal pointing at it. The economic
+   path fails because G, the only affordable variant, has no discovery advantage to
+   sell.
+
+2. **Section 24.4's tension is resolved, and unfavourably.** There *is* extra
+   discovered material and no ranking term promotes it, because the material is
+   too deep for promotion to be a ranking problem at all. Sections 14 and 15 fixed
+   a real defect in a scoring function that operates on a walk which, on real code,
+   does not reach the right documents in the first place. The fix stands as
+   engineering; it has nothing to act on here.
+
+3. **The discovery advantage is real, small, and only available at the price that
+   kills it.** C finds 0.50 relevant against A's 0.42 — a fifth more — for 14 300x
+   the comparisons. That is the honest summary of what this mechanism does on real
+   code.
+
+4. **What this does not say.** It does not say the colony does nothing: sections 11
+   and 22 measured that it traverses planted chains and that call-graph structure is
+   detectable above chance on a large enough corpus. It says the traversal does not
+   reach the documents that matter for retrieval, at a price anyone would pay.
+
+### 25.4 Non-claims
+
+Eight far relevant documents is a small sample; the direction is unambiguous
+(0 of 8 better) and the magnitudes are large, but a wider sample could shift the
+proportions. One corpus sample, one embedding space, one model, 96 agents, one
+step count. Discovery figures differ slightly from section 24 (0.42/0.50 here
+against 0.50/0.62 there) because the seed sets differ — the gap is the same size
+in both. Method G's frontier ran at its defaults; section 19 measured that opening
+it five-fold adds documents and no relevant ones, on a different corpus. The
+production 3072-dimensional embedding space remains unmeasured.
