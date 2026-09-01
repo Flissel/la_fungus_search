@@ -8,10 +8,11 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read sections 17 and 18 first — Gate 2 stage 1 has run on real code, in two
-> independent embedding spaces, and the gate does not open in either. Section 15
-> carries the retrieval work; section 16 the pre-condition that unblocked the run,
-> and section 18.2 point 4 corrects it against real geometry.**
+> **Read sections 17-19 first — they are the only measurements in this document
+> taken on real code. Gate 2 stage 1 ran in two independent embedding spaces and
+> the gate does not open in either (17, 18); the crawler framing, which the gate
+> does not govern, finds nothing the FAISS pool did not already hold (19).
+> Sections 1-16 are synthetic throughout.**
 >
 > This document was written in rounds and is kept whole rather than rewritten,
 > so the reasoning stays auditable.
@@ -1606,3 +1607,70 @@ these are not independent samples of code, only of embedding. Neither model is t
 the OpenAI account has no credit. The `knn_k = 8` grid edge means neither run
 observed its own optimum. `hop_threshold` was 0.0 throughout. Stage 2 has still
 never run, in any space.
+
+---
+
+## 19. The crawler framing, tested on real code: the walk finds nothing the pool did not have
+
+Sections 17 and 18 closed the retrieval gate. The crawler framing is a different
+question and the gate does not speak to it: ranking is not involved, so the visit
+ceiling cannot bite, and cost is not involved either, because a crawl is batch
+work where the ~14 300x that sinks MCMP as an interactive retriever is affordable.
+The mechanism would earn its keep on a **non-empty difference** — call-graph
+neighbours the walk visits that the FAISS pool did not already contain.
+
+**This is not Gate 2 stage 2 and no retrieval claim is drawn from it.**
+
+**Declared design:** manifest `embeddinggemma-local-v1` (238 documents), Qwen
+snapshot (1024-dim), 12 seeds, `top_k = initial_k = 8`, `steps 50`, method G. The
+measured quantity is `document_visits`, the set the colony actually stood on —
+not its ranking. Reproduce with `benchmarks/probes/crawler.py`.
+
+### 19.1 Facts
+
+Means over 12 seeds, per query:
+
+| agents | frontier | relevant | in FAISS pool | visited | relevant visited | **novel relevant** | walk comparisons |
+|---|---|---|---|---|---|---|---|
+| 96 | every 10, k 4, cap 64 | 1.75 | 0.67 | 8.7 | 0.58 | **0.00** | 154 253 |
+| 192 | every 10, k 4, cap 64 | 1.75 | 0.67 | 9.8 | 0.67 | **0.00** | 317 165 |
+| 384 | every 10, k 4, cap 64 | 1.75 | 0.67 | 9.6 | 0.67 | **0.00** | 634 349 |
+| 192 | every 2, k 12, cap 200 | 1.75 | 0.67 | 13.8 | 0.67 | **0.00** | 1 331 789 |
+
+### 19.2 Interpretation
+
+1. **The walk reaches exactly what the pool already had, and nothing else.**
+   `relevant visited` equals `in FAISS pool` at 0.67 in every configuration. Not
+   one call-graph neighbour outside the pool was visited, at any agent count, with
+   the frontier at its defaults or opened five-fold.
+
+2. **The targets exist and are missed.** This is what makes the result decisive
+   rather than vacuous. Each query has 1.75 call-graph neighbours on average and
+   the pool holds 0.67 of them, so roughly **1.08 relevant documents per query lie
+   outside the pool** — exactly the territory the mechanism is for. The walk visits
+   9 to 14 documents and none of them is one of those.
+
+3. **Opening the frontier changes the cost, not the outcome.** Section 13 found G
+   adding exactly 4.0 documents at every corpus size because the round count binds
+   rather than the cap; the fair crawler test therefore ran `expand_every 2`,
+   `expand_k 12`, `cap 200`. The visited set grew from 9.8 to 13.8 documents and
+   the comparison count from 317 165 to 1 331 789 — a 4.2x cost for four more
+   documents, none of them relevant. The untested regime section 13.5 flagged as
+   its narrowest point is now tested, and it does not rescue the method.
+
+4. **This closes the crawler question on this evidence.** The framing was the
+   strongest available for MCMP: it uses the half that works on synthetic data and
+   discards the half that does not, and it removes the cost objection. On real code
+   the half that "works" does not transfer. The colony traverses a planted chain in
+   a synthetic manifold and does not traverse a call graph.
+
+### 19.3 Non-claims
+
+One corpus, one manifest, one embedding space, 238 documents. The relevance oracle
+is the call graph, so semantic neighbours without a call edge — the category
+sections 4 and the crawler discussion identified as MCMP's remaining niche — are
+invisible here by construction, and a walk that found them would score zero on
+this measurement. That niche is untested and this section does not touch it; what
+it rules out is the call-graph case, which is the one with a free oracle. Method G
+was the only walk measured; full-corpus C was not run, on the section 13 finding
+that it does not survive scale.
