@@ -8,16 +8,15 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read sections 17-21 first — they are the only measurements in this document
-> taken on real code. Gate 2 stage 1 ran in two independent embedding spaces and
-> the gate does not open in either (17, 18); the crawler framing finds nothing the
-> FAISS pool did not already hold *on the call-graph relation* (19). **Section 20
-> corrects how far that may be generalised**: on the sibling relation, which the
-> call-graph oracle cannot see, the walk finds targets at two to four times chance
-> and one pre-registered significance condition passes — while the gate still
-> closes on effect size. **Section 21** gives that relation its own selection and
-> the gate closes on an exact tie: signature equals the null's 95th percentile to
-> sixteen decimal places. Sections 1-16 are synthetic throughout.**
+> **Read section 22 first — it reverses the verdict of everything before it and
+> says why.** Sections 17, 18 and 21 ran Gate 2 stage 1 on a 238-document corpus
+> and the gate closed, at one point on an exact tie. Section 22 runs the same
+> protocol on two independent 4 000-document samples of a second repository and
+> **the gate opens on both, on every condition, by a factor of two.** The confound
+> is corpus size: on a small corpus almost everything is reachable from almost
+> everything, so the permutation null scores nearly as well as the real labels and
+> the test has no power. Sections 19 and 20 (the crawler and sibling relations)
+> carry the same caveat. Sections 1-16 are synthetic throughout.**
 >
 > This document was written in rounds and is kept whole rather than rewritten,
 > so the reasoning stays auditable.
@@ -1877,3 +1876,88 @@ precisely at the threshold. Two sibling thresholds have now been run (section 20
 plus this one at threshold 1 with its own selection; all are reported, none is
 selected. The float comparison defect is recorded, not repaired. Stage 2 has still
 never run, in any space, on any relation.
+
+---
+
+## 22. A second corpus opens the gate, twice — and identifies corpus size as the confound
+
+Section 21.3 named the binding problem: 138 evaluation pairs quantised at 1/138
+against a required margin ten steps wide, on a corpus of 238 documents. The fix it
+asked for was more pairs from a larger corpus. This section supplies one, and the
+answer reverses the verdict of sections 17, 18 and 21.
+
+**Corpus.** `vibemind-os/brain`, 741 Python files, which the AST walk resolves to
+**16 497 documents and 10 234 query candidates** — 69 times the previous corpus.
+The full corpus is not used: `geometry_cache` holds an N x N similarity matrix, so
+16 497 documents cost 1.09 GB per cached dataset and the selection sweep holds one
+per seed, which is 33 GB across 30 seeds on a host with a documented history of
+RAM exhaustion. Two fixed 4 000-document samples were drawn instead, with the call
+graph cut consistently so no relevance set names a document the corpus lacks.
+
+**Both samples were run and both are reported.** Same protocol, same criterion,
+same grid, same 100-permutation null, query-disjoint halves.
+
+### 22.1 Facts
+
+| | 238-doc corpus (§18) | brain sample 0 | brain sample 1 |
+|---|---|---|---|
+| documents | 238 | 4 000 | 4 000 |
+| query candidates | 156 | 1 186 | 956 |
+| operating point | knn 8 / hops 4 | knn 8 / hops 6 | knn 8 / hops 4 |
+| pair_count | 108 | 63 | 85 |
+| far_rate | 0.537 | 0.571 | 0.482 |
+| reach_given_far | 0.621 | 0.556 | 0.439 |
+| **null reach_given_far** | **0.284** | **0.143** | **0.035** |
+| manifold_signature | 0.333 | 0.317 | 0.212 |
+| null median | 0.278 | 0.143 | 0.035 |
+| null p95 | 0.343 | 0.222 | 0.071 |
+| excess / required | 0.056 / 0.072 | **0.175 / 0.086** | **0.176 / 0.096** |
+| exceeds null p95 | False | **True** | **True** |
+| meets absolute minimum | True | **True** | **True** |
+| meets relative excess | False | **True** | **True** |
+| **STAGE 2 JUSTIFIED** | False | **True** | **True** |
+
+### 22.2 Interpretation
+
+1. **The gate opens on both samples, and not narrowly.** Every pre-registered
+   condition passes. The excess clears its requirement by a factor of two on both.
+   Section 21's exact tie and sections 17-18's near misses were not the shape of
+   the underlying effect; they were the shape of the corpus they were measured on.
+
+2. **The mechanism is the null, not the signal.** `reach_given_far` for the real
+   labels is *lower* on the brain samples (0.556, 0.439) than on the 238-document
+   corpus (0.621). What changes is chance: the null falls from 0.284 to 0.143 to
+   0.035. On a small corpus almost everything is reachable from almost everything,
+   so redrawn labels score nearly as well as real ones and the test has no power.
+   Enlarging the corpus does not make the structure stronger — it makes coincidence
+   rarer, which is what lets the structure show.
+
+3. **This is a confound, and it invalidates the reach of sections 17, 18 and 21 —
+   not their contents.** Those measurements are exactly what they say they are, on
+   the corpora they name. What cannot be carried forward is the generalisation. The
+   summary "MCMP does not transfer to real code" was drawn from a corpus too small
+   for the test to detect anything, and the same protocol on a larger one decides
+   the other way, twice. **Section 20's "the supported statement is narrower" was
+   still not narrow enough.**
+
+4. **A corpus-size sweep is now the obvious missing measurement**, and it is
+   missing on purpose rather than by oversight: two sizes is not a sweep, and the
+   right response to discovering a size confound is not to pick the size that gives
+   the agreeable answer. What the next pre-registration needs is the *smallest*
+   corpus at which the null stops saturating, measured before any verdict is read
+   off it.
+
+5. **Gate 2 stage 2 is now justified for the first time.** The geometry supports
+   spending the compute to find out what MCMP's retrieval actually does on real
+   code — the question this entire report has been unable to reach.
+
+### 22.3 Non-claims
+
+63 and 85 evaluation pairs are small samples; the margin is wide relative to the
+quantisation, which is why they are reported, but they are not large. One
+repository, one embedding space, one model, and neither sample is the production
+3072-dimensional space. The 4 000-document samples cut the call graph: edges to
+dropped documents are removed, so each sample's graph is sparser than the real
+one, and how that interacts with reachability is not measured. The operating point
+sits at `knn_k = 8`, the grid edge, for the sixth independent time. Stage 2 has
+still not run — this section establishes that it may, not what it will find.

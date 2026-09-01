@@ -40,7 +40,10 @@ from typing import Sequence
 
 import numpy as np
 
+from dataclasses import replace
+
 from benchmarks.gate2.manifest import (
+    Manifest,
     build_manifest,
     load_manifest,
     manifest_digest,
@@ -92,8 +95,58 @@ def _commit_sha(corpus_root: Path) -> str:
     return result.stdout.strip()
 
 
-def export(corpus_root: Path, manifest_path: Path, sources_path: Path, manifest_id: str) -> None:
+def subsample(manifest: Manifest, limit: int, seed: int) -> Manifest:
+    """A fixed random subset of the corpus, with the call graph cut consistently.
+
+    Memory, not taste, forces this. `geometry_cache` holds a full N x N similarity
+    matrix, so a 16 497-document corpus costs 1.09 GB per cached dataset and the
+    selection sweep holds one per seed -- 33 GB across 30 seeds, on a host with a
+    documented history of RAM exhaustion. At 4 000 documents the same cache is
+    64 MB.
+
+    Edges to dropped documents are removed rather than left dangling, so the
+    surviving call graph is the true graph *of the sample*: a document's relevance
+    set never names something the corpus does not contain.
+    """
+    if limit >= len(manifest.documents):
+        return manifest
+    rng = np.random.default_rng(seed)
+    chosen_positions = sorted(
+        int(position)
+        for position in rng.choice(len(manifest.documents), size=limit, replace=False)
+    )
+    documents = tuple(manifest.documents[position] for position in chosen_positions)
+    kept = {document.document_id for document in documents}
+    callees = {
+        document_id: frozenset(target for target in targets if target in kept)
+        for document_id, targets in manifest.callees_by_document.items()
+        if document_id in kept
+    }
+    callers = {
+        document_id: frozenset(source for source in sources if source in kept)
+        for document_id, sources in manifest.callers_by_document.items()
+        if document_id in kept
+    }
+    return replace(
+        manifest,
+        manifest_id=f"{manifest.manifest_id}-n{limit}s{seed}",
+        documents=documents,
+        callees_by_document=callees,
+        callers_by_document=callers,
+    )
+
+
+def export(
+    corpus_root: Path,
+    manifest_path: Path,
+    sources_path: Path,
+    manifest_id: str,
+    max_documents: int = 0,
+    sample_seed: int = 0,
+) -> None:
     manifest = build_manifest(corpus_root, _commit_sha(corpus_root), manifest_id)
+    if max_documents > 0:
+        manifest = subsample(manifest, max_documents, sample_seed)
     save_manifest(manifest, manifest_path)
     sources = [document.source for document in manifest.documents]
     sources_path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,6 +191,8 @@ def main() -> None:
     exporter.add_argument("--manifest", type=Path, required=True)
     exporter.add_argument("--sources", type=Path, required=True)
     exporter.add_argument("--manifest-id", default="embeddinggemma-local-v1")
+    exporter.add_argument("--max-documents", type=int, default=0)
+    exporter.add_argument("--sample-seed", type=int, default=0)
 
     assembler = sub.add_parser("assemble", help="turn vectors into a snapshot")
     assembler.add_argument("--manifest", type=Path, required=True)
@@ -154,6 +209,8 @@ def main() -> None:
             arguments.manifest,
             arguments.sources,
             arguments.manifest_id,
+            arguments.max_documents,
+            arguments.sample_seed,
         )
     else:
         assemble(
