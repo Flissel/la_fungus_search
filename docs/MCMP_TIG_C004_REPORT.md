@@ -8,7 +8,8 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read section 15 first — it carries the current state. Section 9 carries the
+> **Read section 15 first — it carries the current state of the retrieval work.
+> Section 16 unblocks Gate 2's binding pre-condition. Section 9 carries the
 > standing Gate 2 decision.**
 >
 > This document was written in rounds and is kept whole rather than rewritten,
@@ -1285,3 +1286,114 @@ throughout. The combination of these findings with the section 14.3 pheromone
 repairs has not been run. **No production code was changed, and none is proposed
 on this evidence**: a fixture with a deliberately planted chain is grounds for
 testing this on real data, not for shipping it. Gate 2 remains unrun.
+
+---
+
+## 16. Chain reachability: the sweep the Gate 2 spec makes binding
+
+`docs/superpowers/specs/2026-08-30-mcmp-gate2-design.md` blocks the production
+stage 1 run on a `knn_k`/`max_hops` sweep, because on the corpora measurable at
+the time reachability given "far" was 1.000 for real and permuted labels alike,
+which makes the manifold signature numerically identical to the far rate. This
+section runs that sweep on the Gate 1 fixtures. It does **not** choose the
+production operating point — that must come from the production snapshot — but it
+supplies the criterion, and it shows the criterion works.
+
+**Declared design, fixed before execution:** fixtures `manifold` (256 documents)
+and `neutral`, seeds 1-6, `top_k = 8`, `hop_threshold = 0.0`,
+`knn_k in {2, 3, 4, 6, 8, 12}`, `max_hops in {1, 2, 3, 4, 6}`, 10 permutations per
+seed. All cells reported. Reproduce with `benchmarks/probes/reachability.py`.
+
+**The reported quantity is not raw reachability.** It is `reach_given_far` for the
+real labels minus the same statistic under the permutation null. A dense graph
+reaches everything, related or not; what makes reachability a measurement is
+whether it separates real relevance from redrawn relevance. Normalising over far
+pairs rather than all pairs keeps the two conditions the signature multiplies
+apart: the signature can fall because fewer documents are far, this cannot.
+
+### 16.1 Facts
+
+manifold, 256 documents — real / null / gap:
+
+| knn_k | hops=1 | hops=2 | hops=3 | hops=4 | hops=6 |
+|---|---|---|---|---|---|
+| 2 | 0.000/0.000/+0.000 | 0.000/0.000/+0.000 | 0.000/0.000/+0.000 | 0.000/0.003/-0.003 | 0.667/0.017/**+0.649** |
+| 3 | 0.000/0.000/+0.000 | 0.000/0.000/+0.000 | 0.083/0.006/+0.077 | 0.528/0.014/+0.513 | 1.000/0.021/**+0.979** |
+| 4 | 0.000/0.000/+0.000 | 0.000/0.003/-0.003 | 0.667/0.023/+0.644 | 1.000/0.026/**+0.974** | 1.000/0.040/+0.960 |
+| 6 | 0.000/0.003/-0.003 | 0.611/0.046/+0.565 | 1.000/0.084/**+0.916** | 1.000/0.151/+0.849 | 1.000/0.369/+0.631 |
+| 8 | 0.000/0.021/-0.021 | 0.889/0.084/+0.804 | 1.000/0.233/+0.767 | 1.000/0.416/+0.584 | 1.000/0.483/+0.517 |
+| 12 | 0.000/0.032/-0.032 | 1.000/0.212/+0.788 | 1.000/0.423/+0.577 | 1.000/0.479/+0.521 | 1.000/0.483/+0.517 |
+
+neutral (no planted chain) — the same:
+
+| knn_k | hops=1 | hops=2 | hops=3 | hops=4 | hops=6 |
+|---|---|---|---|---|---|
+| 2 | 0.000/0.005/-0.005 | 0.028/0.014/+0.013 | 0.028/0.022/+0.006 | 0.028/0.024/+0.003 | 0.028/0.034/-0.006 |
+| 3 | 0.083/0.022/+0.061 | 0.111/0.046/+0.065 | 0.111/0.106/+0.005 | 0.167/0.168/-0.001 | 0.372/0.341/+0.031 |
+| 4 | 0.083/0.029/+0.054 | 0.200/0.089/+0.111 | 0.364/0.228/+0.136 | 0.514/0.440/+0.074 | 0.900/0.846/+0.054 |
+| 6 | 0.083/0.057/+0.026 | 0.378/0.247/+0.130 | 0.706/0.678/+0.027 | 1.000/0.955/+0.045 | 1.000/0.994/+0.006 |
+| 8 | 0.150/0.076/+0.074 | 0.711/0.438/**+0.273** | 0.967/0.944/+0.023 | 1.000/1.000/+0.000 | 1.000/1.000/+0.000 |
+| 12 | 0.225/0.128/+0.097 | 0.925/0.717/+0.208 | 1.000/1.000/+0.000 | 1.000/1.000/+0.000 | 1.000/1.000/+0.000 |
+
+### 16.2 Interpretation
+
+1. **Saturation is real for the labels and not for the null, on this corpus.** At
+   the spec's defaults (`knn_k = 8`, `max_hops = 6`) the real reachability is
+   1.000, but the null is 0.483, not 1.000. The spec's observation — reachability
+   1.000 "for real and permuted labels alike" — was made on the 11- and
+   249-document Gate 2 corpora; it does not hold on the 256-document manifold
+   fixture. The comparison there has content even at the defaults. It is simply
+   much weaker than it needs to be.
+
+2. **A denser graph inflates the null, not the signal.** Across the manifold table
+   the real column reaches 1.000 and stays there while the null climbs from 0.021
+   at `knn_k = 3` to 0.483 at `knn_k = 8`. The defaults therefore discard about
+   half the available separation: +0.517 where +0.979 is on the table. This is the
+   opposite of the intuition that a well-connected graph makes reachability easier
+   to establish — it makes it easier for *everything*, which is precisely what
+   destroys it as evidence.
+
+3. **The procedure validates against a structureless control.** At the best
+   manifold cell (`knn_k = 3`, `max_hops = 6`) the gap is +0.979 with a planted
+   chain and +0.031 without one — a thirty-fold separation. `knn_k = 6`,
+   `max_hops = 3` is nearly as good on both counts (+0.916 and +0.027) with a less
+   fragile graph. A statistic that could not tell those two fixtures apart would
+   be unusable on a production corpus regardless of what it reported there.
+
+4. **A gap can appear without structure, so "largest gap" is not a safe
+   criterion.** neutral at `knn_k = 8`, `max_hops = 2` shows +0.273 with nothing
+   planted to find. Selecting the operating point by maximising the gap *on the
+   production corpus* is post-hoc selection over a grid of thirty cells, which is
+   the garden of forking paths, not a measurement. The spec already forbids
+   choosing the parameter after seeing its output; this quantifies how much room
+   that choice would have.
+
+5. **`max_hops` does not transfer from synthetic data.** On manifold the real
+   column jumps from 0.000 to 1.000 over one or two hop steps, and where that jump
+   sits is set by the fixture's chain length, which is 8 links by construction.
+   Real code has no such known length. `knn_k` is the parameter this evidence
+   speaks to; `max_hops` must be swept on the production corpus.
+
+### 16.3 What this changes for Gate 2
+
+The criterion can now be stated before the production sweep is seen, which is what
+the spec requires:
+
+- The operating point is chosen to maximise the **real-minus-null reachability
+  gap**, not raw reachability, and not the signature.
+- `knn_k` is drawn from the small end. On this evidence 3 to 6 is where the null
+  stays low; the spec's default of 8 is where it starts inflating.
+- Because point 4 makes free selection over the grid unsound, the production
+  sweep must be **split-sample**: choose `(knn_k, max_hops)` on one half of the
+  manifest's queries, and run stage 1 for the record on the other half. The full
+  sweep is reported either way.
+
+### 16.4 Non-claims
+
+Synthetic fixtures, one of them built to contain the structure being detected.
+Six seeds, 10 permutations per seed — the null estimates carry more noise than the
+spec's 100-permutation standard, which is acceptable for choosing a criterion and
+would not be for a gate decision. `hop_threshold` was held at 0.0 throughout, so
+the whole table is a pure graph property and says nothing about similarity-gated
+hops. Nothing here is a Gate 2 result: the production snapshot does not exist, and
+this sweep does not create it.

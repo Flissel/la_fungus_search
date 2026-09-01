@@ -193,6 +193,39 @@ Therefore, **before the production stage 1 run is treated as evidence**:
    documented three times.
 3. Only then run stage 1 for the record.
 
+**Amendment 2026-09-01: the criterion, from a sweep on synthetic fixtures.**
+`benchmarks/probes/reachability.py` ran this sweep on the Gate 1 fixtures, where
+the answer is known in advance because one of them has a planted chain and the
+other does not. Full results and non-claims: report section 16. Three findings
+change what point 2 above must say.
+
+- **The saturation statement above is corpus-specific.** On the 256-document
+  `manifold` fixture the real labels do saturate at the defaults (1.000) but the
+  null does *not* — it measures 0.483. "For real and permuted labels alike" holds
+  on the 11- and 249-document corpora it was written about, and not here.
+- **A denser graph inflates the null, not the signal.** Real reachability holds at
+  1.000 across the whole `knn_k` range while the null climbs from 0.021 at
+  `knn_k = 3` to 0.483 at `knn_k = 8`. The default therefore discards roughly half
+  the available separation: +0.517 where +0.979 is on the table.
+- **A gap appears without structure at some settings.** The structureless control
+  reaches +0.273 at `knn_k = 8`, `max_hops = 2`. Selecting the operating point by
+  maximising the gap over a thirty-cell grid on the production corpus is post-hoc
+  selection, not measurement.
+
+The criterion, stated here before any production sweep is seen:
+
+1. The quantity is the **real-minus-null `reach_given_far` gap**, not raw
+   reachability and not the signature. Reachability that the null achieves just as
+   easily is not evidence at any absolute value.
+2. `knn_k` is drawn from the small end of the range. On the synthetic evidence 3
+   to 6 keeps the null low; 8 is where it begins to inflate.
+3. `max_hops` is **not** pre-registered from synthetic data. Where the real column
+   jumps is set by the fixture's chain length — 8 links by construction — and real
+   code has no known equivalent. It must be swept on the production corpus.
+4. Because of the third finding, the production sweep is **split-sample**: choose
+   `(knn_k, max_hops)` on one half of the manifest's queries and run stage 1 for
+   the record on the other. The full sweep is reported either way.
+
 Every stage 1 payload records `far_rate`, `reach_given_far`, and the null medians
 of both, so a saturated term is visible rather than silently collapsing the
 signature. A run below `NULL_PERMUTATIONS` is refused unless `--exploratory` is
