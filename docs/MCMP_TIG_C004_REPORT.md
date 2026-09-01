@@ -8,14 +8,16 @@ It records no code changes to the harness or to the production retriever.
 
 Facts and interpretation are kept in separate sections on purpose.
 
-> **Read sections 17-20 first — they are the only measurements in this document
+> **Read sections 17-21 first — they are the only measurements in this document
 > taken on real code. Gate 2 stage 1 ran in two independent embedding spaces and
 > the gate does not open in either (17, 18); the crawler framing finds nothing the
 > FAISS pool did not already hold *on the call-graph relation* (19). **Section 20
 > corrects how far that may be generalised**: on the sibling relation, which the
 > call-graph oracle cannot see, the walk finds targets at two to four times chance
 > and one pre-registered significance condition passes — while the gate still
-> closes on effect size. Sections 1-16 are synthetic throughout.**
+> closes on effect size. **Section 21** gives that relation its own selection and
+> the gate closes on an exact tie: signature equals the null's 95th percentile to
+> sixteen decimal places. Sections 1-16 are synthetic throughout.**
 >
 > This document was written in rounds and is kept whole rather than rewritten,
 > so the reasoning stays auditable.
@@ -1778,3 +1780,100 @@ or heavily connected for reasons unrelated to relevance. `knn_k = 8` and
 `max_hops = 4` were carried over from section 18's split-sample selection, which
 was performed against the *call-graph* oracle — they are not tuned for this
 relation, and no sweep was run here. Stage 2 has still never run.
+
+---
+
+## 21. The sibling relation under its own pre-registered selection: the gate closes on a tie
+
+Section 20.3 recorded that its `knn_k` and `max_hops` were carried over from
+section 18's split-sample selection, which was performed against the *call-graph*
+oracle and is not tuned for this relation. This section gives the sibling relation
+its own selection under the same protocol — a new pre-registration for a different
+relation, not a re-run of an existing one.
+
+**Declared before the run:** same criterion as section 16.3 (maximise the
+real-minus-null `reach_given_far` gap; ties to smaller `knn_k`, then smaller
+`max_hops`), same grid, same 100-permutation null, split-sample on
+query-disjoint halves. Oracle: siblings sharing ≥1 callee or caller with no direct
+call edge. 64 seeds offered, 30 evaluation seeds used, 1 dropped.
+
+### 21.1 Facts
+
+Selection half, `reach_given_far` real / null / gap:
+
+| knn_k | hops=2 | hops=3 | hops=4 | hops=6 | hops=8 |
+|---|---|---|---|---|---|
+| 2 | 0.011/0.002/+0.009 | 0.014/0.003/+0.011 | 0.014/0.003/+0.010 | 0.014/0.004/+0.010 | 0.014/0.004/+0.010 |
+| 3 | 0.035/0.004/+0.031 | 0.041/0.006/+0.035 | 0.041/0.006/+0.034 | 0.041/0.008/+0.033 | 0.041/0.008/+0.033 |
+| 4 | 0.035/0.008/+0.027 | 0.046/0.015/+0.031 | 0.049/0.024/+0.025 | 0.079/0.044/+0.035 | 0.092/0.065/+0.028 |
+| 6 | 0.095/0.034/+0.061 | 0.182/0.077/+0.105 | 0.277/0.146/+0.131 | 0.467/0.324/**+0.144** | 0.622/0.520/+0.102 |
+| 8 | 0.128/0.054/+0.074 | 0.231/0.133/+0.098 | 0.416/0.248/**+0.168** | 0.628/0.547/+0.080 | 0.796/0.753/+0.043 |
+
+Operating point: `knn_k = 8`, `max_hops = 4`.
+
+Evaluation half:
+
+| quantity | value |
+|---|---|
+| pair_count | 138 |
+| far_rate | 0.587 |
+| reach_given_far | 0.593 |
+| null reach_given_far (median) | 0.289 |
+| manifold_signature | 0.34782608695652173 |
+| null p95 | 0.34782608695652173 |
+| excess over null median | 0.07246376811594202 |
+| required excess | 0.07246376811594203 |
+
+**STAGE 2 JUSTIFIED: False** — and the two conditions fail in different ways that
+must not be conflated.
+
+- **The significance condition ties exactly.** `signature == null_p95` is `True`
+  as a float comparison: both are 48/138. The pre-registration says `>`, and a tie
+  decides against the hypothesis. This is the rule working as designed.
+- **The effect-size condition fails by one unit in the last place.** Excess and
+  required differ by `-1.39e-17`, which is floating-point noise on two routes to
+  the same number: with this null median, `0.10 × (1 − median)` happens to equal
+  `signature − median` exactly. Mathematically the condition is *met*; the `>=`
+  comparison on independently computed floats reports otherwise.
+
+### 21.2 Interpretation
+
+1. **The gate closes on a tie, not on a shortfall.** Under its own pre-registered
+   selection the sibling relation lands exactly on the bar, to sixteen decimal
+   places on one condition and to within one ULP on the other. That is a materially
+   different statement from sections 17 and 18, where the signature missed by 0.010
+   and 0.028 respectively.
+
+2. **The verdict does not change if the floating-point defect is repaired.** The
+   effect-size comparison should use a tolerance; comparing two independently
+   computed floats with `>=` is a real defect and it is recorded here as one. But
+   even granting that condition, the significance condition still fails on an exact
+   tie, so the gate outcome stands. **Nothing is changed in the gate on the strength
+   of a run it has already decided** — that is precisely the post-hoc move the
+   pre-registration exists to prevent. It is a defect for the next
+   pre-registration to fix, and it is written down so the next reader does not have
+   to rediscover it.
+
+3. **The statistic's resolution is coarser than the margin it demands.** With 138
+   pairs the signature is quantised at 1/138 ≈ 0.0072, while the required excess is
+   0.0725 — ten quantisation steps. A gate deciding at that granularity can be
+   flipped by a single pair. The corpus is too small for the bar it is being asked
+   to clear, and that is a design finding, not a result: the next run needs more
+   pairs, from a larger corpus or more query candidates, before its verdict means
+   much either way.
+
+4. **Its own selection did not help the sibling relation.** The chosen point,
+   `knn_k = 8` / `max_hops = 4`, is the same one carried over in section 20, and
+   the signature moved from 0.305 to 0.348 only because the evaluation half
+   differs. Both spaces and both oracles now put the operating point at
+   `knn_k = 8`, the grid edge — the fourth independent observation that section
+   16.3's synthetic small-`knn_k` finding does not transfer.
+
+### 21.3 Non-claims
+
+One corpus, one embedding space, 138 evaluation pairs. The exact tie is a property
+of a small, quantised sample and should not be read as the true effect sitting
+precisely at the threshold. Two sibling thresholds have now been run (section 20)
+plus this one at threshold 1 with its own selection; all are reported, none is
+selected. The float comparison defect is recorded, not repaired. Stage 2 has still
+never run, in any space, on any relation.

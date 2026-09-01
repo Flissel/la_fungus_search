@@ -41,6 +41,7 @@ from benchmarks.gate2.geometry import (
 from benchmarks.gate2.manifest import load_manifest, manifest_digest
 from benchmarks.gate2.provider import build_gate2_dataset
 from benchmarks.gate2.run_gate2 import characterise_pooled
+from benchmarks.probes.sibling_oracle import build_sibling_dataset, sibling_map
 from benchmarks.gate2.snapshot import load_snapshot
 
 # Pre-registered grid. knn_k stops at 8 because section 16 measured the null
@@ -51,6 +52,17 @@ HOPS_GRID = (2, 3, 4, 6, 8)
 SELECTION_PERMUTATIONS = 20
 
 
+_BUILD = {"callgraph": None}
+
+
+def _dataset(manifest, snapshot, seed):
+    """The relation under measurement, chosen once in main()."""
+    builder = _BUILD["callgraph"]
+    if builder is None:
+        return build_gate2_dataset(manifest, snapshot, seed)
+    return builder(manifest, snapshot, seed)
+
+
 def partition_seeds(
     manifest: object, snapshot: object, seed_count: int
 ) -> tuple[list[int], list[int], list[int]]:
@@ -59,7 +71,7 @@ def partition_seeds(
     unusable: list[int] = []
     for seed in range(seed_count):
         try:
-            dataset = build_gate2_dataset(manifest, snapshot, seed)
+            dataset = _dataset(manifest, snapshot, seed)
         except ValueError:
             unusable.append(seed)
             continue
@@ -106,7 +118,7 @@ def sweep_selection(
 ) -> list[dict[str, object]]:
     """Score every grid point on the selection half."""
     results: list[dict[str, object]] = []
-    datasets = [build_gate2_dataset(manifest, snapshot, seed) for seed in seeds]
+    datasets = [_dataset(manifest, snapshot, seed) for seed in seeds]
     for knn_k in KNN_GRID:
         caches = [geometry_cache(dataset, knn_k) for dataset in datasets]
         for max_hops in HOPS_GRID:
@@ -169,12 +181,21 @@ def main() -> None:
     parser.add_argument("--null-seed", type=int, default=0)
     parser.add_argument("--null-permutations", type=int, default=NULL_PERMUTATIONS)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--oracle", choices=("callgraph", "siblings"), default="callgraph")
+    parser.add_argument("--shared-minimum", type=int, default=1)
     arguments = parser.parse_args()
 
     manifest = load_manifest(arguments.manifest)
     # Fail-closed by design: a snapshot built for a different manifest is
     # rejected here rather than producing a quietly misaligned measurement.
     snapshot = load_snapshot(arguments.snapshot, manifest_digest(manifest))
+    if arguments.oracle == "siblings":
+        siblings = sibling_map(manifest, arguments.shared_minimum)
+        _BUILD["callgraph"] = lambda m, s, seed: build_sibling_dataset(m, s, siblings, seed)
+        print(f"oracle          : siblings, shared>={arguments.shared_minimum}, "
+              f"{len(siblings)} documents")
+    else:
+        print("oracle          : call graph")
 
     selection, evaluation, dropped = partition_seeds(
         manifest, snapshot, arguments.seed_count
@@ -251,6 +272,8 @@ def main() -> None:
 
     payload = {
         "protocol": "split-sample, criterion pre-registered in report section 16.3",
+        "oracle": arguments.oracle,
+        "shared_minimum": arguments.shared_minimum if arguments.oracle == "siblings" else None,
         "snapshot_backend": geometry["snapshot_backend"],
         "snapshot_model": geometry["snapshot_model"],
         "selection_seeds": selection,

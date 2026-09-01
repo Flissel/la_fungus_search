@@ -1,0 +1,1746 @@
+{
+  "protocol": "split-sample, criterion pre-registered in report section 16.3",
+  "oracle": "siblings",
+  "shared_minimum": 1,
+  "snapshot_backend": "local-transformers",
+  "snapshot_model": "Qwen/Qwen3-Embedding-0.6B",
+  "selection_seeds": [
+    0,
+    2,
+    4,
+    6,
+    7,
+    10,
+    12,
+    14,
+    16,
+    17,
+    21,
+    22,
+    24,
+    26,
+    28,
+    30,
+    35,
+    36,
+    38,
+    40,
+    41,
+    42,
+    44,
+    47,
+    49,
+    50,
+    51,
+    52,
+    55,
+    56,
+    59,
+    62,
+    63
+  ],
+  "evaluation_seeds": [
+    1,
+    3,
+    5,
+    8,
+    9,
+    11,
+    13,
+    15,
+    18,
+    19,
+    20,
+    23,
+    25,
+    27,
+    29,
+    31,
+    32,
+    34,
+    37,
+    39,
+    43,
+    45,
+    46,
+    48,
+    53,
+    54,
+    57,
+    58,
+    60,
+    61
+  ],
+  "dropped_seeds": [
+    33
+  ],
+  "selection_sweep": [
+    {
+      "knn_k": 2,
+      "max_hops": 2,
+      "real_reach_given_far": 0.010869565217391304,
+      "null_reach_given_far": 0.002099407017989388,
+      "gap": 0.008770158199401915
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 3,
+      "real_reach_given_far": 0.01358695652173913,
+      "null_reach_given_far": 0.0025615705542208263,
+      "gap": 0.011025385967518304
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 4,
+      "real_reach_given_far": 0.01358695652173913,
+      "null_reach_given_far": 0.0032598160578410596,
+      "gap": 0.010327140463898071
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 6,
+      "real_reach_given_far": 0.01358695652173913,
+      "null_reach_given_far": 0.0036124862782878735,
+      "gap": 0.009974470243451257
+    },
+    {
+      "knn_k": 2,
+      "max_hops": 8,
+      "real_reach_given_far": 0.01358695652173913,
+      "null_reach_given_far": 0.0036124862782878735,
+      "gap": 0.009974470243451257
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 2,
+      "real_reach_given_far": 0.035326086956521736,
+      "null_reach_given_far": 0.004424558642118501,
+      "gap": 0.030901528314403237
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 3,
+      "real_reach_given_far": 0.04076086956521739,
+      "null_reach_given_far": 0.005707487861292876,
+      "gap": 0.03505338170392452
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 4,
+      "real_reach_given_far": 0.04076086956521739,
+      "null_reach_given_far": 0.0064054762520109375,
+      "gap": 0.03435539331320645
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 6,
+      "real_reach_given_far": 0.04076086956521739,
+      "null_reach_given_far": 0.007684889145955745,
+      "gap": 0.033075980419261644
+    },
+    {
+      "knn_k": 3,
+      "max_hops": 8,
+      "real_reach_given_far": 0.04076086956521739,
+      "null_reach_given_far": 0.007917185016970831,
+      "gap": 0.03284368454824656
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 2,
+      "real_reach_given_far": 0.035326086956521736,
+      "null_reach_given_far": 0.007925832681867829,
+      "gap": 0.02740025427465391
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 3,
+      "real_reach_given_far": 0.04619565217391304,
+      "null_reach_given_far": 0.015391591361528442,
+      "gap": 0.030804060812384598
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 4,
+      "real_reach_given_far": 0.04891304347826087,
+      "null_reach_given_far": 0.024254254522205688,
+      "gap": 0.024658788956055184
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 6,
+      "real_reach_given_far": 0.07880434782608696,
+      "null_reach_given_far": 0.0439699224202766,
+      "gap": 0.03483442540581036
+    },
+    {
+      "knn_k": 4,
+      "max_hops": 8,
+      "real_reach_given_far": 0.09239130434782608,
+      "null_reach_given_far": 0.06450836580858019,
+      "gap": 0.027882938539245894
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 2,
+      "real_reach_given_far": 0.09510869565217392,
+      "null_reach_given_far": 0.03394519386202172,
+      "gap": 0.061163501790152196
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 3,
+      "real_reach_given_far": 0.18206521739130435,
+      "null_reach_given_far": 0.07684350433393464,
+      "gap": 0.10522171305736971
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 4,
+      "real_reach_given_far": 0.27717391304347827,
+      "null_reach_given_far": 0.1457910879239644,
+      "gap": 0.13138282511951388
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 6,
+      "real_reach_given_far": 0.4673913043478261,
+      "null_reach_given_far": 0.32371608639662475,
+      "gap": 0.14367521795120136
+    },
+    {
+      "knn_k": 6,
+      "max_hops": 8,
+      "real_reach_given_far": 0.6222826086956522,
+      "null_reach_given_far": 0.5198091592674625,
+      "gap": 0.1024734494281897
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 2,
+      "real_reach_given_far": 0.12771739130434784,
+      "null_reach_given_far": 0.05366137270992531,
+      "gap": 0.07405601859442253
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 3,
+      "real_reach_given_far": 0.23097826086956522,
+      "null_reach_given_far": 0.13283875142790896,
+      "gap": 0.09813950944165625
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 4,
+      "real_reach_given_far": 0.4157608695652174,
+      "null_reach_given_far": 0.24797864105791806,
+      "gap": 0.16778222850729935
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 6,
+      "real_reach_given_far": 0.6277173913043478,
+      "null_reach_given_far": 0.5474769499923438,
+      "gap": 0.08024044131200403
+    },
+    {
+      "knn_k": 8,
+      "max_hops": 8,
+      "real_reach_given_far": 0.7961956521739131,
+      "null_reach_given_far": 0.7531936871118847,
+      "gap": 0.04300196506202836
+    }
+  ],
+  "operating_point": {
+    "knn_k": 8,
+    "max_hops": 4,
+    "real_reach_given_far": 0.4157608695652174,
+    "null_reach_given_far": 0.24797864105791806,
+    "gap": 0.16778222850729935
+  },
+  "evaluation": {
+    "config": {
+      "top_k": 8,
+      "knn_k": 8,
+      "max_hops": 4,
+      "hop_threshold": 0.0,
+      "stage1_seeds": 30,
+      "seeds": [
+        1,
+        3,
+        5,
+        8,
+        9,
+        11,
+        13,
+        15,
+        18,
+        19,
+        20,
+        23,
+        25,
+        27,
+        29,
+        31,
+        32,
+        34,
+        37,
+        39,
+        43,
+        45,
+        46,
+        48,
+        53,
+        54,
+        57,
+        58,
+        60,
+        61
+      ],
+      "null_permutations": 100,
+      "null_seed": 0,
+      "exploratory": false
+    },
+    "dataset_id": "gate2-embeddinggemma-local-v1",
+    "snapshot_backend": "local-transformers",
+    "snapshot_model": "Qwen/Qwen3-Embedding-0.6B",
+    "manifest_digest": "114b6a669ae420c0c05e0557c0cd0d7d8758744136cc3b07c12bbebb22aedb7e",
+    "pair_count": 138,
+    "far_count": 81,
+    "far_and_reachable_count": 48,
+    "manifold_signature": 0.34782608695652173,
+    "null_signatures": [
+      0.3695652173913043,
+      0.18115942028985507,
+      0.26811594202898553,
+      0.21014492753623187,
+      0.2463768115942029,
+      0.26811594202898553,
+      0.2246376811594203,
+      0.35507246376811596,
+      0.26811594202898553,
+      0.2971014492753623,
+      0.2463768115942029,
+      0.2898550724637681,
+      0.2608695652173913,
+      0.3333333333333333,
+      0.2898550724637681,
+      0.3188405797101449,
+      0.2753623188405797,
+      0.2463768115942029,
+      0.2463768115942029,
+      0.2318840579710145,
+      0.2753623188405797,
+      0.26811594202898553,
+      0.26811594202898553,
+      0.26811594202898553,
+      0.2028985507246377,
+      0.2608695652173913,
+      0.34782608695652173,
+      0.2463768115942029,
+      0.26811594202898553,
+      0.3115942028985507,
+      0.2318840579710145,
+      0.2608695652173913,
+      0.26811594202898553,
+      0.2826086956521739,
+      0.3115942028985507,
+      0.30434782608695654,
+      0.2753623188405797,
+      0.26811594202898553,
+      0.2898550724637681,
+      0.3115942028985507,
+      0.2463768115942029,
+      0.26811594202898553,
+      0.2826086956521739,
+      0.2608695652173913,
+      0.2898550724637681,
+      0.30434782608695654,
+      0.2463768115942029,
+      0.2246376811594203,
+      0.2971014492753623,
+      0.2898550724637681,
+      0.2608695652173913,
+      0.3333333333333333,
+      0.3188405797101449,
+      0.3188405797101449,
+      0.30434782608695654,
+      0.2753623188405797,
+      0.30434782608695654,
+      0.30434782608695654,
+      0.2971014492753623,
+      0.34782608695652173,
+      0.21014492753623187,
+      0.3115942028985507,
+      0.3188405797101449,
+      0.2391304347826087,
+      0.2246376811594203,
+      0.2753623188405797,
+      0.2753623188405797,
+      0.2898550724637681,
+      0.2971014492753623,
+      0.34782608695652173,
+      0.2391304347826087,
+      0.3188405797101449,
+      0.3188405797101449,
+      0.2608695652173913,
+      0.26811594202898553,
+      0.2463768115942029,
+      0.30434782608695654,
+      0.2971014492753623,
+      0.2971014492753623,
+      0.2826086956521739,
+      0.3333333333333333,
+      0.3188405797101449,
+      0.3333333333333333,
+      0.2608695652173913,
+      0.2391304347826087,
+      0.32608695652173914,
+      0.2753623188405797,
+      0.2608695652173913,
+      0.4057971014492754,
+      0.2463768115942029,
+      0.2971014492753623,
+      0.2753623188405797,
+      0.34782608695652173,
+      0.2608695652173913,
+      0.2246376811594203,
+      0.30434782608695654,
+      0.3188405797101449,
+      0.2608695652173913,
+      0.3188405797101449,
+      0.2898550724637681
+    ],
+    "null_median": 0.2753623188405797,
+    "null_p95": 0.34782608695652173,
+    "excess_over_null_median": 0.07246376811594202,
+    "required_excess": 0.07246376811594203,
+    "exceeds_null_p95": false,
+    "meets_absolute_minimum": true,
+    "meets_relative_excess": false,
+    "far_rate": 0.5869565217391305,
+    "reach_given_far": 0.5925925925925926,
+    "null_far_rate_median": 0.9637681159420289,
+    "null_reach_given_far_median": 0.28897569444444443,
+    "per_seed": [
+      {
+        "seed": 1,
+        "pair_count": 3,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 3,
+        "pair_count": 3,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 5,
+        "pair_count": 4,
+        "far_count": 3,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 8,
+        "pair_count": 6,
+        "far_count": 4,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 9,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.6666666666666666
+      },
+      {
+        "seed": 11,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 13,
+        "pair_count": 3,
+        "far_count": 0,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 15,
+        "pair_count": 4,
+        "far_count": 3,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.5
+      },
+      {
+        "seed": 18,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.6666666666666666
+      },
+      {
+        "seed": 19,
+        "pair_count": 3,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 20,
+        "pair_count": 3,
+        "far_count": 3,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 23,
+        "pair_count": 5,
+        "far_count": 4,
+        "far_and_reachable_count": 4,
+        "manifold_signature": 0.8
+      },
+      {
+        "seed": 25,
+        "pair_count": 15,
+        "far_count": 13,
+        "far_and_reachable_count": 8,
+        "manifold_signature": 0.5333333333333333
+      },
+      {
+        "seed": 27,
+        "pair_count": 2,
+        "far_count": 1,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 29,
+        "pair_count": 9,
+        "far_count": 8,
+        "far_and_reachable_count": 5,
+        "manifold_signature": 0.5555555555555556
+      },
+      {
+        "seed": 31,
+        "pair_count": 11,
+        "far_count": 7,
+        "far_and_reachable_count": 6,
+        "manifold_signature": 0.5454545454545454
+      },
+      {
+        "seed": 32,
+        "pair_count": 3,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 34,
+        "pair_count": 2,
+        "far_count": 1,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 37,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 39,
+        "pair_count": 3,
+        "far_count": 2,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 43,
+        "pair_count": 7,
+        "far_count": 5,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.14285714285714285
+      },
+      {
+        "seed": 45,
+        "pair_count": 4,
+        "far_count": 0,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 46,
+        "pair_count": 4,
+        "far_count": 1,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.25
+      },
+      {
+        "seed": 48,
+        "pair_count": 6,
+        "far_count": 3,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 53,
+        "pair_count": 5,
+        "far_count": 3,
+        "far_and_reachable_count": 1,
+        "manifold_signature": 0.2
+      },
+      {
+        "seed": 54,
+        "pair_count": 8,
+        "far_count": 4,
+        "far_and_reachable_count": 3,
+        "manifold_signature": 0.375
+      },
+      {
+        "seed": 57,
+        "pair_count": 2,
+        "far_count": 0,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 58,
+        "pair_count": 6,
+        "far_count": 3,
+        "far_and_reachable_count": 2,
+        "manifold_signature": 0.3333333333333333
+      },
+      {
+        "seed": 60,
+        "pair_count": 3,
+        "far_count": 0,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      },
+      {
+        "seed": 61,
+        "pair_count": 2,
+        "far_count": 1,
+        "far_and_reachable_count": 0,
+        "manifold_signature": 0.0
+      }
+    ],
+    "skipped_seeds": [],
+    "pairs": [
+      {
+        "query_id": "q:ui.components.snippet_for",
+        "document_id": "mcmp_rag.MCPMRetriever.search",
+        "rank": 34,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 1
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_line_windows",
+        "document_id": "ui.corpus._path_boost_header",
+        "rank": 7,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 1
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_line_windows",
+        "document_id": "ui.corpus.chunk_python_file",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 1
+      },
+      {
+        "query_id": "q:ui.reports._progress_path",
+        "document_id": "ui.reports.write_progress",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 3
+      },
+      {
+        "query_id": "q:mcmp.indexing.faiss_search",
+        "document_id": "mcmp.indexing._l2_normalize_rows",
+        "rank": 136,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 3
+      },
+      {
+        "query_id": "q:mcmp.indexing.faiss_search",
+        "document_id": "mcmp_rag.MCPMRetriever.search",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 3
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 5
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "multivec.split_chunk_into_views",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 5
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._doc_by_id",
+        "rank": 105,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 5
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 43,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 5
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 8
+      },
+      {
+        "query_id": "q:multivec.build_multivec_index",
+        "document_id": "multivec.split_chunk_into_views",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.apply_settings",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.save_settings_to_disk",
+        "rank": 18,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_dict",
+        "rank": 9,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 8
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_usage_lines",
+        "rank": 27,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 8
+      },
+      {
+        "query_id": "q:codespace_analyzer.CodeSpaceAnalyzer.read_file_content",
+        "document_id": "codespace_analyzer.CodeSpaceAnalyzer.search_snippets",
+        "rank": 15,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 9
+      },
+      {
+        "query_id": "q:ui.mcmp_runner._cos_sim",
+        "document_id": "ui.mcmp_runner._normalize",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 9
+      },
+      {
+        "query_id": "q:ui.mcmp_runner._cos_sim",
+        "document_id": "ui.mcmp_runner.select_diverse_results",
+        "rank": 21,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 9
+      },
+      {
+        "query_id": "q:realtime.server.settings_usage_lines",
+        "document_id": "realtime.server.http_settings_get",
+        "rank": 14,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 11
+      },
+      {
+        "query_id": "q:realtime.server.settings_usage_lines",
+        "document_id": "realtime.server.http_settings_post",
+        "rank": 50,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 11
+      },
+      {
+        "query_id": "q:mcmp.simulation.spawn_agents",
+        "document_id": "mcmp_rag.Agent",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 11
+      },
+      {
+        "query_id": "q:rag.vectorstore._create_collection",
+        "document_id": "rag.vectorstore.ensure_collection",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 13
+      },
+      {
+        "query_id": "q:codespace_analyzer.main",
+        "document_id": "codespace_analyzer.CodeSpaceAnalyzer",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 13
+      },
+      {
+        "query_id": "q:codespace_analyzer.main",
+        "document_id": "codespace_analyzer.CodeSpaceAnalyzer.analyze_script",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 13
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._is_import_only",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 15
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 99,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 15
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_python_file_ast",
+        "document_id": "ui.corpus._path_boost_header",
+        "rank": 14,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 15
+      },
+      {
+        "query_id": "q:ui.corpus._chunk_python_file_ast",
+        "document_id": "ui.corpus.chunk_python_file",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 15
+      },
+      {
+        "query_id": "q:ui.reports._discover_report_paths",
+        "document_id": "ui.reports.merge_reports_to_summary",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 18
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever._cache_path",
+        "document_id": "mcmp_rag.MCPMRetriever.load_persistent_index",
+        "rank": 16,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 18
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever._cache_path",
+        "document_id": "mcmp_rag.MCPMRetriever.save_persistent_index",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 18
+      },
+      {
+        "query_id": "q:ui.corpus._file_sha1",
+        "document_id": "ui.corpus._cache_key",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 19
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.get_snapshot",
+        "document_id": "mcmp_rag.MCPMRetriever.get_visualization_snapshot",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 19
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.get_snapshot",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 31,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 19
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._is_import_only",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 20
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_pruning",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 100,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 20
+      },
+      {
+        "query_id": "q:realtime.server._build_report_prompt",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 74,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 20
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 30,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "ui.mcmp_runner._cos_sim",
+        "rank": 151,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "ui.mcmp_runner._extract_source",
+        "rank": 195,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 23
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.select_diverse_results",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 90,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 23
+      },
+      {
+        "query_id": "q:rag.search._keyword_search",
+        "document_id": "rag.search.hybrid_search",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 23
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._post_with_retry",
+        "rank": 13,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient._validate_vectors",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "mcmp.embeddings.EmbeddingServiceError",
+        "rank": 12,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "mcmp_rag.MCPMRetriever.add_documents",
+        "rank": 9,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "mcmp_rag.MCPMRetriever.initialize_simulation",
+        "rank": 31,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "mcmp_rag.MCPMRetriever.search_direct",
+        "rank": 25,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "multivec.build_multivec_index",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 86,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "realtime.server._encode_texts",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "realtime.server.http_agents_resize",
+        "rank": 84,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "realtime.server.http_corpus_reindex",
+        "rank": 50,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "realtime.server.http_corpus_update_file",
+        "rank": 36,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "ui.mcmp_runner.select_diverse_results",
+        "rank": 56,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 25
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.encode",
+        "document_id": "ui.reports._item_key",
+        "rank": 135,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 25
+      },
+      {
+        "query_id": "q:codespace_analyzer.CodeSpaceAnalyzer.read_file_content",
+        "document_id": "codespace_analyzer.CodeSpaceAnalyzer.search_snippets",
+        "rank": 15,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 25
+      },
+      {
+        "query_id": "q:multivec.load_multivec",
+        "document_id": "bm25_lite.BM25Lite.load",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 27
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._parse_chunk_header",
+        "document_id": "realtime.server.SnapshotStreamer._neighbors_for_doc",
+        "rank": 37,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 27
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server.SnapshotStreamer._broadcast",
+        "rank": 217,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 22,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server.SnapshotStreamer.stop",
+        "rank": 234,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server._encode_texts",
+        "rank": 76,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server._load_embed_client",
+        "rank": 117,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "realtime.server._parse_chunk_header_line",
+        "rank": 206,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "ui.corpus.chunk_python_file",
+        "rank": 72,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_index_repo",
+        "document_id": "ui.corpus.list_code_files",
+        "rank": 41,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 29
+      },
+      {
+        "query_id": "q:mcmp.simulation.spawn_agents",
+        "document_id": "mcmp_rag.Agent",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 29
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_update_file",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 37,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:realtime.server.http_corpus_update_file",
+        "document_id": "realtime.server.http_corpus_add_file",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp.embeddings.EmbeddingServiceClient.encode",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp_rag.Document",
+        "rank": 10,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp_rag.MCPMRetriever.add_documents_incremental",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "mcmp_rag.MCPMRetriever.save_persistent_index",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 61,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "realtime.server.http_corpus_reindex",
+        "rank": 17,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "realtime.server.http_jobs_start",
+        "rank": 57,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "ui.mcmp_runner.quick_search_with_mcmp",
+        "rank": 80,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.add_documents",
+        "document_id": "ui.reports.start_background_report",
+        "rank": 63,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 31
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.__init__",
+        "document_id": "mcmp.embeddings.EmbeddingServiceError",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 32
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.get_snapshot",
+        "document_id": "mcmp_rag.MCPMRetriever.get_visualization_snapshot",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 32
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.get_snapshot",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 31,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 32
+      },
+      {
+        "query_id": "q:rag.vectorstore._create_collection",
+        "document_id": "rag.vectorstore.ensure_collection",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 34
+      },
+      {
+        "query_id": "q:llm.config.OllamaConfig",
+        "document_id": "llm.config._resolve_model",
+        "rank": 16,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 34
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._doc_by_id",
+        "rank": 105,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 37
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._apply_judgements",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 43,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 37
+      },
+      {
+        "query_id": "q:mcmp.simulation.spawn_agents",
+        "document_id": "mcmp_rag.Agent",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 37
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.save_persistent_index",
+        "document_id": "mcmp_rag.MCPMRetriever._cache_path",
+        "rank": 97,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 39
+      },
+      {
+        "query_id": "q:mcmp_rag.MCPMRetriever.save_persistent_index",
+        "document_id": "mcmp_rag.MCPMRetriever.add_documents",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 39
+      },
+      {
+        "query_id": "q:realtime.server._build_report_prompt",
+        "document_id": "realtime.server.SnapshotStreamer._run_loop",
+        "rank": 74,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 39
+      },
+      {
+        "query_id": "q:mcmp.indexing.build_faiss_index",
+        "document_id": "mcmp.indexing._l2_normalize_rows",
+        "rank": 110,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 43
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.quick_search_with_mcmp",
+        "document_id": "mcmp_rag.MCPMRetriever",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 43
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.quick_search_with_mcmp",
+        "document_id": "mcmp_rag.MCPMRetriever.add_documents",
+        "rank": 148,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 43
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.quick_search_with_mcmp",
+        "document_id": "mcmp_rag.MCPMRetriever.search",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 43
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.quick_search_with_mcmp",
+        "document_id": "ui.agent.build_langchain_agent_if_available",
+        "rank": 10,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 43
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.quick_search_with_mcmp",
+        "document_id": "ui.corpus.collect_codebase_chunks",
+        "rank": 54,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 43
+      },
+      {
+        "query_id": "q:ui.mcmp_runner.quick_search_with_mcmp",
+        "document_id": "ui.corpus.list_code_files",
+        "rank": 84,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 43
+      },
+      {
+        "query_id": "q:ui.queries._normalize_query_text",
+        "document_id": "ui.queries._token_set",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:ui.queries._normalize_query_text",
+        "document_id": "ui.queries._trigram_set",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:prompts.__init__._default_instructions",
+        "document_id": "llm.prompts.get_report_instructions",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:prompts.__init__._default_instructions",
+        "document_id": "prompts.__init__.get_report_instructions",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 45
+      },
+      {
+        "query_id": "q:ui.queries._token_set",
+        "document_id": "ui.queries._normalize_query_text",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 46
+      },
+      {
+        "query_id": "q:ui.queries._token_set",
+        "document_id": "ui.queries.dedup_multi_queries",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 46
+      },
+      {
+        "query_id": "q:rag.generation.generate_judge_text",
+        "document_id": "rag.generation._generate_completion",
+        "rank": 13,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 46
+      },
+      {
+        "query_id": "q:rag.generation.generate_judge_text",
+        "document_id": "realtime.server._generate_judge",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 46
+      },
+      {
+        "query_id": "q:ui.corpus._load_cached_chunks",
+        "document_id": "ui.corpus._cache_key",
+        "rank": 7,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 48
+      },
+      {
+        "query_id": "q:ui.corpus._load_cached_chunks",
+        "document_id": "ui.corpus.collect_codebase_chunks",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 48
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.apply_settings",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 48
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.save_settings_to_disk",
+        "rank": 18,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 48
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_dict",
+        "rank": 9,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 48
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_usage_lines",
+        "rank": 27,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 48
+      },
+      {
+        "query_id": "q:realtime.server.SnapshotStreamer._trail_degree_map",
+        "document_id": "realtime.server.SnapshotStreamer._compute_blended_topk",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 53
+      },
+      {
+        "query_id": "q:rag.generation._generate_completion",
+        "document_id": "rag.generation._response_text",
+        "rank": 28,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 53
+      },
+      {
+        "query_id": "q:rag.generation._generate_completion",
+        "document_id": "rag.generation._write_prompt",
+        "rank": 12,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 53
+      },
+      {
+        "query_id": "q:rag.generation._generate_completion",
+        "document_id": "rag.generation.generate_judge_text",
+        "rank": 9,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 53
+      },
+      {
+        "query_id": "q:rag.generation._generate_completion",
+        "document_id": "rag.generation.generate_text",
+        "rank": 6,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 53
+      },
+      {
+        "query_id": "q:ui.corpus.list_code_files",
+        "document_id": "realtime.server.SnapshotStreamer.start",
+        "rank": 118,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 54
+      },
+      {
+        "query_id": "q:ui.corpus.list_code_files",
+        "document_id": "realtime.server.http_corpus_index_repo",
+        "rank": 8,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 54
+      },
+      {
+        "query_id": "q:ui.corpus.list_code_files",
+        "document_id": "realtime.server.http_corpus_list",
+        "rank": 4,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 54
+      },
+      {
+        "query_id": "q:ui.corpus.list_code_files",
+        "document_id": "realtime.server.http_corpus_reindex",
+        "rank": 11,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 54
+      },
+      {
+        "query_id": "q:ui.corpus.list_code_files",
+        "document_id": "ui.corpus._is_indexable",
+        "rank": 7,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 54
+      },
+      {
+        "query_id": "q:ui.corpus.list_code_files",
+        "document_id": "ui.corpus.collect_codebase_chunks",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 54
+      },
+      {
+        "query_id": "q:ui.corpus.list_code_files",
+        "document_id": "ui.mcmp_runner.quick_search_with_mcmp",
+        "rank": 18,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 54
+      },
+      {
+        "query_id": "q:rag.generation._write_prompt",
+        "document_id": "rag.generation._generate_completion",
+        "rank": 9,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 54
+      },
+      {
+        "query_id": "q:mcmp.embeddings.EmbeddingServiceClient.__init__",
+        "document_id": "mcmp.embeddings.EmbeddingServiceError",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 57
+      },
+      {
+        "query_id": "q:rag.chunking.fallback_chunking",
+        "document_id": "rag.chunking.parse_code_with_ast",
+        "rank": 3,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 57
+      },
+      {
+        "query_id": "q:ui.corpus._path_boost_header",
+        "document_id": "ui.corpus._chunk_line_windows",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 58
+      },
+      {
+        "query_id": "q:ui.corpus._path_boost_header",
+        "document_id": "ui.corpus._chunk_python_file_ast",
+        "rank": 7,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 58
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.apply_settings",
+        "rank": 5,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 58
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.save_settings_to_disk",
+        "rank": 18,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 58
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_dict",
+        "rank": 9,
+        "far": true,
+        "chain_reachable": true,
+        "seed": 58
+      },
+      {
+        "query_id": "q:realtime.server.http_settings_post",
+        "document_id": "realtime.server.settings_usage_lines",
+        "rank": 27,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 58
+      },
+      {
+        "query_id": "q:prompts.__init__.judge_schema_hint",
+        "document_id": "prompts.__init__.build_judge_prompt",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 60
+      },
+      {
+        "query_id": "q:prompts.__init__.report_schema_hint",
+        "document_id": "prompts.__init__.build_report_prompt",
+        "rank": 2,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 60
+      },
+      {
+        "query_id": "q:prompts.__init__.report_schema_hint",
+        "document_id": "realtime.server._report_schema_hint",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 60
+      },
+      {
+        "query_id": "q:mcmp.simulation.update_document_relevance",
+        "document_id": "mcmp.simulation._now",
+        "rank": 142,
+        "far": true,
+        "chain_reachable": false,
+        "seed": 61
+      },
+      {
+        "query_id": "q:rag.search.hybrid_search",
+        "document_id": "rag.search._keyword_search",
+        "rank": 1,
+        "far": false,
+        "chain_reachable": null,
+        "seed": 61
+      }
+    ]
+  },
+  "stage_two_justified": false
+}
