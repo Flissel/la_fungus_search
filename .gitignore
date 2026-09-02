@@ -35,3 +35,8 @@ graphify-out/
 
 # Private vault-derived benchmark artifacts (personal notes) - NEVER commit.
 benchmarks/results/vault/
+
+# vibemind-os/brain-derived benchmark artifacts (private source text + embeddings)
+# on a PUBLIC remote - keep local, never commit. Rebuild via build_local_snapshot.
+benchmarks/gate2/manifests/brain-*
+benchmarks/results/gate2/*brain*
