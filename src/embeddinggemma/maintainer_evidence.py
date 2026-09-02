@@ -42,6 +42,10 @@ import json
 import sys
 from pathlib import Path
 
+import os
+import re
+import subprocess
+
 from embeddinggemma.retrieval_v2 import RetrievalV2, load_index
 
 MANIFEST_NAME = "evidence-manifest.json"
@@ -85,6 +89,69 @@ def ensure_manifest(repo: Path, cache_dir: Path, rebuild: bool) -> Path:
     return target
 
 
+def rerank_with_llm(
+    claim: str,
+    hits: list[dict],
+    claude_bin: str,
+    model: str,
+    timeout: int = 180,
+) -> tuple[list[dict], str]:
+    """Order evidence hits for one claim with a single headless claude call.
+
+    Section 29 measured this component shape (+12.5 to +16.7 recall@8 points on
+    the caller/callee protocol) with the fail-closed contract used here: the
+    reply must be a JSON permutation of the hit ids, anything else keeps the
+    original order and reports why. Note the honest difference: the measured
+    task ranked call-graph neighbours of a query *function*; ranking evidence
+    for a prose *claim* is the analogous-but-unmeasured production variant, which
+    is why this is opt-in.
+    """
+    if len(hits) < 2:
+        return hits, "skipped: fewer than two hits"
+    listing = "\n\n".join(
+        f"### candidate {index} : {hit['symbol']} ({hit['file']}:{hit['start_line']})\n"
+        + "\n".join(str(hit["source"]).splitlines()[:30])
+        for index, hit in enumerate(hits)
+    )
+    prompt = (
+        "You are ranking code snippets as evidence for one claim about a codebase.\n\n"
+        f"## claim\n{claim}\n\n## candidates\n{listing}\n\n"
+        "## task\nRank ALL candidates from strongest to weakest evidence for or "
+        "against the claim (does the code show the claim to be true, false, or is "
+        f"it unrelated?). Answer with ONLY a JSON array of all {len(hits)} candidate "
+        "ids, strongest first, nothing else."
+    )
+    try:
+        completed = subprocess.run(
+            [claude_bin, "-p", "--output-format", "json", "--model", model, "--strict-mcp-config"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return hits, f"failed: claude binary not found at {claude_bin}"
+    except subprocess.TimeoutExpired:
+        return hits, f"failed: timeout after {timeout}s"
+    if completed.returncode != 0:
+        return hits, f"failed: exit {completed.returncode}"
+    try:
+        reply = str(json.loads(completed.stdout).get("result", ""))
+    except ValueError:
+        return hits, "failed: outer JSON unparseable"
+    match = re.search(r"\[[\d,\s]+\]", reply)
+    if not match:
+        return hits, "failed: no JSON array in reply"
+    try:
+        order = json.loads(match.group(0))
+    except ValueError:
+        return hits, "failed: array unparseable"
+    if sorted(order) != list(range(len(hits))):
+        return hits, "failed: not a permutation of candidate ids"
+    return [hits[i] for i in order], "llm"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="maintainer evidence over retrieval v2")
     parser.add_argument("--repo", type=Path, required=True)
@@ -92,6 +159,12 @@ def main() -> int:
     parser.add_argument("--cache-dir", type=Path, required=True)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--rebuild", action="store_true")
+    parser.add_argument("--rerank-llm", action="store_true")
+    parser.add_argument("--rerank-model", default="haiku")
+    parser.add_argument(
+        "--claude-bin",
+        default=os.path.expanduser("~/.local/bin/claude.exe"),
+    )
     arguments = parser.parse_args()
 
     if not arguments.repo.is_dir():
@@ -135,7 +208,12 @@ def main() -> int:
                     "expanded": meta["expanded"],
                 }
             )
-        results.append({"query": query, "hits": hits})
+        rerank_state = "off"
+        if arguments.rerank_llm:
+            hits, rerank_state = rerank_with_llm(
+                query, hits, arguments.claude_bin, arguments.rerank_model
+            )
+        results.append({"query": query, "hits": hits, "rerank": rerank_state})
 
     json.dump(
         {
