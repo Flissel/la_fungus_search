@@ -15,7 +15,11 @@ Facts and interpretation are kept in separate sections on purpose.
 > the walk; function granularity beats the production 200-line windows by 37-76%
 > per shown line. BM25 + expansion reaches recall@16 = 0.818 against serving's
 > 0.606 — a 21-point gap larger than every MCMP effect in this document combined,
-> from assets that already exist. Section 22 reverses the verdict of everything
+> from assets that already exist. **Section 29 moves the one number nothing else
+> moved**: a single haiku call ordering the twelve candidates lifts recall@8 from
+> 0.667 to 0.792 (replicated), with the model's top-4 beating BM25's top-8 --
+> the first LLM inside the stack, measured as a component under the mechanical
+> oracle instead of judging itself. Section 22 reverses the verdict of everything
 > before it and says why; section 24 is the measurement the whole report was built
 > to reach — **stage 2 has run**, and MCMP ties FAISS exactly on ranking while
 > discovering a quarter more relevant documents, at 14 300x the comparisons.
@@ -2511,3 +2515,75 @@ natural-language questions. No gate was run and no gate decision is claimed at
 this corpus size (§22). No serving change is made on this evidence; the
 corpus-dependent ranking rule is recorded for whoever wires a vault corpus into
 retrieval v2.
+
+---
+
+## 29. The first LLM in the stack, measured: ordering twelve documents moves recall@8
+
+Every mechanical ordering left recall@8 where it was. Section 27's candidate set
+provably holds more relevant documents than similarity's top-N, but they sit at
+positions 9-12, and cosine, RRF and BM25 all fail to move them forward — the one
+number twenty-eight sections never shifted. Ordering *twelve* documents is,
+however, exactly the size of task a language model does well and cheaply, and it
+can be measured here as a **component under an independent oracle** rather than a
+judge of itself: the call graph decides, the model merely orders, and if it adds
+nothing the number says so. The standing ground-truth rule is not bent; it is the
+referee.
+
+Probe: `benchmarks/probes/llm_rerank.py`. One headless `claude -p` call per query
+(`--model haiku`, `--strict-mcp-config`), prompt = query function source plus all
+candidate sources, task = rank ids by direct caller/callee likelihood — deducible
+from the shown text, the same text BM25 sees. Fail-closed parsing: the reply must
+be a JSON permutation of the candidate ids; anything else falls back to the BM25
+ordering for that seed and is reported as a failure, never blended away. All
+orderings rank the **same** candidate set (union base + one hop, the §27 winner),
+so every difference is ordering quality, never candidate quality.
+
+### 29.1 Facts
+
+brain sample 0, call-graph oracle, identical candidates per seed:
+
+| run | n | llm ok | ordering | recall@4 | recall@8 |
+|---|---|---|---|---|---|
+| first | 12 | 11/12 | bm25 | 0.250 | 0.500 |
+| | | | rrf | 0.250 | 0.500 |
+| | | | **llm** | **0.583** | **0.667** |
+| replication | 24 | 23/24 | bm25 | 0.458 | 0.667 |
+| | | | rrf | 0.486 | 0.625 |
+| | | | **llm** | **0.750** | **0.792** |
+
+Success-only (excluding the fallback seed): 12-seed run 0.455 → 0.636; 24-seed
+run 0.652 → 0.783. Cost: $1.33 of subscription quota for 24 queries (~6 ¢ and a
+few seconds each). Exactly one malformed reply per run — a different seed each
+time, which is the model's nondeterminism, not a data property.
+
+### 29.2 Interpretation
+
+1. **recall@8 moved, for the first time in this report.** +16.7 points on the
+   first run, +12.5 on the replication, and the gain survives excluding the
+   fallback seeds — it is not carried by the failure handling.
+2. **The model's top-4 beats BM25's top-8 in both runs** (0.583 > 0.500;
+   0.750 > 0.667). The reranker does not nudge relevant documents over a
+   threshold; it pulls them to the front.
+3. **This is what the discovery/ranking split was waiting for.** Sections 24-27
+   established that the candidate machinery finds the right documents and nothing
+   mechanical orders them. A reader of source code orders them. The division of
+   labour from the context design holds: oracles verify, mechanics retrieve,
+   the LLM does the one step that genuinely needs reading.
+4. **Where it belongs, and where it does not.** Seconds of latency and cents of
+   quota per query: right for agent context assembly, the maintainer's evidence
+   ranking, and batch documentation work; wrong for keystroke search. The
+   fail-closed permutation check with BM25 fallback is the production shape —
+   an LLM outage degrades ordering, never the endpoint.
+
+### 29.3 Non-claims
+
+Twelve and twenty-four seeds, one corpus, one embedding-free candidate
+configuration, one model (haiku), one prompt — none of prompt, model or
+temperature was tuned, and a tuned setup should be re-measured, not assumed
+better. The task is favourable to a code-reading model by construction
+(caller/callee relations are visible in the shown sources); that is the intended
+production condition for maintainer evidence, not a general claim about LLM
+reranking of arbitrary text. The two runs share their first twelve seeds, so
+they are a stability check and one enlarged sample, not two independent samples.
+Nothing is wired into serving.
