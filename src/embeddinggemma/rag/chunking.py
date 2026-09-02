@@ -10,8 +10,15 @@ def parse_code_with_ast(file_path: str) -> List[Dict[str, Any]]:
             source_code = f.read()
         tree = ast.parse(source_code)
         chunks = []
+        # relpath raises ValueError on Windows when file and CWD sit on
+        # different drives; the enclosing try swallowed that into a silent
+        # empty result -- every off-drive file quietly produced zero chunks.
+        try:
+            relative_file = os.path.relpath(file_path, 'src')
+        except ValueError:
+            relative_file = file_path
         current = {
-            'file': os.path.relpath(file_path, 'src'),
+            'file': relative_file,
             'type': 'file',
             'content': '',
             'metadata': {
