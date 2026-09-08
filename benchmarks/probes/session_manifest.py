@@ -27,7 +27,7 @@ GUID-Dateiname hilft niemandem. Ersatz ist dann `<workspace-kurz> <datum>`.
 Aufruf::
 
     PYTHONPATH=src python -m benchmarks.probes.session_manifest \
-        --sessions "C:/Users/User/Documents/Code/brain_claude/10-Sessions" \
+        --sessions "<pfad-zum-session-archiv>/10-Sessions" \
         --out-dir benchmarks/results/vault --manifest-id sessions-v1
 """
 
@@ -58,7 +58,7 @@ def _frontmatter(text: str) -> dict[str, str]:
 def _kurz(workspace: str) -> str:
     """Lesbarer Kurzname fuer den Workspace.
 
-    Die Werte sind heterogen: pfadkodiert (`c--Users-User-Desktop-Vibemind-V1`),
+    Die Werte sind heterogen: pfadkodiert (`c--Users-<name>-Desktop-<projekt>`),
     aber auch `subagents` oder `wf_<id>`. Nur die pfadkodierten werden gekuerzt —
     bei den anderen IST der Wert bereits der Name, und ihn zu zerlegen erzeugt
     Unfug wie `f94` oder `d9b`, an dem niemand Relevanz erkennt.
