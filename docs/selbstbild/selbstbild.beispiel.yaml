@@ -1,0 +1,22 @@
+# Beispiel einer selbstbild.yaml (VibeMind-Regeln). Alle Schluessel sind optional.
+name: vibemind
+doku_pfade:
+  - "**/*.md"
+struktur:
+  - art: space
+    ort: "vibemind-os/spaces/*/"
+    pflicht:
+      - "capabilities.yaml"
+      - "tests/**"
+    # Spaces duerfen nicht im Repo-Root entstehen
+    verboten:
+      - "spaces/*/"
+      - "*/capabilities.yaml"
+einstiegspunkte:
+  - "vibemind-os/spaces/*/main.py"
+ausgenommen:
+  - "docs/archiv/**"
+waechter_zuordnung: {}
+issue_ziel:
+  privat: true
+max_dateigroesse_kb: 512
