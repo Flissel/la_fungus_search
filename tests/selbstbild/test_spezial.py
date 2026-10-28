@@ -1,10 +1,13 @@
 """Spezialextraktoren (Routen, MCP-Werkzeuge, HTTP-Clients, Compose), portiert aus dem Doku-Loop."""
 from __future__ import annotations
 
+import hashlib
+
 from selbstbild.parser.basis import parsen
 from selbstbild.spezial import repo_binden, spezial_compose, spezial_python
 from selbstbild.typen import (
-    PLATZHALTER_REPO as P, Beleg, Kante, Knoten, id_dienst, id_env, id_mcp, id_route, id_symbol,
+    KANTENARTEN, PLATZHALTER_REPO as P, Beleg, Kante, Knoten, id_dienst, id_env, id_mcp, id_route,
+    id_symbol,
 )
 
 
@@ -161,7 +164,11 @@ PULT = (
 
 
 def _http(quelle: str, pfad: str = "a.py") -> list[Kante]:
-    return [k for k in _py(quelle, pfad)[1] if k.art == "nutzt_dienst"]
+    return [k for k in _py(quelle, pfad)[1] if k.art == "ruft_http"]
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def test_http_pult_fixture():
@@ -170,6 +177,30 @@ def test_http_pult_fixture():
     assert k.nach == id_env("MARKETING_PULT_URL")
     assert k.beleg is not None and k.beleg.anker == "GET /api/pult/{}" and k.beleg.zeile == 5
     assert "127.0.0.1" not in repr(k)  # nur Namen, nie Werte
+    # R19: Digest des Aufruf-Ausschnitts, nicht des Ankers
+    assert k.beleg.digest == _sha('urllib.request.Request(f"{BASIS}/api/pult/{pfad}")')
+
+
+def test_http_eigene_kantenart_r18():
+    assert "ruft_http" in KANTENARTEN
+    kanten = _py(PULT)[1]
+    assert [k.art for k in kanten] == ["ruft_http"]  # nutzt_dienst nur noch zu dienst:<name>
+
+
+def test_beleg_digest_aus_dem_quellausschnitt_r19():
+    q = '@app.get("/x")\ndef a(): ...\n@mcp.tool(name="t")\ndef b(): ...\n'
+    knoten, kanten, _ = _py(q)
+    route = next(k for k in knoten if k.art == "route")
+    assert route.beleg is not None and route.beleg.digest == _sha('app.get("/x")')
+    werkzeug = next(k for k in knoten if k.art == "mcp_werkzeug")
+    assert werkzeug.beleg is not None and werkzeug.beleg.digest == _sha('mcp.tool(name="t")')
+    # CRLF normalisiert: gleiche Datei mit Windows-Zeilenenden, gleicher Digest
+    crlf = _py(q.replace("\n", "\r\n"))
+    assert {(k.id, k.beleg) for k in crlf[0]} == {(k.id, k.beleg) for k in knoten}
+    # eine Aenderung im Ausschnitt aendert den Digest, der Anker bleibt
+    anders = next(k for k in _py(q.replace('app.get("/x")', "app.get('/x')"))[0] if k.art == "route")
+    assert anders.beleg is not None and anders.beleg.anker == route.beleg.anker
+    assert anders.beleg.digest != route.beleg.digest
 
 
 def test_http_request_und_urlopen_zaehlen_einmal():
@@ -304,6 +335,28 @@ def test_compose_rendered_kaputt_und_ohne_services():
     assert _compose(STACK, "x/partial-a.yml") == ((), ())
     assert _compose("a: [", "c.yml") == ((), ())
     assert _compose("version: '3'\n") == ((), ())
+
+
+def test_compose_digest_ist_der_dienstblock_r19():
+    def digests(text: str) -> dict[str, str]:
+        knoten, kanten = _compose(text)
+        aus = {k.name: k.beleg.digest for k in knoten if k.beleg}
+        for k in kanten:  # Kanten belegen denselben Block wie ihr Quelldienst
+            assert k.beleg is not None and k.beleg.digest == aus[k.von.partition(":")[2]]
+        return aus
+
+    vorher = digests(STACK)
+    assert vorher["qdrant"] == _sha('  qdrant:\n    image: qdrant/qdrant\n    ports:\n      - "6333:6333"')
+    nachher = digests(STACK.replace("API_KEY: geheim-wert-123", "API_KEY: anders"))
+    assert nachher["brain-core"] != vorher["brain-core"]
+    assert {n: d for n, d in nachher.items() if n != "brain-core"} == {
+        n: d for n, d in vorher.items() if n != "brain-core"}
+    assert digests(STACK.replace("\n", "\r\n")) == vorher
+    # Dienst ohne auffindbaren Block (Flow-Mapping): ersatzweise die Blob-SHA
+    flow = b"{services: {a: {image: x}}}\n"
+    (k,), _ = spezial_compose(P, "docker-compose.yml", flow)
+    assert k.beleg is not None
+    assert k.beleg.digest == hashlib.sha1(b"blob %d\0" % len(flow) + flow).hexdigest()
 
 
 # --------------------------------------------------------------------------- repo_binden / Verdrahtung

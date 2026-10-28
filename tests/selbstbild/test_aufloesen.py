@@ -337,6 +337,53 @@ def test_spezial_fehlt_als_datei_attr():
     assert attr(k[id_datei("r", "b.py")]) == {}
 
 
+def test_beleg_digest_ist_der_umschliessende_symbolkoerper_r19():
+    erg = {
+        ("r", "a.py"): DateiErgebnis(
+            symbole=(sym("f", von=3, bis=9), sym("g", von=10, bis=11), sym("h", von=12, bis=13)),
+            importe=(Import("b", ("x",), 1, False), Import("os", (), 4, False)),
+            aufrufe=(Aufruf("f", "g", 5), Aufruf("f", "h", 6), Aufruf(None, "f", 20)),
+            env=(EnvLesung("A_URL", 7, "f"), EnvLesung("B_URL", 21, None)),
+            tabellen_zugriffe=(("kunden", 8, "f"),),
+        ),
+        ("r", "b.py"): DateiErgebnis(symbole=(sym("x"),)),
+    }
+    _, kanten = aufloesen(erg, {}, {"A_URL": "a"}, blobs={("r", "a.py"): "blob-a", ("r", "b.py"): "blob-b"})
+    digest = {(k.art, k.von, k.nach): k.beleg.digest for k in kanten if k.beleg is not None}
+    f, datei = id_symbol("r", "a.py", "f"), id_datei("r", "a.py")
+    # zwei Aufrufe mit verschiedenen Ankern in f: derselbe Digest (der Körper von f)
+    assert digest[("ruft_auf", f, id_symbol("r", "a.py", "g"))] == "d-f"
+    assert digest[("ruft_auf", f, id_symbol("r", "a.py", "h"))] == "d-f"
+    assert digest[("liest_env", f, id_env("A_URL"))] == "d-f"
+    assert digest[("nutzt_dienst", f, "dienst:a")] == "d-f"
+    assert digest[("liest_schreibt", f, id_tabelle("kunden"))] == "d-f"
+    # Modulebene: die Blob-SHA der Datei
+    assert digest[("ruft_auf", datei, f)] == "blob-a"
+    assert digest[("liest_env", datei, id_env("B_URL"))] == "blob-a"
+    assert digest[("importiert", datei, id_datei("r", "b.py"))] == "blob-a"
+
+
+def test_beleg_digest_folgt_dem_funktionskoerper_r19():
+    from selbstbild.parser.python import parse_python
+
+    def ruf_digests(quelle: bytes) -> dict[tuple[str, str], str]:
+        erg = {("r", "a.py"): parse_python("a.py", quelle)}
+        _, kanten = aufloesen(erg, {}, blobs={("r", "a.py"): "blob"})
+        return {(k.von, k.nach): k.beleg.digest for k in kanten if k.art == "ruft_auf" and k.beleg}
+
+    basis = b"def g():\n    return 0\n\n\ndef k():\n    return 0\n\n\ndef f():\n    g()\n    k()\n    return 1\n"
+    f, g, k = (id_symbol("r", "a.py", n) for n in ("f", "g", "k"))
+    eins = ruf_digests(basis)
+    # verschiedene Anker (g, k) im selben Körper: gleicher Digest, unabhängig vom Anker
+    assert eins[(f, g)] == eins[(f, k)]
+    # Änderung im Funktionskörper: der Beleg-Digest der Aufrufkante darin ändert sich
+    zwei = ruf_digests(basis.replace(b"return 1", b"return 2"))
+    assert zwei[(f, g)] != eins[(f, g)]
+    # Änderung nur außerhalb (in g): der Beleg der Kante in f bleibt
+    drei = ruf_digests(basis.replace(b"def g():\n    return 0", b"def g():\n    return 9"))
+    assert drei[(f, g)] == eins[(f, g)]
+
+
 def test_hook_und_doku():
     erg = {
         ("r", ".githooks/post-commit"): DateiErgebnis(),
@@ -368,7 +415,7 @@ def _gemischt() -> dict[tuple[str, str], DateiErgebnis]:
             extra_kanten=(
                 Kante("definiert_route", f"symbol:{p}:api/app.py#liste", route, True, b),
                 Kante("definiert_route", f"symbol:{p}:api/app.py#fehlt", route, True, b),
-                Kante("nutzt_dienst", f"datei:{p}:api/app.py", "env:HTTP_ZIEL", True, b),
+                Kante("ruft_http", f"datei:{p}:api/app.py", "env:HTTP_ZIEL", True, b),
                 Kante("liest_env", f"symbol:{p}:api/app.py#fehlt", "env:WAISE", True, b),
             ),
         ),

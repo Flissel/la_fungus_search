@@ -4,8 +4,9 @@
 
 Anpassung: arbeitet auf einem ast-Baum statt Dateisystem. Das Ziel eines Aufrufs ist der Zielrepo-unabhaengige
 Route-Literal (normalisierter Pfad) plus der Env-Name der Basis-URL. Ausgegeben wird je Env-Name eine Kante
-`nutzt_dienst` vom aufrufenden Symbol zu `env:<NAME>`; Methode und Pfad stehen im Beleg-Anker. Aufrufe ohne
-Env-Namen (feste Basis-URL) liefern keine Kante: ein Zielrepo ist pro Blob nicht bekannt.
+`ruft_http` (R18) vom aufrufenden Symbol zu `env:<NAME>`; Methode und Pfad stehen im Beleg-Anker, der
+Beleg-Digest ist der Quellausschnitt des Aufrufs (R19). Aufrufe ohne Env-Namen (feste Basis-URL) liefern keine
+Kante: ein Zielrepo ist pro Blob nicht bekannt.
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import ast
 import re
 from dataclasses import dataclass, field
 
-from selbstbild.spezial._gemeinsam import Def, beleg, quelle_id
+from selbstbild.spezial._gemeinsam import Def, ausschnitt_digest, beleg, quelle_id
 from selbstbild.spezial.routen import normalisieren
 from selbstbild.typen import Kante, Knoten, id_env
 
@@ -43,6 +44,7 @@ class _Roh:
     zeile: int
     methode: str | None
     teile: list[Teil]
+    knoten: ast.Call  # Quelle des Beleg-Digests (R19)
 
 
 def _schluessel(ziel: ast.AST) -> str | None:
@@ -347,27 +349,27 @@ def _bewerte(d: _Datei, c: ast.Call, scope: _Scope) -> _Roh | None:
                 url = c.args[0] if c.args else _kw(c, "url")
                 if url is None:
                     return None
-                return _Roh(c.lineno, f.attr.upper(), _mit_basis(d, basis, url, scope, c.lineno))
+                return _Roh(c.lineno, f.attr.upper(), _mit_basis(d, basis, url, scope, c.lineno), c)
             if f.attr in {"request", "stream"}:
                 meth = c.args[0] if c.args else _kw(c, "method")
                 url = c.args[1] if len(c.args) >= 2 else _kw(c, "url")
                 if url is not None:
                     return _Roh(c.lineno, _methode_arg(meth),
-                                _mit_basis(d, basis, url, scope, c.lineno))
+                                _mit_basis(d, basis, url, scope, c.lineno), c)
     if d.ist_request(c):
         url = c.args[0] if c.args else _kw(c, "url")
         if url is None:
             return None
         meth = _kw(c, "method")
         methode = _methode_arg(meth) if meth is not None else _daten_methode(c, 1)
-        return _Roh(c.lineno, methode, d.teile(url, scope, c.lineno))
+        return _Roh(c.lineno, methode, d.teile(url, scope, c.lineno), c)
     ist_urlopen = (isinstance(f, ast.Attribute) and f.attr == "urlopen") or (
         isinstance(f, ast.Name) and f.id == "urlopen")
     if ist_urlopen and c.args:
         a = c.args[0]
         if d.ist_request(a) or _schluessel(a) in d.request_namen:
             return None  # Request-Aufruf wird dort schon gezaehlt
-        return _Roh(c.lineno, _daten_methode(c, 1), d.teile(a, scope, c.lineno))
+        return _Roh(c.lineno, _daten_methode(c, 1), d.teile(a, scope, c.lineno), c)
     return None
 
 
@@ -388,7 +390,7 @@ def _aufrufe_in(d: _Datei) -> list[_Roh]:
 
 
 def http_aufrufe(
-    repo: str, pfad: str, baum: ast.Module, defs: list[Def],
+    repo: str, pfad: str, baum: ast.Module, defs: list[Def], text: str,
 ) -> tuple[tuple[Knoten, ...], tuple[Kante, ...]]:
     try:
         rohe = _aufrufe_in(_Datei(baum))
@@ -396,13 +398,13 @@ def http_aufrufe(
         return (), ()
     knoten: dict[str, Knoten] = {}
     kanten: dict[tuple[str, str, int, str], Kante] = {}
-    for r in sorted(rohe, key=lambda x: (x.zeile, x.methode or "")):
+    for r in sorted(rohe, key=lambda x: (x.zeile, x.methode or "", x.knoten.col_offset)):
         pfad_literal, envs = _flach(r.teile)
         anker = f"{r.methode or '*'} {pfad_literal or ''}".rstrip()
-        b = beleg(repo, pfad, r.zeile, anker)
+        b = beleg(repo, pfad, r.zeile, anker, ausschnitt_digest(text, r.knoten))
         von = quelle_id(repo, pfad, defs, r.zeile)
         for name in envs:
             eid = id_env(name)
             knoten.setdefault(eid, Knoten(eid, "env", name, None))
-            kanten.setdefault((von, eid, r.zeile, anker), Kante("nutzt_dienst", von, eid, True, b))
+            kanten.setdefault((von, eid, r.zeile, anker), Kante("ruft_http", von, eid, True, b))
     return tuple(knoten.values()), tuple(kanten.values())

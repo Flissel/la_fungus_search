@@ -8,9 +8,11 @@ KNOTENARTEN = (
     "repo", "datei", "symbol", "route", "tabelle",
     "sql_funktion", "mcp_werkzeug", "env", "dienst", "doku_seite",
 )
+# nutzt_dienst: Symbol/Datei -> dienst:<name> (aus dem Dienst-Register);
+# ruft_http: HTTP-Aufrufstelle -> env:<BASE_URL>, Methode und Pfad im Beleg-Anker (R18).
 KANTENARTEN = (
     "enthaelt", "importiert", "ruft_auf", "definiert_route", "liest_schreibt",
-    "liest_env", "registriert", "verbindet", "nutzt_dienst", "geaendert_durch",
+    "liest_env", "registriert", "verbindet", "nutzt_dienst", "ruft_http", "geaendert_durch",
 )
 
 
@@ -20,7 +22,9 @@ class Beleg:
     pfad: str
     zeile: int
     anker: str
-    digest: str  # sha256 des belegten Ausschnitts
+    # belegt die Quelle, nicht den Anker (R19): Symbolkoerper (Symbol.digest), auf Modulebene
+    # die Blob-SHA, bei Spezialextraktoren sha256 des AST-/YAML-Ausschnitts
+    digest: str
 
 
 @dataclass(frozen=True)

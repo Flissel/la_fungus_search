@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import importlib.util
 import warnings
 from dataclasses import dataclass
 
@@ -59,8 +60,34 @@ def quelle_id(repo: str, pfad: str, defs: list[Def], zeile: int) -> str:
     return id_symbol(repo, pfad, qual) if qual else id_datei(repo, pfad)
 
 
-def beleg(repo: str, pfad: str, zeile: int, anker: str) -> Beleg:
-    return Beleg(repo, pfad, zeile, anker, hashlib.sha256(anker.encode("utf-8")).hexdigest())
+def text_digest(text: str) -> str:
+    """sha256 eines Quellausschnitts, Zeilenenden normalisiert (CRLF/CR -> LF)."""
+    norm = text.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(norm.encode("utf-8", "surrogateescape")).hexdigest()
+
+
+def blob_sha(quelle: bytes) -> str:
+    """Git-Blob-SHA der Datei (wie `git hash-object`)."""
+    return hashlib.sha1(b"blob %d\0" % len(quelle) + quelle).hexdigest()
+
+
+def quelltext(quelle: bytes) -> str:
+    """Quelltext wie ihn `ast` liest (BOM, Kodierungszeile, universelle Zeilenenden)."""
+    try:
+        return importlib.util.decode_source(quelle)
+    except (UnicodeDecodeError, SyntaxError, LookupError):
+        return quelle.decode("utf-8", "replace")
+
+
+def ausschnitt_digest(text: str, knoten: ast.AST) -> str:
+    """R19: sha256 des Quellausschnitts eines AST-Knotens (CRLF normalisiert)."""
+    teil = ast.get_source_segment(text, knoten)
+    return text_digest(teil if teil is not None else ast.unparse(knoten))
+
+
+def beleg(repo: str, pfad: str, zeile: int, anker: str, digest: str) -> Beleg:
+    """Beleg mit `digest` = Digest der belegenden Quelle (R19), nie des Ankers."""
+    return Beleg(repo, pfad, zeile, anker, digest)
 
 
 def ist_testdatei(pfad: str) -> bool:

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from selbstbild.spezial._gemeinsam import baum_lesen, definitionen, ist_testdatei
+from selbstbild.spezial._gemeinsam import baum_lesen, definitionen, ist_testdatei, quelltext
 from selbstbild.spezial.compose import spezial_compose
 from selbstbild.spezial.http_clients import http_aufrufe
 from selbstbild.spezial.mcp_werkzeuge import mcp_werkzeuge
@@ -29,10 +29,11 @@ def spezial_python_mit_status(repo: str, pfad: str, quelle: bytes) -> tuple[Spez
     if baum is None:
         return _LEER, False
     je_knoten, defs = definitionen(baum)
+    text = quelltext(quelle)  # fuer die Ausschnitt-Digests der Belege (R19)
     try:
-        rk, rka, re_ = routen(repo, pfad, baum, je_knoten, defs)
-        mk, mka, me = mcp_werkzeuge(repo, pfad, baum, je_knoten, defs)
-        hk, hka = http_aufrufe(repo, pfad, baum, defs)
+        rk, rka, re_ = routen(repo, pfad, baum, je_knoten, defs, text)
+        mk, mka, me = mcp_werkzeuge(repo, pfad, baum, je_knoten, defs, text)
+        hk, hka = http_aufrufe(repo, pfad, baum, defs, text)
     except RecursionError:
         return _LEER, False
     return (rk + mk + hk, rka + mka + hka, re_ + me), True

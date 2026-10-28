@@ -176,7 +176,9 @@ def vermessen(
                 dienste.setdefault(env, name)
         regeln = {b.repo: b.regeln for b in baeume}
         t0 = time.monotonic()
-        knoten, kanten = aufloesen(ergebnisse, regeln, dienste)
+        blobs = {(e.repo, e.pfad): e.blob for b in baeume for e in b.eintraege}
+        knoten, kanten = aufloesen(ergebnisse, regeln, dienste, blobs)
+        del blobs
         log.info("aufgelöst: %d Knoten, %d Kanten (%.1f s)", len(knoten), len(kanten),
                  time.monotonic() - t0)
 

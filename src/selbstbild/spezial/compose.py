@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from selbstbild.spezial._gemeinsam import beleg
+from selbstbild.spezial._gemeinsam import beleg, blob_sha, text_digest
 from selbstbild.typen import Kante, Knoten, id_dienst
 
 _VERBOTEN = (".vibemind-stack-rendered-*.yml", "*partial-*.yml")
@@ -86,9 +86,31 @@ def _namen_liste(roh: Any) -> list[str]:
     return []
 
 
+def _kopf(text: str, name: str) -> re.Match[str] | None:
+    return re.search(rf"^[ \t]*['\"]?{re.escape(name)}['\"]?[ \t]*:", text, re.M)
+
+
 def _zeile(text: str, name: str) -> int:
-    m = re.search(rf"^[ \t]*['\"]?{re.escape(name)}['\"]?[ \t]*:", text, re.M)
+    m = _kopf(text, name)
     return text.count("\n", 0, m.start()) + 1 if m else 1
+
+
+def _block(text: str, name: str) -> str | None:
+    """Der Dienstblock: Kopfzeile `name:` und alle folgenden tiefer eingerueckten (oder leeren)
+    Zeilen, ohne Leerzeilen am Ende. None, wenn kein Block-Kopf zu finden ist."""
+    m = _kopf(text, name)
+    if m is None:
+        return None
+    zeilen = text[m.start():].split("\n")
+    tiefe = len(zeilen[0]) - len(zeilen[0].lstrip(" \t"))
+    block = [zeilen[0]]
+    for z in zeilen[1:]:
+        if z.strip() and len(z) - len(z.lstrip(" \t")) <= tiefe:
+            break
+        block.append(z)
+    while len(block) > 1 and not block[-1].strip():
+        block.pop()
+    return "\n".join(block)
 
 
 def spezial_compose(
@@ -111,16 +133,19 @@ def spezial_compose(
         for name in sorted(namen):
             sv = eintraege[name] if isinstance(eintraege[name], dict) else {}
             zeile = _zeile(text, name)
+            # R19: Digest des Dienstblocks, ersatzweise die Blob-SHA der Datei
+            block = _block(text, name)
+            digest = text_digest(block) if block is not None else blob_sha(quelle)
             ports = sorted({p for e in (sv.get("ports") or []) if (p := _port(e)) is not None})
             attr = (("ports", ",".join(str(p) for p in ports)),) if ports else ()
             did = id_dienst(name)
-            knoten.setdefault(did, Knoten(did, "dienst", name, beleg(repo, pfad, zeile, name), attr))
+            knoten.setdefault(did, Knoten(did, "dienst", name, beleg(repo, pfad, zeile, name, digest), attr))
 
             def verbinde(ziel: str, anker: str, sicher: bool) -> None:
                 if ziel == name or ziel not in namen:
                     return
                 kanten.setdefault((did, id_dienst(ziel), anker), Kante(
-                    "verbindet", did, id_dienst(ziel), sicher, beleg(repo, pfad, zeile, anker)))
+                    "verbindet", did, id_dienst(ziel), sicher, beleg(repo, pfad, zeile, anker, digest)))
 
             for art in ("depends_on", "links"):
                 for ziel in _namen_liste(sv.get(art)):

@@ -12,7 +12,7 @@ import ast
 import re
 from dataclasses import dataclass
 
-from selbstbild.spezial._gemeinsam import Def, beleg
+from selbstbild.spezial._gemeinsam import Def, ausschnitt_digest, beleg
 from selbstbild.typen import Einstieg, Kante, Knoten, id_route, id_symbol
 
 GENERISCHE_PFADE = frozenset({"/", "/health", "/api/health", "/api/stats", "/healthz", "/ready"})
@@ -69,10 +69,11 @@ class _Roh:
     pfad: str
     objekt: str
     qualname: str | None
+    knoten: ast.AST  # Dekorator- bzw. add_api_route-Aufruf: Quelle des Beleg-Digests (R19)
 
 
 def routen(
-    repo: str, pfad: str, baum: ast.Module, je_knoten: dict[int, str], defs: list[Def],
+    repo: str, pfad: str, baum: ast.Module, je_knoten: dict[int, str], defs: list[Def], text: str,
 ) -> tuple[tuple[Knoten, ...], tuple[Kante, ...], tuple[Einstieg, ...]]:
     praefixe: dict[str, str] = {}
     includes: dict[str, list[str]] = {}
@@ -106,7 +107,7 @@ def routen(
                 handler = k.args[1] if len(k.args) > 1 else _kw(k, "endpoint")
                 qual = handler.id if isinstance(handler, ast.Name) and handler.id in top else None
                 for m in _methoden("api_route", k):
-                    roh.append(_Roh(k.lineno, m, p, k.func.value.id, qual))
+                    roh.append(_Roh(k.lineno, m, p, k.func.value.id, qual, k))
         elif isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for dek in k.decorator_list:
                 if not (isinstance(dek, ast.Call) and isinstance(dek.func, ast.Attribute)):
@@ -121,7 +122,7 @@ def routen(
                 if p is None:
                     continue
                 for m in _methoden(dek.func.attr, dek):
-                    roh.append(_Roh(dek.lineno, m, p, objekt, je_knoten.get(id(k))))
+                    roh.append(_Roh(dek.lineno, m, p, objekt, je_knoten.get(id(k)), dek))
 
     # Die Regel des Doku-Loops "generisch, wenn derselbe Pfad in mehreren Dateien steht" entfaellt:
     # geparst wird je Blob, andere Dateien sind hier nicht sichtbar. Nur GENERISCHE_PFADE zaehlen.
@@ -140,7 +141,7 @@ def routen(
             gesehen.add(schluessel)
             rid = id_route(repo, r.methode, voll)
             anker = f"{r.methode} {voll}"
-            b = beleg(repo, pfad, r.zeile, anker)
+            b = beleg(repo, pfad, r.zeile, anker, ausschnitt_digest(text, r.knoten))
             attr = (("generisch", "1"),) if voll in GENERISCHE_PFADE else ()
             knoten.setdefault(rid, Knoten(rid, "route", anker, b, attr))
             if r.qualname is not None:

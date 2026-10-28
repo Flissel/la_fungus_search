@@ -207,7 +207,9 @@ def test_doppelte_qualnames_beleg_und_verlauf_aus_erster_definition(git_repo, tm
     beleg = knoten[sid].beleg
     assert beleg is not None and beleg.zeile == zwei[0].zeile_von
     assert beleg.digest == verlauf == zwei[0].digest
-    assert len(rufe) == 1  # die Aufrufkante aus dem Setter haengt am gemeinsamen Symbol
+    # die Aufrufkante aus dem Setter haengt am gemeinsamen Symbol; ihr Digest (R19) ist der
+    # Koerper der ersten Definition, wie Beleg und Verlauf
+    assert [k.beleg.digest for k in rufe if k.beleg] == [zwei[0].digest]
 
 
 def test_parser_ausnahme_nicht_gecacht(git_repo, tmp_path, monkeypatch):

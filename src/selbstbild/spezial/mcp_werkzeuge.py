@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import ast
 
-from selbstbild.spezial._gemeinsam import Def, beleg, quelle_id
+from selbstbild.spezial._gemeinsam import Def, ausschnitt_digest, beleg, quelle_id
 from selbstbild.typen import Einstieg, Kante, Knoten, id_datei, id_mcp, id_symbol
 
 _SERVER_OBJEKTE = {"mcp", "server"}
@@ -68,10 +68,10 @@ def _eintraege(baum: ast.Module) -> list[ast.expr]:
 
 
 def mcp_werkzeuge(
-    repo: str, pfad: str, baum: ast.Module, je_knoten: dict[int, str], defs: list[Def],
+    repo: str, pfad: str, baum: ast.Module, je_knoten: dict[int, str], defs: list[Def], text: str,
 ) -> tuple[tuple[Knoten, ...], tuple[Kante, ...], tuple[Einstieg, ...]]:
-    # (Zeile, Name, Quelle-Id, Symbol-qualname fuer den Einstieg)
-    roh: list[tuple[int, str, str, str | None]] = []
+    # (Zeile, Name, Quelle-Id, Symbol-qualname fuer den Einstieg, Digest des Ausschnitts)
+    roh: list[tuple[int, str, str, str | None, str]] = []
     for k in ast.walk(baum):
         if isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for d in k.decorator_list:
@@ -80,7 +80,7 @@ def mcp_werkzeuge(
                     qual = je_knoten.get(id(k))
                     name = (_kw_name(call) if call else None) or k.name
                     von = id_symbol(repo, pfad, qual) if qual else id_datei(repo, pfad)
-                    roh.append((k.lineno, name, von, qual))
+                    roh.append((k.lineno, name, von, qual, ausschnitt_digest(text, d)))
         elif isinstance(k, ast.Call):
             f = k.func
             fname = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
@@ -90,24 +90,26 @@ def mcp_werkzeuge(
             elif fname == "register_tool":
                 name = _str(k.args[0]) if k.args else _kw_name(k)
             if name:
-                roh.append((k.lineno, name, quelle_id(repo, pfad, defs, k.lineno), None))
+                roh.append((k.lineno, name, quelle_id(repo, pfad, defs, k.lineno), None,
+                            ausschnitt_digest(text, k)))
 
     top = {k.name: k.lineno for k in baum.body if isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef))}
     for e in _eintraege(baum):
+        d_e = ausschnitt_digest(text, e)
         if isinstance(e, ast.Name):
             if e.id in top:
-                roh.append((top[e.id], e.id, id_symbol(repo, pfad, e.id), e.id))
+                roh.append((top[e.id], e.id, id_symbol(repo, pfad, e.id), e.id, d_e))
             else:
-                roh.append((e.lineno, e.id, id_datei(repo, pfad), None))
+                roh.append((e.lineno, e.id, id_datei(repo, pfad), None, d_e))
         elif isinstance(e, ast.Attribute) and isinstance(e.value, ast.Name):
-            roh.append((e.lineno, e.attr, id_datei(repo, pfad), None))
+            roh.append((e.lineno, e.attr, id_datei(repo, pfad), None, d_e))
 
     knoten: dict[str, Knoten] = {}
     kanten: dict[tuple[str, str], Kante] = {}
     einstiege: list[Einstieg] = []
-    for zeile, name, von, qual in sorted(roh, key=lambda x: (x[0], x[1], x[2])):
+    for zeile, name, von, qual, digest in sorted(roh, key=lambda x: (x[0], x[1], x[2], x[4])):
         wid = id_mcp(repo, name)
-        b = beleg(repo, pfad, zeile, name)
+        b = beleg(repo, pfad, zeile, name, digest)
         knoten.setdefault(wid, Knoten(wid, "mcp_werkzeug", name, b))
         kanten.setdefault((von, wid), Kante("registriert", von, wid, True, b))
         if qual is not None:

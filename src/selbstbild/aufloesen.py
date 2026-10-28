@@ -16,7 +16,6 @@ from typing import cast
 from selbstbild._glob import glob_regex
 from selbstbild.regeln import Regeln
 from selbstbild.spezial import repo_binden
-from selbstbild.spezial._gemeinsam import beleg
 from selbstbild.typen import (
     Beleg, DateiErgebnis, Import, Kante, Knoten, Symbol, id_datei, id_dienst, id_doku_seite,
     id_env, id_repo, id_sql_funktion, id_symbol, id_tabelle,
@@ -259,9 +258,14 @@ def aufloesen(
     ergebnisse: Mapping[tuple[str, str], DateiErgebnis],
     regeln: Mapping[str, Regeln],
     dienste: Mapping[str, str] | None = None,
+    blobs: Mapping[tuple[str, str], str] | None = None,
 ) -> tuple[list[Knoten], list[Kante]]:
-    """Knoten und Kanten aller Dateien; deterministisch und ohne hängende Kanten."""
+    """Knoten und Kanten aller Dateien; deterministisch und ohne hängende Kanten.
+
+    `blobs` (repo, pfad) -> Blob-SHA liefert den Beleg-Digest auf Modulebene (R19); fehlt
+    ein Eintrag, bleibt der Digest leer."""
     dienste = dienste or {}
+    blobs = blobs or {}
     schluessel = sorted(ergebnisse)
     repos: dict[str, _Repo] = {}
     for name in sorted({r for r, _ in schluessel}):
@@ -340,8 +344,16 @@ def aufloesen(
         eigene = symbole[(repo, pfad)]
         did = id_datei(repo, pfad)
 
+        blob = blobs.get((repo, pfad), "")
+
         def quelle(qual: str | None) -> str:
             return id_symbol(repo, pfad, qual) if qual is not None and qual in eigene else did
+
+        def beleg(qual: str | None, zeile: int, anker: str) -> Beleg:
+            # R19: der Digest belegt die Quelle: Körper des umschließenden Symbols, auf
+            # Modulebene die Blob-SHA der Datei (nie der Anker)
+            s = eigene.get(qual) if qual is not None else None
+            return Beleg(repo, pfad, zeile, anker, s.digest if s is not None else blob)
 
         if pfad.endswith(_PY_ENDUNGEN):
             imp = _py_importe(repos[repo], pfad, erg.importe)
@@ -350,7 +362,8 @@ def aufloesen(
         else:
             imp = _Importe()
         for ziel, sicher, zeile, anker in imp.ziele:
-            g.kante_neu(Kante("importiert", did, id_datei(repo, ziel), sicher, beleg(repo, pfad, zeile, anker)))
+            g.kante_neu(Kante("importiert", did, id_datei(repo, ziel), sicher,
+                              beleg(_umschliessend(eigene, zeile), zeile, anker)))
 
         weiter: Callable[[str, str], str | None] | None = None
         if pfad.endswith(_TS_ENDUNGEN):  # TS-Barrels: Re-Exporte eine Ebene weit folgen
@@ -362,11 +375,11 @@ def aufloesen(
                                    weiter)
             if treffer is not None:
                 nach, sicher = treffer
-                g.kante_neu(Kante("ruft_auf", von, nach, sicher, beleg(repo, pfad, a.zeile, a.name)))
+                g.kante_neu(Kante("ruft_auf", von, nach, sicher, beleg(a.in_symbol, a.zeile, a.name)))
 
         for e in erg.env:
             von = quelle(e.in_symbol)
-            b = beleg(repo, pfad, e.zeile, e.name)
+            b = beleg(e.in_symbol, e.zeile, e.name)
             g.kante_neu(Kante("liest_env", von, id_env(e.name), True, b))
             if e.name in dienste:
                 g.kante_neu(Kante("nutzt_dienst", von, id_dienst(dienste[e.name]), True, b))
@@ -374,12 +387,20 @@ def aufloesen(
         for name, zeile, qual in erg.tabellen_zugriffe:
             tid = id_tabelle(name)
             g.kante_neu(Kante("liest_schreibt", quelle(qual), tid, tid in sql_tabellen,
-                              beleg(repo, pfad, zeile, name)))
+                              beleg(qual, zeile, name)))
 
         for k in erg.extra_kanten:
             g.kante_neu(cast(Kante, repo_binden(k, repo)))
 
     return g.abschliessen()
+
+
+def _umschliessend(eigene: Mapping[str, Symbol], zeile: int) -> str | None:
+    """qualname des innersten Symbols, das die Zeile enthält (z. B. für Importe in Funktionen)."""
+    treffer = [s for s in eigene.values() if s.zeile_von <= zeile <= s.zeile_bis]
+    if not treffer:
+        return None
+    return min(treffer, key=lambda s: (s.zeile_bis - s.zeile_von, -s.zeile_von, s.qualname)).qualname
 
 
 def _ts_reexport(
