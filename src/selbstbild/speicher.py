@@ -125,22 +125,24 @@ class Speicher:
             self._c.close()
             self._c = None
 
-    # -- Parse-Cache: Schluessel = Parser- + Grammatikversion, Blob, Sprache --
+    # -- Parse-Cache: Schluessel = Parser- + Grammatikversion, Blob, Sprache, Pfad --
+    # Der Pfad gehoert dazu (R11): Parser verhalten sich pfadabhaengig (test_*.py,
+    # app/**/route.ts, *compose*.yml, package.json, *_test.go).
     @staticmethod
-    def _cache_schluessel(blob: str, sprache: str) -> str:
-        return _dumps([PARSER_VERSION, GRAMMATIK_VERSION, blob, sprache])
+    def _cache_schluessel(blob: str, sprache: str, pfad: str) -> str:
+        return _dumps([PARSER_VERSION, GRAMMATIK_VERSION, blob, sprache, pfad])
 
-    def cache_holen(self, blob: str, sprache: str) -> DateiErgebnis | None:
+    def cache_holen(self, blob: str, sprache: str, pfad: str = "") -> DateiErgebnis | None:
         z = self._verbindung().execute(
             "SELECT wert FROM cache WHERE schluessel=?",
-            (self._cache_schluessel(blob, sprache),)).fetchone()
+            (self._cache_schluessel(blob, sprache, pfad),)).fetchone()
         return None if z is None else _ergebnis_von(json.loads(z[0]))
 
-    def cache_setzen(self, blob: str, sprache: str, ergebnis: DateiErgebnis) -> None:
+    def cache_setzen(self, blob: str, sprache: str, ergebnis: DateiErgebnis, pfad: str = "") -> None:
         c = self._verbindung()
         with c:
             c.execute("INSERT OR REPLACE INTO cache VALUES(?,?)",
-                      (self._cache_schluessel(blob, sprache), _dumps(_ergebnis_zu(ergebnis))))
+                      (self._cache_schluessel(blob, sprache, pfad), _dumps(_ergebnis_zu(ergebnis))))
 
     # -- Graph -------------------------------------------------------------
     def graph_ersetzen(self, commit: str, knoten: Iterable[Knoten], kanten: Iterable[Kante]) -> None:

@@ -42,6 +42,17 @@ def test_cache_roundtrip(tmp_path: Path) -> None:
         assert s.cache_holen("b1", "sql") is None
 
 
+def test_cache_pfad_im_schluessel(tmp_path: Path) -> None:
+    # R11: Parser sind pfadabhaengig (test_*.py, *compose*.yml, ...): gleicher Blob an
+    # einem anderen Pfad darf das Ergebnis nicht erben.
+    e = _ergebnis()
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.cache_setzen("b1", "python", e, pfad="src/a.py")
+        assert s.cache_holen("b1", "python", pfad="src/a.py") == e
+        assert s.cache_holen("b1", "python", pfad="tests/test_a.py") is None
+        assert s.cache_holen("b1", "python") is None
+
+
 def test_cache_parser_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     with Speicher(tmp_path / "g.sqlite") as s:
         s.cache_setzen("b1", "python", _ergebnis())
