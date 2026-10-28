@@ -27,7 +27,29 @@ _SQL_ANFANG_RE = re.compile(
 _STRING_KOPF_RE = re.compile(r"^[A-Za-z]*(?:\"\"\"|'''|\"|')")
 _NAME = r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)"
 _TABELLE_RE = re.compile(
-    rf"\b(?:(?:FROM|JOIN|INTO|TABLE)\s+{_NAME}|UPDATE\s+{_NAME}\s+SET\b)", re.IGNORECASE)
+    rf"\b(?:(?:FROM|JOIN|INTO)\s+{_NAME}|TABLE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?{_NAME}"
+    rf"|UPDATE\s+{_NAME}\s+SET\b)", re.IGNORECASE)
+# SQL-Funktionen mit FROM im Argument (EXTRACT(YEAR FROM x), SUBSTRING(s FROM 2), ...):
+# ihr Inneres nennt keine Tabelle und wird vor der Suche ausgeblendet.
+_FROM_FUNKTION_RE = re.compile(r"\b(?:EXTRACT|SUBSTRING|TRIM|OVERLAY)\s*\(", re.IGNORECASE)
+
+
+def _from_funktionen_ausblenden(text: str) -> str:
+    """Inhalt von EXTRACT/SUBSTRING/TRIM/OVERLAY(...) durch Leerzeichen ersetzen (Positionen
+    und Zeilenumbrueche bleiben), verschachtelte Klammern eingeschlossen."""
+    starts = {m.end() - 1 for m in _FROM_FUNKTION_RE.finditer(text)}
+    if not starts:
+        return text
+    zeichen = list(text)
+    stapel: list[bool] = []  # je offene Klammer: gehoert zu einer FROM-Funktion?
+    for i, ch in enumerate(text):
+        if ch == "(":
+            stapel.append(i in starts)
+        elif ch == ")" and stapel:
+            stapel.pop()
+        elif any(stapel) and ch != "\n":
+            zeichen[i] = " "
+    return "".join(zeichen)
 
 
 def _text(n: Node) -> str:
@@ -164,9 +186,9 @@ class _Sammler:
         inhalt = _STRING_KOPF_RE.sub("", text, count=1)
         if not _SQL_ANFANG_RE.match(inhalt):
             return
-        for m in _TABELLE_RE.finditer(text):
+        for m in _TABELLE_RE.finditer(_from_funktionen_ausblenden(text)):
             zeile = n.start_point[0] + 1 + text.count("\n", 0, m.start())
-            self.tabellen[(m.group(1) or m.group(2), zeile, scope)] = None
+            self.tabellen[(m.group(1) or m.group(2) or m.group(3), zeile, scope)] = None
 
     # --- Lauf ------------------------------------------------------------
     def besuche(self, n: Node, scope: str | None, in_klasse: bool) -> None:

@@ -100,6 +100,22 @@ def test_prosa_keine_tabelle():
     assert e.tabellen_zugriffe == ()
 
 
+def test_table_if_not_exists_und_drop_if_exists():
+    q = (b'a = "CREATE TABLE IF NOT EXISTS kunden (id int)"\n'
+         b'b = "DROP TABLE IF EXISTS x"\n'
+         b'c = "create table if not exists s.t (id int)"\n')
+    namen = {t[0] for t in parse_python("a.py", q).tabellen_zugriffe}
+    assert namen == {"kunden", "x", "s.t"}
+
+
+def test_extract_und_substring_keine_tabelle():
+    q = (b'a = "SELECT EXTRACT(YEAR FROM created_at) FROM t"\n'
+         b'b = "SELECT SUBSTRING(name FROM 2 FOR 3), trim(both \' \' from n) FROM u"\n'
+         b'c = "SELECT extract(epoch from (now() - x)) FROM v WHERE id IN (SELECT id FROM w)"\n')
+    namen = {t[0] for t in parse_python("a.py", q).tabellen_zugriffe}
+    assert namen == {"t", "u", "v", "w"}
+
+
 def test_update_set_und_join():
     q = b'z = "UPDATE a.b SET x=1"\nw = "select 1 from t join u on 1"\n'
     namen = {t[0] for t in parse_python("a.py", q).tabellen_zugriffe}
