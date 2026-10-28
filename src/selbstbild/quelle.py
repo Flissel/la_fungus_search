@@ -14,11 +14,17 @@ from selbstbild.sprachen import sprache_fuer
 
 Grund = Literal[
     "binaer", "zu_gross", "lfs", "ausgenommen", "env_datei",
-    "submodul_fehlt", "keine_sprache",
+    "submodul_fehlt", "keine_sprache", "symlink",
 ]
 
 _LFS_KOPF = b"version https://git-lfs.github.com/spec/v1"
 _GITLINK = "160000"
+_SYMLINK = "120000"
+_FREMDE_GIT_VARIABLEN = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES",
+    "GIT_NAMESPACE", "GIT_PREFIX",
+)
 
 
 @dataclass(frozen=True)
@@ -62,7 +68,7 @@ def _git_args(*args: str) -> list[str]:
 
 
 def _git_env() -> dict[str, str]:
-    env = dict(os.environ)
+    env = {k: v for k, v in os.environ.items() if k not in _FREMDE_GIT_VARIABLEN}
     env["GIT_LFS_SKIP_SMUDGE"] = "1"
     return env
 
@@ -99,7 +105,11 @@ class BlobLeser:
             if p.stdout:
                 p.stdout.close()
         finally:
-            p.wait(timeout=10)
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
 
     def lesen(self, blob: str) -> bytes:
         p = self._prozess
@@ -122,6 +132,10 @@ class BlobLeser:
 
 def _glob_regex(muster: str) -> re.Pattern[str]:
     """`**` = beliebig viele Pfadsegmente, `*` = innerhalb eines Segments."""
+    ende = r"\Z"
+    if muster.endswith("/**"):  # `X/**` trifft auch `X` selbst (z. B. Gitlinks)
+        muster = muster[:-3]
+        ende = r"(?:/.*)?\Z"
     teile: list[str] = []
     i = 0
     while i < len(muster):
@@ -140,7 +154,7 @@ def _glob_regex(muster: str) -> re.Pattern[str]:
         else:
             teile.append(re.escape(muster[i]))
             i += 1
-    return re.compile("".join(teile) + r"\Z")
+    return re.compile("".join(teile) + ende)
 
 
 def _ausgenommen(pfad: str, muster: list[re.Pattern[str]]) -> bool:
@@ -170,7 +184,7 @@ def _submodul_vorhanden(wurzel: Path, pfad: str, sha: str) -> Path | None:
 def baum_lesen(wurzel: Path, commit: str = "HEAD", name: str | None = None) -> Baum:
     wurzel = Path(wurzel)
     sha = _git(wurzel, "rev-parse", f"{commit}^{{commit}}").stdout.decode().strip()
-    zeit = int(_git(wurzel, "log", "-1", "--format=%ct", sha).stdout.decode().strip())
+    zeit = int(_git(wurzel, "log", "-1", "--no-show-signature", "--format=%ct", sha).stdout.decode().strip())
     regeln = _regeln_aus_commit(wurzel, sha)
     repo = name or regeln.name or wurzel.resolve().name
     muster = [_glob_regex(m) for m in (*STANDARD_AUSGENOMMEN, *regeln.ausgenommen)]
@@ -187,7 +201,7 @@ def baum_lesen(wurzel: Path, commit: str = "HEAD", name: str | None = None) -> B
                 continue
             kopf, _, pfad_roh = satz.partition(b"\t")
             modus, art, blob, groesse_s = kopf.decode("ascii").split()
-            pfad = pfad_roh.decode("utf-8")
+            pfad = pfad_roh.decode("utf-8", errors="surrogateescape")
 
             if modus == _GITLINK:
                 if _ausgenommen(pfad, muster):
@@ -203,6 +217,9 @@ def baum_lesen(wurzel: Path, commit: str = "HEAD", name: str | None = None) -> B
                 continue
             if _ausgenommen(pfad, muster):
                 uebersprungen.append(Uebersprungen(repo, pfad, "ausgenommen"))
+                continue
+            if modus == _SYMLINK:
+                uebersprungen.append(Uebersprungen(repo, pfad, "symlink"))
                 continue
             if PurePosixPath(pfad).name == ".env":
                 uebersprungen.append(Uebersprungen(repo, pfad, "env_datei"))

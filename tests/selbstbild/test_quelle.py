@@ -33,11 +33,21 @@ def test_binaer_und_gross(git_repo):
     assert g["modell.bin.py"] == "lfs"
 
 
-def test_env_nie_gelesen(git_repo):
+def test_env_nie_gelesen(git_repo, monkeypatch):
     git_repo.datei(".env", "GEHEIM=1\n")
     git_repo.datei(".env.example", "GEHEIM=\n")
     git_repo.commit("env")
+    env_blob = git_repo.git("rev-parse", "HEAD:.env")
+    angefragt: list[str] = []
+    original = BlobLeser.lesen
+
+    def spion(self, blob):
+        angefragt.append(blob)
+        return original(self, blob)
+
+    monkeypatch.setattr(BlobLeser, "lesen", spion)
     baum = baum_lesen(git_repo.wurzel)
+    assert angefragt and env_blob not in angefragt
     assert _gruende(baum)[".env"] == "env_datei"
     assert [(e.pfad, e.sprache) for e in baum.eintraege] == [(".env.example", "dotenv")]
 
@@ -67,7 +77,7 @@ def test_submodul(git_repo, tmp_path):
     baum = baum_lesen(git_repo.wurzel)
     assert baum.unterbaeume[0].repo == f"{git_repo.wurzel.name}/sub"
     assert [e.pfad for e in baum.unterbaeume[0].eintraege] == ["s.py"]
-    assert [e.pfad for e in baum.eintraege] == [".gitmodules", "a.py"] or "a.py" in [e.pfad for e in baum.eintraege]
+    assert [e.pfad for e in baum.eintraege] == ["a.py"]
 
 
 def test_submodul_fehlt(git_repo, tmp_path):
@@ -94,3 +104,68 @@ def test_regeln_aus_commit(git_repo):
     assert baum.regeln.name == "mein-name"
     assert baum.repo == "mein-name"
     assert baum.regeln.max_dateigroesse_kb == 512
+
+
+def _sub(git_repo, tmp_path):
+    sub = type(git_repo)(tmp_path / "subquelle", dict(__import__("os").environ))
+    sub.datei("s.py", "z = 1\n")
+    sub.commit("s")
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.submodul("sub", sub)
+    return sub
+
+
+def test_fremde_git_umgebung_ignoriert(git_repo, tmp_path, monkeypatch):
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.commit("a")
+    fremd = type(git_repo)(tmp_path / "fremd", dict(__import__("os").environ))
+    fremd.datei("zzz.py", "1\n")
+    fremd.commit("f")
+    monkeypatch.setenv("GIT_DIR", str(fremd.wurzel / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(fremd.wurzel))
+    baum = baum_lesen(git_repo.wurzel)
+    assert [e.pfad for e in baum.eintraege] == ["a.py"]
+
+
+def test_submodul_pin_gilt(git_repo, tmp_path):
+    _sub(git_repo, tmp_path)
+    pin = git_repo.commit("mit sub")
+    sub_wt = git_repo.wurzel / "sub"
+    sub_git = type(git_repo).__new__(type(git_repo))
+    sub_git.wurzel = sub_wt
+    sub_git._env = git_repo._env
+    sub_git.datei("s.py", "z = 999\n")
+    sub_git.commit("neu im submodul")
+    baum = baum_lesen(git_repo.wurzel)
+    unter = baum.unterbaeume[0]
+    assert unter.commit == pin_gitlink(git_repo, pin)
+    with BlobLeser(sub_wt) as leser:
+        assert leser.lesen(unter.eintraege[0].blob) == b"z = 1\n"
+
+
+def pin_gitlink(git_repo, commit):
+    return git_repo.git("rev-parse", f"{commit}:sub")
+
+
+def test_submodul_ausgenommen(git_repo, tmp_path):
+    _sub(git_repo, tmp_path)
+    git_repo.datei("selbstbild.yaml", "ausgenommen: ['sub/**']\n")
+    git_repo.commit("x")
+    baum = baum_lesen(git_repo.wurzel)
+    assert _gruende(baum)["sub"] == "ausgenommen"
+    assert baum.unterbaeume == ()
+
+
+def test_symlink_uebersprungen(git_repo):
+    git_repo.datei("a.py", "x = 1\n")
+    import subprocess
+    sha = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=git_repo.wurzel,
+        input=b"a.py", capture_output=True, check=True,
+    ).stdout.decode().strip()
+    git_repo.git("add", "a.py")
+    git_repo.git("update-index", "--add", "--cacheinfo", f"120000,{sha},link.py")
+    git_repo.git("commit", "-q", "-m", "link")
+    baum = baum_lesen(git_repo.wurzel)
+    assert _gruende(baum)["link.py"] == "symlink"
+    assert [e.pfad for e in baum.eintraege] == ["a.py"]
