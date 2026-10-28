@@ -87,7 +87,7 @@ def test_methode_folgt_klasse(graph_stand):
     e = erreichbarkeit(d)
     assert _i("a.py", "K.m") in e.sicher
     assert _i("a.py", "L.m") not in e.irgendwie
-    assert _i("a.py", "K.m.inner") not in e.irgendwie  # verschachtelte Funktion ist keine Methode
+    assert _i("a.py", "K.m.inner") in e.sicher  # Verschachteltes folgt dem Umschliessenden
 
 
 def test_methode_unsichere_klasse(graph_stand):
@@ -153,3 +153,54 @@ def test_luecke_kante_ohne_knoten(graph_stand):
 def test_leer(graph_stand):
     e = erreichbarkeit(_bauen(graph_stand, [], []))
     assert not (e.sicher or e.irgendwie or e.nur_test or e.wurzeln)
+
+
+def test_dekorator_wrapper_folgt_umschliessendem(graph_stand):
+    d = _bauen(graph_stand,
+               [_s("a.py", "main", einstieg="main"), _s("a.py", "deko"), _s("a.py", "deko.wrapper"),
+                _s("a.py", "lose"), _s("a.py", "lose.wrapper")],
+               [_ruft(_i("a.py", "main"), _i("a.py", "deko"), sicher=False)])
+    e = erreichbarkeit(d)
+    assert _i("a.py", "deko.wrapper") in e.irgendwie and _i("a.py", "deko.wrapper") not in e.sicher
+    assert _i("a.py", "lose.wrapper") not in e.irgendwie
+
+
+def test_paket_init_laeuft_mit(graph_stand):
+    d = _bauen(graph_stand,
+               [_s("a/b/c.py", "main", einstieg="main"), _d("a/b/c.py"), _d("a/__init__.py"), _d("a/b/__init__.py"),
+                _s("a/__init__.py", "setup"), _s("a/b/__init__.py", "reg"), _s("a/x.py", "x"),
+                _d("z/__init__.py"), _s("z/__init__.py", "fremd")],
+               [_ruft(id_datei("r", "a/__init__.py"), _i("a/__init__.py", "setup")),
+                _ruft(id_datei("r", "a/b/__init__.py"), _i("a/b/__init__.py", "reg")),
+                _ruft(id_datei("r", "z/__init__.py"), _i("z/__init__.py", "fremd"))])
+    e = erreichbarkeit(d)
+    assert _i("a/__init__.py", "setup") in e.sicher and _i("a/b/__init__.py", "reg") in e.sicher
+    assert _i("z/__init__.py", "fremd") not in e.irgendwie
+    assert _i("a/x.py", "x") not in e.irgendwie
+
+
+def test_importkette_zu_modulaufruf(graph_stand):
+    d = _bauen(graph_stand,
+               [_d("a.py", einstieg="cli_skript"), _d("b.py"), _s("b.py", "ziel"), _s("b.py", "tot")],
+               [Kante("importiert", id_datei("r", "a.py"), id_datei("r", "b.py"), True, None),
+                _ruft(id_datei("r", "b.py"), _i("b.py", "ziel"))])
+    e = erreichbarkeit(d)
+    assert _i("b.py", "ziel") in e.sicher and _i("b.py", "tot") not in e.irgendwie
+
+
+def test_sicher_symbol_ueber_datei_zu_modulaufruf(graph_stand):
+    d = _bauen(graph_stand,
+               [_s("a.py", "main", einstieg="main"), _s("b.py", "f"), _d("b.py"), _s("b.py", "ziel")],
+               [_ruft(_i("a.py", "main"), _i("b.py", "f")),
+                _ruft(id_datei("r", "b.py"), _i("b.py", "ziel"))])
+    assert _i("b.py", "ziel") in erreichbarkeit(d).sicher
+
+
+def test_sicher_teilmenge_irgendwie(graph_stand):
+    d = _bauen(graph_stand,
+               [_s("a.py", "main", einstieg="main"), _s("a.py", "k", "klasse"), _s("a.py", "k.m", "methode"),
+                _s("a.py", "x"), _s("a.py", "y")],
+               [_ruft(_i("a.py", "main"), _i("a.py", "k")), _ruft(_i("a.py", "main"), _i("a.py", "x"), False),
+                _ruft(_i("a.py", "x"), _i("a.py", "y"))])
+    e = erreichbarkeit(d)
+    assert e.sicher <= e.irgendwie and e.sicher != e.irgendwie
