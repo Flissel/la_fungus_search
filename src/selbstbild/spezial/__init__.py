@@ -13,28 +13,34 @@ from selbstbild.spezial.mcp_werkzeuge import mcp_werkzeuge
 from selbstbild.spezial.routen import routen
 from selbstbild.typen import PLATZHALTER_REPO, Beleg, Einstieg, Kante, Knoten
 
-__all__ = ["spezial_python", "spezial_compose", "repo_binden"]
+__all__ = ["spezial_python", "spezial_python_mit_status", "spezial_compose", "repo_binden"]
 
-_LEER: tuple[tuple[Knoten, ...], tuple[Kante, ...], tuple[Einstieg, ...]] = ((), (), ())
+Spezial = tuple[tuple[Knoten, ...], tuple[Kante, ...], tuple[Einstieg, ...]]
+_LEER: Spezial = ((), (), ())
 
 
-def spezial_python(
-    repo: str, pfad: str, quelle: bytes,
-) -> tuple[tuple[Knoten, ...], tuple[Kante, ...], tuple[Einstieg, ...]]:
-    """Routen, MCP-Werkzeuge und HTTP-Aufrufe einer Python-Datei. Testdateien liefern nichts."""
+def spezial_python_mit_status(repo: str, pfad: str, quelle: bytes) -> tuple[Spezial, bool]:
+    """(Ergebnis, gelaufen). `gelaufen=False`: ast konnte die Datei nicht lesen (Syntax,
+    die erst ein neueres Python kennt, kaputte Bytes, zu tiefe Verschachtelung); dann fehlen
+    Routen, MCP-Werkzeuge und HTTP-Aufrufe dieser Datei. Testdateien gelten als gelaufen."""
     if ist_testdatei(pfad):
-        return _LEER
+        return _LEER, True
     baum = baum_lesen(quelle)
     if baum is None:
-        return _LEER
+        return _LEER, False
     je_knoten, defs = definitionen(baum)
     try:
         rk, rka, re_ = routen(repo, pfad, baum, je_knoten, defs)
         mk, mka, me = mcp_werkzeuge(repo, pfad, baum, je_knoten, defs)
         hk, hka = http_aufrufe(repo, pfad, baum, defs)
     except RecursionError:
-        return _LEER
-    return rk + mk + hk, rka + mka + hka, re_ + me
+        return _LEER, False
+    return (rk + mk + hk, rka + mka + hka, re_ + me), True
+
+
+def spezial_python(repo: str, pfad: str, quelle: bytes) -> Spezial:
+    """Routen, MCP-Werkzeuge und HTTP-Aufrufe einer Python-Datei. Testdateien liefern nichts."""
+    return spezial_python_mit_status(repo, pfad, quelle)[0]
 
 
 def _id_binden(wert: str, repo: str) -> str:

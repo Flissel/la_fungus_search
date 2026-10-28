@@ -12,7 +12,7 @@ import re
 
 from tree_sitter import Node
 
-from selbstbild.spezial import spezial_python
+from selbstbild.spezial import spezial_python_mit_status
 from selbstbild.sprachen import parser_fuer
 from selbstbild.typen import (
     PLATZHALTER_REPO, Aufruf, DateiErgebnis, Einstieg, EnvLesung, Import, Symbol,
@@ -247,7 +247,9 @@ def parse_python(pfad: str, quelle: bytes) -> DateiErgebnis:
     s = _Sammler(pfad)
     s.besuche(baum.root_node, None, False)
     # Spezialextraktoren (Routen, MCP, HTTP); Repo bleibt Platzhalter, der Cache ist je Blob (R10).
-    extra_knoten, extra_kanten, extra_einstiege = spezial_python(PLATZHALTER_REPO, pfad, quelle)
+    # Kann ast die Datei nicht lesen, bleibt das nicht stumm: fehlerhaft + spezial_fehlt.
+    (extra_knoten, extra_kanten, extra_einstiege), gelaufen = spezial_python_mit_status(
+        PLATZHALTER_REPO, pfad, quelle)
     return DateiErgebnis(
         symbole=tuple(s.symbole),
         importe=tuple(s.importe),
@@ -257,5 +259,6 @@ def parse_python(pfad: str, quelle: bytes) -> DateiErgebnis:
         tabellen_zugriffe=tuple(s.tabellen),
         extra_knoten=extra_knoten,
         extra_kanten=extra_kanten,
-        fehlerhaft=baum.root_node.has_error,
+        fehlerhaft=baum.root_node.has_error or not gelaufen,
+        spezial_fehlt=not gelaufen,
     )

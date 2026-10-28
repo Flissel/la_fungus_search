@@ -100,6 +100,23 @@ def test_prosa_keine_tabelle():
     assert e.tabellen_zugriffe == ()
 
 
+def test_spezial_fehlt_bei_ast_fehler_trotz_sauberem_baum():
+    # PEP 695 (`type X = int`) liest tree-sitter, ast erst ab Python 3.12.
+    import sys
+    q = b'type X = int\n\n@app.get("/x")\ndef f():\n    return 1\n'
+    e = parse_python("api/a.py", q)
+    assert {s.qualname for s in e.symbole} == {"f"}
+    if sys.version_info < (3, 12):
+        assert e.spezial_fehlt is True and e.fehlerhaft is True
+        assert not e.extra_knoten  # die Route fehlt, aber nicht stumm
+    else:
+        assert e.spezial_fehlt is False and e.extra_knoten
+    sauber = parse_python("api/b.py", b'@app.get("/x")\ndef f():\n    return 1\n')
+    assert sauber.spezial_fehlt is False and sauber.fehlerhaft is False
+    # Testdateien laufen ohne Spezialextraktoren: kein Ausfall
+    assert parse_python("tests/test_a.py", b"type X = int\n").spezial_fehlt is False
+
+
 def test_table_if_not_exists_und_drop_if_exists():
     q = (b'a = "CREATE TABLE IF NOT EXISTS kunden (id int)"\n'
          b'b = "DROP TABLE IF EXISTS x"\n'

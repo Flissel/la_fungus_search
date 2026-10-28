@@ -296,7 +296,8 @@ def aufloesen(
             datei_arten.add("hook")
 
         did = id_datei(repo, pfad)
-        g.knoten_neu(Knoten(did, "datei", pfad, None, _einstieg_attr(datei_arten, erg.fehlerhaft, {})))
+        g.knoten_neu(Knoten(did, "datei", pfad, None, _einstieg_attr(
+            datei_arten, erg.fehlerhaft, {"spezial_fehlt": "1"} if erg.spezial_fehlt else {})))
         g.kante_neu(Kante("enthaelt", id_repo(repo), did, True, None))
         for s in erg.symbole:
             sid = id_symbol(repo, pfad, s.qualname)

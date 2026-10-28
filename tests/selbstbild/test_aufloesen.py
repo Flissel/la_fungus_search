@@ -252,6 +252,16 @@ def test_einstiege_und_fehlerhaft():
     assert attr(k[id_datei("r", "t/test_x.py")])["einstieg"] == "main"
 
 
+def test_spezial_fehlt_als_datei_attr():
+    erg = {
+        ("r", "a.py"): DateiErgebnis(symbole=(sym("f"),), fehlerhaft=True, spezial_fehlt=True),
+        ("r", "b.py"): DateiErgebnis(symbole=(sym("g"),)),
+    }
+    k = knoten_je_id(aufloesen(erg, {})[0])
+    assert attr(k[id_datei("r", "a.py")]) == {"fehlerhaft": "1", "spezial_fehlt": "1"}
+    assert attr(k[id_datei("r", "b.py")]) == {}
+
+
 def test_hook_und_doku():
     erg = {
         ("r", ".githooks/post-commit"): DateiErgebnis(),
