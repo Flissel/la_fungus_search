@@ -40,3 +40,4 @@ benchmarks/results/vault/
 # on a PUBLIC remote - keep local, never commit. Rebuild via build_local_snapshot.
 benchmarks/gate2/manifests/brain-*
 benchmarks/results/gate2/*brain*
+.venv-selbstbild/
