@@ -41,6 +41,10 @@ class Kante:
     beleg: Beleg | None
 
 
+# Parser-Ergebnisse werden je Blob gecacht und enthalten nie das echte Repo (R10).
+PLATZHALTER_REPO = "@"
+
+
 def id_repo(repo: str) -> str:
     return f"repo:{repo}"
 

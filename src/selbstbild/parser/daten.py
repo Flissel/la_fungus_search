@@ -4,6 +4,8 @@ Gespeichert werden nur Namen (Env-Namen, SQL-Objektnamen, Skriptnamen), nie Wert
 """
 from __future__ import annotations
 
+import dataclasses
+import fnmatch
 import hashlib
 import json
 import posixpath
@@ -13,7 +15,8 @@ from typing import Any
 
 import yaml
 
-from selbstbild.typen import DateiErgebnis, Einstieg, EnvLesung, SqlObjekt, id_tabelle
+from selbstbild.spezial import spezial_compose
+from selbstbild.typen import PLATZHALTER_REPO, DateiErgebnis, Einstieg, EnvLesung, SqlObjekt, id_tabelle
 
 _ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 
@@ -151,7 +154,11 @@ def parse_yaml(pfad: str, quelle: bytes) -> DateiErgebnis:
     namen: set[str] = set()
     for dok in dokumente:
         _yaml_namen(dok, namen)
-    return _env_ergebnis({n: _erste_zeile(text, n) for n in namen})
+    ergebnis = _env_ergebnis({n: _erste_zeile(text, n) for n in namen})
+    if fnmatch.fnmatch(posixpath.basename(pfad.replace("\\", "/")).lower(), "*compose*.y*ml"):
+        knoten, kanten = spezial_compose(PLATZHALTER_REPO, pfad, quelle)
+        ergebnis = dataclasses.replace(ergebnis, extra_knoten=knoten, extra_kanten=kanten)
+    return ergebnis
 
 
 # ------------------------------------------------------------------------- dotenv
