@@ -65,6 +65,7 @@ class _Repo:
     def __init__(self, pfade: Iterable[str]) -> None:
         self.pfade = set(pfade)
         pakete = {_eltern(p) for p in self.pfade if posixpath.basename(p) == "__init__.py"}
+        self.pakete = pakete
         wurzeln: set[str] = set()
         for paket in pakete:
             oben = paket
@@ -134,10 +135,16 @@ def _py_importe(repo: _Repo, pfad: str, importe: Iterable[Import]) -> _Importe:
                     wahl = (basis, t[0], t[1], i == 0)
                     break
         else:
+            eigen = vorfahren[0]
+            # sys.path[0]-Semantik: Ein Skript (Datei außerhalb eines Pakets) findet absolute
+            # Importe zuerst in seinem eigenen Ordner; ein Treffer dort ist sicher.
+            t_eigen = None if eigen in repo.pakete else _py_bei(repo, eigen, imp, namen)
             treffer = [(w, t) for w in repo.wurzeln_fuer(imp.modul)
                        if (t := _py_bei(repo, w, imp, namen)) is not None]
             nah = [x for x in treffer if _ist_vorfahr(x[0], pfad)]
-            if nah:  # die nächste Wurzel über der importierenden Datei gewinnt
+            if t_eigen is not None:
+                wahl = (eigen, t_eigen[0], t_eigen[1], True)
+            elif nah:  # die nächste Wurzel über der importierenden Datei gewinnt
                 w, t = max(nah, key=lambda x: len(x[0]))
                 wahl = (w, t[0], t[1], True)
             elif treffer:  # nur fremde Wurzeln: bei mehreren geraten, also unsicher
@@ -261,13 +268,20 @@ def aufloesen(
     muster = {name: _regel_muster(regeln.get(name) or Regeln()) for name in repos}
 
     symbole: dict[tuple[str, str], dict[str, Symbol]] = {}
-    letzte: dict[str, dict[str, list[str]]] = {name: {} for name in repos}  # letztes Segment -> Ids
+    # letztes Segment -> Ids, nur Funktionen und Klassen: ein schlichter Aufruf `f()` ist nie
+    # eine Methode (die wird über ein Objekt gerufen)
+    letzte: dict[str, dict[str, list[str]]] = {name: {} for name in repos}
     sql_tabellen: set[str] = set()
     for repo, pfad in schluessel:
         erg = ergebnisse[(repo, pfad)]
-        symbole[(repo, pfad)] = {s.qualname: s for s in erg.symbole}
-        for s in erg.symbole:
-            letzte[repo].setdefault(s.qualname.rpartition(".")[2], []).append(id_symbol(repo, pfad, s.qualname))
+        eigene: dict[str, Symbol] = {}
+        for s in erg.symbole:  # doppelte Qualnames (@property/@x.setter): die erste Definition gilt
+            eigene.setdefault(s.qualname, s)
+        symbole[(repo, pfad)] = eigene
+        for s in eigene.values():
+            if s.art != "methode":
+                letzte[repo].setdefault(s.qualname.rpartition(".")[2], []).append(
+                    id_symbol(repo, pfad, s.qualname))
         sql_tabellen.update(id_tabelle(o.name) for o in erg.sql if o.art in ("tabelle", "view"))
 
     g = _Graph()

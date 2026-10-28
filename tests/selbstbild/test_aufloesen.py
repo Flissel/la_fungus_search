@@ -176,6 +176,54 @@ def test_eindeutiger_name_unsicher():
     assert kanten_von(kanten, "ruft_auf") == {}
 
 
+def test_eindeutiger_name_nie_eine_methode():
+    # `rechnen()` ist ein schlichter Aufruf; die einzige Methode `Z.rechnen` ist kein Ziel.
+    erg = {
+        ("r", "a.py"): DateiErgebnis(symbole=(sym("g"),), aufrufe=(Aufruf("g", "rechnen", 2),)),
+        ("r", "b.py"): DateiErgebnis(symbole=(sym("Z", "klasse", 1, 9), sym("Z.rechnen", "methode", 2, 3))),
+    }
+    _, kanten = aufloesen(erg, {})
+    assert kanten_von(kanten, "ruft_auf") == {}
+
+
+def test_skript_ordner_zuerst():
+    # sys.path[0]-Semantik: scripts/lauf.py importiert den Nachbarn scripts/helfer.py.
+    erg = {
+        ("r", "scripts/lauf.py"): DateiErgebnis(
+            symbole=(sym("main"),),
+            importe=(Import("helfer", ("hilf",), 1, False),),
+            aufrufe=(Aufruf("main", "hilf", 4),),
+        ),
+        ("r", "scripts/helfer.py"): DateiErgebnis(symbole=(sym("hilf"),)),
+    }
+    lauf = id_datei("r", "scripts/lauf.py")
+    main = id_symbol("r", "scripts/lauf.py", "main")
+    ziel = (lauf, id_datei("r", "scripts/helfer.py"))
+    ruf = (main, id_symbol("r", "scripts/helfer.py", "hilf"))
+    _, kanten = aufloesen(erg, {})
+    assert kanten_von(kanten, "importiert") == {ziel: True}
+    assert kanten_von(kanten, "ruft_auf") == {ruf: True}
+    # ein gleichnamiges Modul an der Repo-Wurzel verliert gegen den eigenen Ordner
+    erg[("r", "helfer.py")] = DateiErgebnis(symbole=(sym("hilf"),))
+    _, kanten = aufloesen(erg, {})
+    assert kanten_von(kanten, "importiert") == {ziel: True}
+    assert kanten_von(kanten, "ruft_auf") == {ruf: True}
+
+
+def test_eigener_ordner_nicht_im_paket():
+    # Innerhalb eines Pakets gilt kein Skript-Ordner: `import json` bleibt die stdlib.
+    erg = {
+        ("r", "pkg/__init__.py"): DateiErgebnis(),
+        ("r", "pkg/a.py"): DateiErgebnis(
+            symbole=(sym("f"),), importe=(Import("json", (), 1, False),),
+            aufrufe=(Aufruf("f", "json.loads", 2),)),
+        ("r", "pkg/json.py"): DateiErgebnis(symbole=(sym("loads"),)),
+    }
+    _, kanten = aufloesen(erg, {})
+    assert kanten_von(kanten, "importiert") == {}
+    assert kanten_von(kanten, "ruft_auf") == {}
+
+
 def test_gepunktete_namen_ohne_rueckfall():
     erg = {
         ("r", "a.py"): DateiErgebnis(

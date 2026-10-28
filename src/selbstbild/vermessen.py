@@ -194,7 +194,8 @@ def vermessen(
                 zeit_je_datei[did] = zeit_attribute(aenderungen.get(e.pfad, ()), stichtag)
                 for sym in ergebnisse[(e.repo, e.pfad)].symbole:
                     sid = id_symbol(e.repo, e.pfad, sym.qualname)
-                    digests[sid] = sym.digest
+                    # doppelte Qualnames: die erste Definition, wie Beleg und Auflöser
+                    digests.setdefault(sid, sym.digest)
                     symbol_datei[sid] = did
             del aenderungen
             # je (Sub-)Repo mit dessen Commit-Zeit, zeitlich einsortiert (R17)

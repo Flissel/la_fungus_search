@@ -175,6 +175,41 @@ def test_seit_aelterer_commit_nachgemessen(git_repo, tmp_path):
     assert bei_c2[f] == str(t1)  # f unveraendert seit C1, jetzt bekannt
 
 
+def test_doppelte_qualnames_beleg_und_verlauf_aus_erster_definition(git_repo, tmp_path):
+    # @property und @x.setter ergeben zweimal `K.x`: Beleg und Symbolverlauf-Digest
+    # stammen aus derselben (der ersten) Definition.
+    git_repo.datei("k.py", (
+        "class K:\n"
+        "    @property\n"
+        "    def x(self):\n"
+        "        return self._x\n"
+        "\n"
+        "    @x.setter\n"
+        "    def x(self, wert):\n"
+        "        self._x = pruefen(wert)\n"
+        "\n"
+        "\n"
+        "def pruefen(w):\n"
+        "    return w\n"
+    ))
+    git_repo.commit("eins")
+    from selbstbild.parser.basis import parsen
+    zwei = [s for s in parsen("python", "k.py", (git_repo.wurzel / "k.py").read_bytes()).symbole
+            if s.qualname == "K.x"]
+    assert len(zwei) == 2 and zwei[0].digest != zwei[1].digest
+    sid = id_symbol(git_repo.wurzel.name, "k.py", "K.x")
+    with _speicher(tmp_path, "s") as s:
+        vermessen(git_repo.wurzel, speicher=s)
+        knoten = {k.id: k for k in s.knoten()}
+        (verlauf,) = s._verbindung().execute(
+            "SELECT digest FROM symbolzeit WHERE symbol=?", (json.dumps(sid),)).fetchone()
+        rufe = [k for k in s.kanten() if k.art == "ruft_auf" and k.von == sid]
+    beleg = knoten[sid].beleg
+    assert beleg is not None and beleg.zeile == zwei[0].zeile_von
+    assert beleg.digest == verlauf == zwei[0].digest
+    assert len(rufe) == 1  # die Aufrufkante aus dem Setter haengt am gemeinsamen Symbol
+
+
 def test_parser_ausnahme_nicht_gecacht(git_repo, tmp_path, monkeypatch):
     from selbstbild import vermessen as vm
 
