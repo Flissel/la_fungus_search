@@ -299,6 +299,59 @@ def test_verbindung_nach_exit_geschlossen(tmp_path: Path) -> None:
     (tmp_path / "g.sqlite").unlink(missing_ok=True)  # waere unter Windows gesperrt
 
 
+def test_export_ist_ein_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Ein paralleles graph_ersetzen (zweite Verbindung) zwischen den Lesevorgaengen des
+    # Exports darf ihn nicht veraendern: commit, kanten und knoten aus einem Stand.
+    kn, ka = _graph()
+    neu_kn = [Knoten("repo:neu", "repo", "neu", None)]
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.graph_ersetzen("c1", kn, ka)
+        s.export_json(tmp_path / "vorher.json")
+        echt = sp._liste_schreiben
+        aufrufe = []
+
+        def mit_schreiber(f, objekte):  # type: ignore[no-untyped-def]
+            if not aufrufe:
+                with Speicher(tmp_path / "g.sqlite") as zweite:
+                    zweite.graph_ersetzen("c2", neu_kn, [])
+            aufrufe.append(1)
+            echt(f, objekte)
+
+        monkeypatch.setattr(sp, "_liste_schreiben", mit_schreiber)
+        s.export_json(tmp_path / "waehrend.json")
+        monkeypatch.setattr(sp, "_liste_schreiben", echt)
+        assert len(aufrufe) == 2
+        assert (tmp_path / "waehrend.json").read_bytes() == (tmp_path / "vorher.json").read_bytes()
+        s.export_json(tmp_path / "danach.json")  # danach sieht der Export den neuen Stand
+    assert (tmp_path / "danach.json").read_bytes() == _referenz_export("c2", neu_kn, [])
+
+
+def test_synchronous_normal(tmp_path: Path) -> None:
+    with Speicher(tmp_path / "g.sqlite") as s:
+        c = s._verbindung()
+        assert c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert c.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
+
+
+def test_cache_python_version_im_schluessel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # ast-gestuetzte Spezialextraktoren haengen von der Python-Version ab (z. B. PEP 695).
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.cache_setzen("b1", "python", _ergebnis(), "a.py")
+        assert s.cache_holen("b1", "python", "a.py") is not None
+        monkeypatch.setattr(sp.sys, "version_info", (3, 99, 0, "final", 0))
+        assert s.cache_holen("b1", "python", "a.py") is None
+
+
+def test_cache_spezial_fehlt_roundtrip(tmp_path: Path) -> None:
+    import dataclasses
+    e = dataclasses.replace(_ergebnis(), spezial_fehlt=True)
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.cache_setzen("b1", "python", e, "a.py")
+        assert s.cache_holen("b1", "python", "a.py") == e
+        assert s.cache_hat("b1", "python", "a.py")
+        assert not s.cache_hat("b2", "python", "a.py")
+
+
 def test_stand_ordner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SELBSTBILD_HOME", str(tmp_path / "home"))
     o = stand_ordner(tmp_path, "proj")

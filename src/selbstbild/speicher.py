@@ -75,6 +75,7 @@ def _ergebnis_zu(e: DateiErgebnis) -> Any:
         "ek": [_knoten_zu(k) for k in e.extra_knoten],
         "ekk": [_kante_zu(k) for k in e.extra_kanten],
         "fehlerhaft": e.fehlerhaft,
+        "spezial_fehlt": e.spezial_fehlt,
     }
 
 
@@ -90,6 +91,7 @@ def _ergebnis_von(d: Any) -> DateiErgebnis:
         extra_knoten=tuple(_knoten_von(k) for k in d["ek"]),
         extra_kanten=tuple(_kante_von(k) for k in d["ekk"]),
         fehlerhaft=d["fehlerhaft"],
+        spezial_fehlt=d.get("spezial_fehlt", False),
     )
 
 
@@ -170,6 +172,9 @@ class Speicher:
             self.pfad.parent.mkdir(parents=True, exist_ok=True)
             c = sqlite3.connect(str(self.pfad))
             c.execute("PRAGMA journal_mode=WAL")
+            # Im WAL-Modus haelt NORMAL die Datenbank konsistent; ein Stromausfall kann nur
+            # die letzten Transaktionen kosten (der Stand ist jederzeit neu vermessbar).
+            c.execute("PRAGMA synchronous=NORMAL")
             _alte_tabellen_entfernen(c)
             c.executescript(_SCHEMA)
             self._c = c
@@ -187,18 +192,26 @@ class Speicher:
             self._c.close()
             self._c = None
 
-    # -- Parse-Cache: Schluessel = Parser- + Grammatikversion, Blob, Sprache, Pfad --
+    # -- Parse-Cache: Schluessel = Parser-, Grammatik- und Python-Version, Blob, Sprache, Pfad --
     # Der Pfad gehoert dazu (R11): Parser verhalten sich pfadabhaengig (test_*.py,
-    # app/**/route.ts, *compose*.yml, package.json, *_test.go).
+    # app/**/route.ts, *compose*.yml, package.json, *_test.go). Die Python-Version gehoert
+    # dazu, weil die Spezialextraktoren `ast` nutzen (neue Syntax liest erst ein neueres ast).
     @staticmethod
     def _cache_schluessel(blob: str, sprache: str, pfad: str) -> str:
-        return _dumps([PARSER_VERSION, GRAMMATIK_VERSION, blob, sprache, pfad])
+        py = ".".join(str(t) for t in sys.version_info[:2])
+        return _dumps([PARSER_VERSION, GRAMMATIK_VERSION, py, blob, sprache, pfad])
 
     def cache_holen(self, blob: str, sprache: str, pfad: str) -> DateiErgebnis | None:
         z = self._verbindung().execute(
             "SELECT wert FROM cache WHERE schluessel=?",
             (self._cache_schluessel(blob, sprache, pfad),)).fetchone()
         return None if z is None else _ergebnis_von(json.loads(z[0]))
+
+    def cache_hat(self, blob: str, sprache: str, pfad: str) -> bool:
+        """Gibt es einen Cache-Eintrag (ohne ihn zu lesen)? Fuer `baum_lesen(bekannt=...)`."""
+        return self._verbindung().execute(
+            "SELECT 1 FROM cache WHERE schluessel=?",
+            (self._cache_schluessel(blob, sprache, pfad),)).fetchone() is not None
 
     def cache_setzen(self, blob: str, sprache: str, ergebnis: DateiErgebnis, pfad: str) -> None:
         c = self._verbindung()
@@ -326,6 +339,9 @@ class Speicher:
         Format wie `json.dumps(doc, sort_keys=True, indent=1)` mit den Schluesseln
         commit, kanten, knoten, version (in dieser, also sortierter, Reihenfolge). Knoten
         nach Id, Kanten nach (art, von, nach, Serialisierung). `seit` fehlt (R17).
+
+        Commit, Kanten und Knoten stammen aus einer Lese-Transaktion (WAL-Snapshot): ein
+        paralleles `graph_ersetzen` einer anderen Verbindung mischt sich nicht hinein.
         """
         c = self._verbindung()
         ziel = Path(ziel)
@@ -337,13 +353,17 @@ class Speicher:
                 d["attr"] = [p for p in d["attr"] if p[0] != "seit"]
                 yield d
 
-        with open(ziel, "wb", buffering=1 << 20) as f:
-            kopf = '{\n "commit": ' + json.dumps(self.meta("commit"), ensure_ascii=False) + ',\n "kanten": '
-            f.write(_esc(kopf).encode("utf-8"))
-            _liste_schreiben(f, (json.loads(w) for (w,) in c.execute(self._KANTEN_SQL)))
-            f.write(b',\n "knoten": ')
-            _liste_schreiben(f, knoten_ohne_seit())
-            f.write(b',\n "version": 1\n}\n')
+        c.execute("BEGIN")  # der Snapshot beginnt mit dem ersten Lesen (meta commit)
+        try:
+            with open(ziel, "wb", buffering=1 << 20) as f:
+                kopf = '{\n "commit": ' + json.dumps(self.meta("commit"), ensure_ascii=False) + ',\n "kanten": '
+                f.write(_esc(kopf).encode("utf-8"))
+                _liste_schreiben(f, (json.loads(w) for (w,) in c.execute(self._KANTEN_SQL)))
+                f.write(b',\n "knoten": ')
+                _liste_schreiben(f, knoten_ohne_seit())
+                f.write(b',\n "version": 1\n}\n')
+        finally:
+            c.execute("COMMIT")  # reine Lese-Transaktion: nur den Snapshot freigeben
 
 
 def stand_basis() -> Path:

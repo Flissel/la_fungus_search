@@ -148,3 +148,6 @@ class DateiErgebnis:
     extra_knoten: tuple[Knoten, ...] = ()
     extra_kanten: tuple[Kante, ...] = ()
     fehlerhaft: bool = False
+    # Spezialextraktoren (ast) konnten die Datei nicht lesen, obwohl der Parser lief:
+    # Routen, MCP-Werkzeuge und HTTP-Aufrufe dieser Datei fehlen (Datei-Attr `spezial_fehlt`).
+    spezial_fehlt: bool = False
