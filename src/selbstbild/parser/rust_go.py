@@ -51,6 +51,7 @@ class _RustSammler:
         self.env: list[EnvLesung] = []
         self.einstiege: list[Einstieg] = []
         self.alias: dict[str, str] = {}
+        self.voll: dict[str, str] = {}  # lokaler Name -> voller Pfad (Punktform), fuer den Env-Check
 
     # --- Importe ---------------------------------------------------------
     def _use_eintrag(self, importe: dict[str, list[str]], modul: str, name: str,
@@ -60,6 +61,8 @@ class _RustSammler:
             importe[modul].append(name)
         if alias is not None and name:
             self.alias[alias] = name
+        if name and name != "*":
+            self.voll[alias or name] = f"{modul}::{name}".replace("::", ".")
 
     def _use_pfad(self, importe: dict[str, list[str]], prefix: str, pfad: str,
                   alias: str | None) -> None:
@@ -147,7 +150,8 @@ class _RustSammler:
             return
         zeile = n.start_point[0] + 1
         self.aufrufe.append(Aufruf(scope, self._aufloesen(name), zeile))
-        if name in _RUST_ENV_FUNKTIONEN:
+        kopf, punkt, rest = name.partition(".")
+        if f"{self.voll.get(kopf, kopf)}{punkt}{rest}" in _RUST_ENV_FUNKTIONEN:
             args = n.child_by_field_name("arguments")
             erstes = args.named_children[0] if args is not None and args.named_children else None
             lit = _rust_literal(erstes)
@@ -177,7 +181,8 @@ class _RustSammler:
         while vor is not None and vor.type in ("attribute_item", "line_comment", "block_comment"):
             if vor.type == "attribute_item":
                 attr = next((k for k in vor.named_children if k.type == "attribute"), None)
-                if attr is not None and _ohne_leerraum(attr) in _RUST_TESTATTRIBUTE:
+                pfad = next(iter(attr.named_children), None) if attr is not None else None
+                if pfad is not None and pfad.type in ("identifier", "scoped_identifier")                         and _ohne_leerraum(pfad) in _RUST_TESTATTRIBUTE:
                     return True
             vor = vor.prev_named_sibling
         return False
@@ -237,6 +242,14 @@ def parse_rust(pfad: str, quelle: bytes) -> DateiErgebnis:
         einstiege=tuple(s.einstiege),
         fehlerhaft=baum.root_node.has_error,
     )
+
+
+def _go_testname(name: str) -> bool:
+    for p in _GO_TEST_PRAEFIXE:
+        if name.startswith(p):
+            rest = name[len(p):]
+            return not rest or not rest[0].islower()
+    return False
 
 
 class _GoSammler:
@@ -331,7 +344,7 @@ class _GoSammler:
                 zeile = n.start_point[0] + 1
                 if kurz == "main" and self.paket == "main":
                     self.einstiege.append(Einstieg("main", qual, zeile))
-                if self.testdatei and kurz.startswith(_GO_TEST_PRAEFIXE):
+                if self.testdatei and _go_testname(kurz):
                     self.einstiege.append(Einstieg("test", qual, zeile))
                 self._rekursiv(n, qual)
                 return

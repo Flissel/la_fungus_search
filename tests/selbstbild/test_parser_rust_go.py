@@ -87,3 +87,18 @@ def test_fehlerhaft_und_register():
     assert e.fehlerhaft and "ok" in {s.qualname for s in e.symbole}
     assert parsen("rust", "a.rs", b"fn m() {}").symbole
     assert parsen("go", "a.go", b"package p\nfunc F() {}").symbole
+
+
+def test_rust_tokio_mit_argumenten_und_env_import():
+    q = (b"use std::env::var;" + chr(10).encode()
+         + b'#[tokio::test(flavor = "multi_thread")]' + chr(10).encode()
+         + b'async fn t3() { var("KEY_A"); }' + chr(10).encode())
+    e = parse_rust("a.rs", q)
+    assert ("test", "t3") in {(x.art, x.symbol) for x in e.einstiege}
+    assert {v.name for v in e.env} == {"KEY_A"}
+
+
+def test_go_kleinbuchstabe_nach_praefix_kein_test():
+    q = b"package x" + chr(10).encode() + b"func Testing() {}" + chr(10).encode()         + b"func Test() {}" + chr(10).encode() + b"func TestA(t *testing.T) {}" + chr(10).encode()
+    e = parse_go("a/x_test.go", q)
+    assert {x.symbol for x in e.einstiege} == {"Test", "TestA"}
