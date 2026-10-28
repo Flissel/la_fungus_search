@@ -340,3 +340,32 @@ def test_parser_yaml_ruft_compose_bei_compose_dateinamen():
     assert any(k.art == "verbindet" for k in res.extra_kanten)
     assert any(e.name == "QDRANT_URL" for e in res.env)
     assert not parsen("yaml", "infra/andere.yml", STACK.encode()).extra_knoten
+
+
+# --------------------------------------------------------------------------- add_api_route
+
+def test_add_api_route_handler_und_zwei_methoden():
+    knoten, kanten, einstiege = _py(
+        "def liste(): ...\n"
+        "app.add_api_route('/items/{id}/', liste, methods=['GET', 'POST'])\n",
+        "api/i.py",
+    )
+    assert {k.id for k in knoten if k.art == "route"} == {
+        id_route(P, "GET", "/items/{}"), id_route(P, "POST", "/items/{}")}
+    von = {(k.von, k.nach) for k in kanten if k.art == "definiert_route"}
+    sym = id_symbol(P, "api/i.py", "liste")
+    assert von == {(sym, id_route(P, "GET", "/items/{}")), (sym, id_route(P, "POST", "/items/{}"))}
+    assert [(e.art, e.symbol, e.zeile) for e in einstiege] == [("route", "liste", 2), ("route", "liste", 2)]
+
+
+def test_add_api_route_ohne_methoden_ist_get_und_endpoint_keyword():
+    knoten, kanten, _ = _py("def h(): ...\nrouter.add_api_route(path='/x', endpoint=h)\n")
+    assert {k.id for k in knoten} == {id_route(P, "GET", "/x")}
+    assert [k.von for k in kanten] == [id_symbol(P, "a.py", "h")]
+
+
+def test_add_api_route_handler_nicht_in_der_datei():
+    knoten, kanten, einstiege = _py("from x import fremd\napp.add_api_route('/y', fremd)\n")
+    assert {k.id for k in knoten} == {id_route(P, "GET", "/y")}
+    assert not [k for k in kanten if k.art == "definiert_route"]
+    assert [(e.art, e.symbol) for e in einstiege] == [("route", None)]

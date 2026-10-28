@@ -77,6 +77,7 @@ def routen(
     praefixe: dict[str, str] = {}
     includes: dict[str, list[str]] = {}
     roh: list[_Roh] = []
+    top = {n.name for n in baum.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     for k in ast.walk(baum):
         wert: ast.expr | None = None
         ziele: list[ast.expr] = []
@@ -95,6 +96,17 @@ def routen(
                 p = _literal(_kw(k, "prefix")) or ""
                 if p not in liste:
                     liste.append(p)
+            elif (
+                k.func.attr == "add_api_route" and isinstance(k.func.value, ast.Name)
+                and _objekt_passt(k.func.value.id)
+            ):
+                p = _literal(k.args[0] if k.args else _kw(k, "path"))
+                if p is None:
+                    continue
+                handler = k.args[1] if len(k.args) > 1 else _kw(k, "endpoint")
+                qual = handler.id if isinstance(handler, ast.Name) and handler.id in top else None
+                for m in _methoden("api_route", k):
+                    roh.append(_Roh(k.lineno, m, p, k.func.value.id, qual))
         elif isinstance(k, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for dek in k.decorator_list:
                 if not (isinstance(dek, ast.Call) and isinstance(dek.func, ast.Attribute)):
@@ -111,6 +123,8 @@ def routen(
                 for m in _methoden(dek.func.attr, dek):
                     roh.append(_Roh(dek.lineno, m, p, objekt, je_knoten.get(id(k))))
 
+    # Die Regel des Doku-Loops "generisch, wenn derselbe Pfad in mehreren Dateien steht" entfaellt:
+    # geparst wird je Blob, andere Dateien sind hier nicht sichtbar. Nur GENERISCHE_PFADE zaehlen.
     knoten: dict[str, Knoten] = {}
     kanten: list[Kante] = []
     einstiege: list[Einstieg] = []

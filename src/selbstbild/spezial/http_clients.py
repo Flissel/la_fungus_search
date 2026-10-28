@@ -12,7 +12,6 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass, field
-from typing import Union
 
 from selbstbild.spezial._gemeinsam import Def, beleg, quelle_id
 from selbstbild.spezial.routen import normalisieren
@@ -29,8 +28,7 @@ _PROZENT = re.compile(r"%(?:\([^)]*\))?[sdrif]")
 _KLAMMER = re.compile(r"\{[^{}]*\}")
 _HOST = re.compile(r"^[A-Za-z][\w+.-]*://[^/\x00]+(/.*)?$", re.S)
 
-Teil = Union[str, frozenset]
-
+Teil = str | frozenset
 
 
 @dataclass
@@ -387,7 +385,6 @@ def _aufrufe_in(d: _Datei) -> list[_Roh]:
 
     besuche(d.baum, d.modul)
     return roh
-
 
 
 def http_aufrufe(
