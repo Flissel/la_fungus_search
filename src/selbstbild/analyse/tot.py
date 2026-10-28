@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from ..sprachen import SPRACHEN
 from . import ist_testdatei
 from .erreichbar import Erreichbarkeit
 from .lader import GraphDaten, datei_von
@@ -16,8 +17,7 @@ _SEKUNDEN = TOT_TAGE * 86400
 
 Stufe = Literal["sicher_tot", "wahrscheinlich_tot", "verdaechtig"]
 
-_TS_ENDUNGEN = (".ts", ".tsx", ".js", ".jsx", ".mjs")
-_JSX_ENDUNGEN = (".tsx", ".jsx")
+_TS_ENDUNGEN = tuple(sorted(e for s in ("typescript", "tsx", "javascript") for e in SPRACHEN[s]))
 
 
 @dataclass(frozen=True)
@@ -41,12 +41,23 @@ def _repo(symbol_id: str) -> str:
     return symbol_id.split(":", 2)[1]
 
 
+def _dokumentiert(symbol_id: str, doku: Mapping[str, frozenset[str]]) -> bool:
+    """Ruling S5: Doku des eigenen Repos oder eines Eltern-Repos (Namenspraefix an `/`-Grenze)."""
+    repo = _repo(symbol_id)
+    name = symbol_id.rpartition("#")[2].rpartition(".")[2]
+    teile = repo.split("/")
+    return any(name in doku.get("/".join(teile[:n]), frozenset()) for n in range(1, len(teile) + 1))
+
+
 def _zuletzt(d: GraphDaten, symbol_id: str) -> int | None:
-    roh = _attr(d, datei_von(symbol_id)).get("zuletzt")
+    a = _attr(d, datei_von(symbol_id))
+    if a.get("aenderungen") == "0":
+        return None  # keine Historie: Alter unbekannt
     try:
-        return None if roh is None else int(roh)
+        z = None if a.get("zuletzt") is None else int(a["zuletzt"])
     except ValueError:
         return None  # unlesbar: nicht als alt werten (im Zweifel abstufen)
+    return z if z is not None and z > 0 else None
 
 
 def _ausnahmen(d: GraphDaten, e: Erreichbarkeit, i: str) -> set[str]:
@@ -75,7 +86,7 @@ def _ausnahmen(d: GraphDaten, e: Erreichbarkeit, i: str) -> set[str]:
         erg.add("go_methode")
     if pfad.endswith(_TS_ENDUNGEN) and art in ("klasse", "methode"):
         erg.add("ts_klasse")
-    if pfad.endswith(_JSX_ENDUNGEN) and art == "funktion" and einfach[:1].isupper():
+    if pfad.endswith(_TS_ENDUNGEN) and art == "funktion" and einfach[:1].isupper():
         erg.add("jsx_komponente")
     return erg
 
@@ -99,11 +110,11 @@ def tot_finden(d: GraphDaten, e: Erreichbarkeit, doku: Mapping[str, frozenset[st
             gruende = {"nur_unsicher", "alt_90"}
             ausnahmen = _ausnahmen(d, e, i)
             gruende |= ausnahmen
-            if _einfach(i) in doku.get(_repo(i), frozenset()):
+            if _dokumentiert(i, doku):
                 gruende.add("doku_verweis")
             funde.append(TotFund(i, "wahrscheinlich_tot", tuple(sorted(gruende)), zuletzt))
             continue
-        verwiesen = _einfach(i) in doku.get(_repo(i), frozenset())
+        verwiesen = _dokumentiert(i, doku)
         ausnahmen = _ausnahmen(d, e, i)
         gruende = {"unerreichbar", "doku_verweis" if verwiesen else "kein_doku_verweis"} | ausnahmen
         if alt:
@@ -111,7 +122,3 @@ def tot_finden(d: GraphDaten, e: Erreichbarkeit, doku: Mapping[str, frozenset[st
         sicher = alt and not verwiesen and not ausnahmen
         funde.append(TotFund(i, "sicher_tot" if sicher else "wahrscheinlich_tot", tuple(sorted(gruende)), zuletzt))
     return tuple(funde)
-
-
-def _einfach(symbol_id: str) -> str:
-    return symbol_id.rpartition("#")[2].rpartition(".")[2]

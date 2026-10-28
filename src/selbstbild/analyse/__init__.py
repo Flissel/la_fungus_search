@@ -10,4 +10,4 @@ def ist_testdatei(pfad: str) -> bool:
     teile = pfad.replace("\\", "/").split("/")
     if any(t in ("tests", "__tests__") for t in teile[:-1]):
         return True
-    return _TESTNAME.match(teile[-1]) is not None
+    return teile[-1] == "conftest.py" or _TESTNAME.match(teile[-1]) is not None

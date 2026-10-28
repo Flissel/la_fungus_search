@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from selbstbild.analyse.doku_verweise import doku_bezeichner
+from selbstbild.analyse import ist_testdatei
+from selbstbild.analyse.doku_verweise import bezeichner_aus_text, doku_bezeichner
 from selbstbild.analyse.erreichbar import erreichbarkeit
 from selbstbild.analyse.lader import laden
 from selbstbild.analyse.tot import TotFund, tot_finden
@@ -167,3 +168,71 @@ def test_doku_bezeichner_nur_doku_seiten_aus_graph(git_repo, graph_stand):
                           [], commit_zeit=STICHTAG))
     assert doku_bezeichner(git_repo.wurzel, sha, d)["repo"] == frozenset({"in_doku"})
     assert "andere_seite" in doku_bezeichner(git_repo.wurzel, sha)["repo"]  # Regeln: **/*.md
+
+
+def test_s4_mts_klasse(graph_stand):
+    erg = _finden(graph_stand, [_d("a.mts"), _s("a.mts", "K", "klasse"), _s("a.cjs", "x")])
+    assert erg[_i("a.mts", "K")].stufe == "wahrscheinlich_tot"
+    assert "ts_klasse" in erg[_i("a.mts", "K")].gruende
+
+
+def test_s4_grossbuchstabe_in_js(graph_stand):
+    erg = _finden(graph_stand, [_d("a.js"), _s("a.js", "Konstrukteur"), _s("a.js", "klein")])
+    assert "jsx_komponente" in erg[_i("a.js", "Konstrukteur")].gruende
+    assert erg[_i("a.js", "Konstrukteur")].stufe == "wahrscheinlich_tot"
+    assert erg[_i("a.js", "klein")].stufe == "sicher_tot"
+
+
+def test_s5_eltern_repo_doku(graph_stand):
+    sym = id_symbol("vibemind/vibemind-os", "x.py", "rechne")
+    kn = [Knoten(id_datei("vibemind/vibemind-os", "x.py"), "datei", "x.py", None,
+                 (("zuletzt", str(STICHTAG - 120 * TAG)),)),
+          Knoten(sym, "symbol", "rechne", None, (("symbolart", "funktion"),))]
+    d = laden(graph_stand(kn, [], commit_zeit=STICHTAG))
+    e = erreichbarkeit(d)
+    assert tot_finden(d, e, {})[0].stufe == "sicher_tot"
+    assert tot_finden(d, e, {"vibemind": frozenset({"rechne"})})[0].stufe == "wahrscheinlich_tot"
+    assert tot_finden(d, e, {"vibemind/vibemind-os": frozenset({"rechne"})})[0].stufe == "wahrscheinlich_tot"
+    assert tot_finden(d, e, {"vibemind/andere": frozenset({"rechne"})})[0].stufe == "sicher_tot"
+    assert tot_finden(d, e, {"vibemind-x": frozenset({"rechne"})})[0].stufe == "sicher_tot"
+
+
+def test_unbekanntes_alter_stuft_ab(graph_stand):
+    for extra in ({"aenderungen": "0"}, {}):
+        erg = _finden(graph_stand, [_d("a.py", None, **extra), _s("a.py", "f")])
+        assert erg[_i("a.py", "f")].stufe == "wahrscheinlich_tot"
+    k = Knoten(id_datei("r", "b.py"), "datei", "b.py", None, (("zuletzt", "0"),))
+    erg = _finden(graph_stand, [k, _s("b.py", "f")])
+    assert erg[_i("b.py", "f")].stufe == "wahrscheinlich_tot"
+    erg = _finden(graph_stand, [_d("c.py", aenderungen="3"), _s("c.py", "f")])
+    assert erg[_i("c.py", "f")].stufe == "sicher_tot"
+
+
+def test_genau_90_tage(graph_stand):
+    assert _finden(graph_stand, [_d("a.py", 90), _s("a.py", "f")])[_i("a.py", "f")].gruende[0] == "alt_90"
+    assert "alt_90" not in _finden(graph_stand, [_d("a.py", 89), _s("a.py", "f")])[_i("a.py", "f")].gruende
+
+
+def test_doku_ende_zu_ende(git_repo, graph_stand):
+    git_repo.datei("docs/a.md", "Siehe `rechne_alles` hier.\n")
+    sha = git_repo.commit("doku")
+    doku = doku_bezeichner(git_repo.wurzel, sha)
+    knoten = [Knoten(id_datei("repo", "x.py"), "datei", "x.py", None, (("zuletzt", str(STICHTAG - 200 * TAG)),)),
+              Knoten(id_symbol("repo", "x.py", "rechne_alles"), "symbol", "rechne_alles", None,
+                     (("symbolart", "funktion"),)),
+              Knoten(id_symbol("repo", "x.py", "weg"), "symbol", "weg", None, (("symbolart", "funktion"),))]
+    d = laden(graph_stand(knoten, [], commit_zeit=STICHTAG))
+    erg = {f.symbol: f for f in tot_finden(d, erreichbarkeit(d), doku)}
+    assert erg[id_symbol("repo", "x.py", "rechne_alles")].stufe == "wahrscheinlich_tot"
+    assert erg[id_symbol("repo", "x.py", "weg")].stufe == "sicher_tot"
+
+
+def test_punktketten_in_prosa():
+    ids = bezeichner_aus_text("Rufe Klasse.methode auf, dann mein_modul.funktion und modul.tuwas(1). Ende.")
+    assert {"Klasse", "methode", "mein_modul", "funktion", "tuwas"} <= ids
+    assert "Ende" not in ids and "dann" not in ids
+
+
+def test_conftest_ist_testdatei():
+    assert ist_testdatei("conftest.py") and ist_testdatei("pkg/conftest.py")
+    assert not ist_testdatei("contest.py")

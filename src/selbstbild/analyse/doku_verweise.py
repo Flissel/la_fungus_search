@@ -13,6 +13,9 @@ _BACKTICK = re.compile(r"`([^`\n]+)`")
 _CODEARTIG = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 
 
+_KETTE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+(\()?")
+
+
 def _codeartig(w: str) -> bool:
     return _CODEARTIG.fullmatch(w) is not None and ("_" in w or any(c.isupper() for c in w[1:]))
 
@@ -23,6 +26,10 @@ def bezeichner_aus_text(text: str) -> set[str]:
     for m in _BACKTICK.finditer(text):
         erg.update(_WORT.findall(m.group(1)))
     erg.update(w for w in _WORT.findall(text) if _codeartig(w))
+    for m in _KETTE.finditer(text):  # `Klasse.methode`, `modul.funktion(`: Segmente einer Punktkette
+        teile = _WORT.findall(m.group(0))
+        if m.group(1) or any(_codeartig(t) or t[:1].isupper() for t in teile):
+            erg.update(teile)
     return erg
 
 
