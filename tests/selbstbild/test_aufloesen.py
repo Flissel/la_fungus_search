@@ -87,6 +87,33 @@ def test_import_src_relativ_und_ts():
     assert rufe[(id_symbol("r", "web/seite.ts", "zeigen"), id_symbol("r", "web/util/index.ts", "format"))] is False
 
 
+def test_ts_barrel_eine_ebene():
+    erg = {
+        ("r", "ui/index.ts"): DateiErgebnis(importe=(
+            Import("./knopf", ("Knopf",), 1, True),     # export { Knopf } from "./knopf"
+            Import("./feld", ("*",), 2, True),          # export * from "./feld"
+            Import("./tiefer", ("*",), 3, True),
+        )),
+        ("r", "ui/knopf.ts"): DateiErgebnis(symbole=(sym("Knopf"),)),
+        ("r", "ui/feld.ts"): DateiErgebnis(symbole=(sym("Feld"),)),
+        ("r", "ui/tiefer.ts"): DateiErgebnis(importe=(Import("./ganz", ("*",), 1, True),)),
+        ("r", "ui/ganz.ts"): DateiErgebnis(symbole=(sym("Ganz"),)),
+        ("r", "seite.ts"): DateiErgebnis(
+            symbole=(sym("zeigen"),),
+            importe=(Import("./ui/index", ("Knopf", "Feld", "Ganz"), 1, True),),
+            aufrufe=(Aufruf("zeigen", "Knopf", 3), Aufruf("zeigen", "Feld", 4), Aufruf("zeigen", "Ganz", 5)),
+        ),
+    }
+    _, kanten = aufloesen(erg, {})
+    rufe = kanten_von(kanten, "ruft_auf")
+    zeigen = id_symbol("r", "seite.ts", "zeigen")
+    assert rufe[(zeigen, id_symbol("r", "ui/knopf.ts", "Knopf"))] is False  # R15: unsicher
+    assert rufe[(zeigen, id_symbol("r", "ui/feld.ts", "Feld"))] is False
+    # nur eine Ebene: ui/ganz.ts wird über index -> tiefer -> ganz nicht gefunden
+    assert (zeigen, id_symbol("r", "ui/ganz.ts", "Ganz")) not in rufe
+    assert kanten_von(kanten, "importiert")[(id_datei("r", "ui/index.ts"), id_datei("r", "ui/knopf.ts"))] is True
+
+
 def test_relativ_hoehere_ebene_bleibt_unsicher():
     # `from .h import f` in p/q/a.py; h.py gibt es nur eine Ebene höher (p/h.py)
     erg = {

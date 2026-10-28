@@ -99,6 +99,23 @@ class _Sammler:
                             self.alias[_text(alias)] = _text(name)
         self.importe.append(Import(modul, tuple(namen), n.start_point[0] + 1, modul.startswith(".")))
 
+    def _reexport(self, n: Node) -> None:
+        """`export { X } from "./x"` und `export * [as ns] from "./x"` sind Importe von ./x.
+        Bei `export { X as Y }` zaehlt der Name in ./x (X)."""
+        modul = _literal(n.child_by_field_name("source"))
+        if modul is None:
+            return
+        namen: list[str] = []
+        for k in n.children:
+            if k.type == "*" or k.type == "namespace_export":
+                namen.append("*")
+            elif k.type == "export_clause":
+                for s in k.children:
+                    name = s.child_by_field_name("name") if s.type == "export_specifier" else None
+                    if name is not None:
+                        namen.append(_text(name))
+        self.importe.append(Import(modul, tuple(namen), n.start_point[0] + 1, modul.startswith(".")))
+
     # --- Aufrufe, Env ----------------------------------------------------
     def _aufloesen(self, name: str) -> str:
         kopf, punkt, rest = name.partition(".")
@@ -121,10 +138,14 @@ class _Sammler:
         obj = fn.child_by_field_name("object") if fn.type == "member_expression" else None
         if obj is not None and obj.type == "identifier" \
                 and name.rpartition(".")[2] in _EXPRESS_VERBEN:
+            # Route nur mit Handler: `app.get("/x", h)` bzw. eine Funktion als zweites
+            # Argument; `cache.delete("/tmp")` oder `store.get("/f", 1)` sind keine Route.
             args = n.child_by_field_name("arguments")
-            erstes = args.named_children[0] if args is not None and args.named_children else None
-            pfad = _literal(erstes)
-            if pfad is not None and pfad.startswith("/"):
+            werte = [a for a in args.named_children if a.type != "comment"] if args is not None else []
+            pfad = _literal(werte[0]) if werte else None
+            handler = len(werte) >= 2 and (werte[1].type == "identifier"
+                                           or werte[1].type in _FUNKTIONSWERTE)
+            if pfad is not None and pfad.startswith("/") and handler:
                 self.einstiege.append(Einstieg("route", scope, zeile))
 
     def _env_member(self, n: Node, scope: str | None) -> None:
@@ -142,6 +163,29 @@ class _Sammler:
         name = _literal(n.child_by_field_name("index"))
         if name is not None:
             self.env.append(EnvLesung(name, n.start_point[0] + 1, scope))
+
+    def _env_destrukturierung(self, n: Node, scope: str | None) -> None:
+        """`const { API_URL, X: y, Z = 1 } = process.env` liest API_URL, X und Z."""
+        muster = n.child_by_field_name("name")
+        wert = n.child_by_field_name("value")
+        if muster is None or wert is None or muster.type != "object_pattern" \
+                or _punktname(wert) not in _ENV_OBJEKTE:
+            return
+        for k in muster.named_children:
+            schluessel: Node | None = None
+            if k.type == "shorthand_property_identifier_pattern":
+                schluessel = k
+            elif k.type == "pair_pattern":
+                schluessel = k.child_by_field_name("key")
+            elif k.type == "object_assignment_pattern":
+                schluessel = k.child_by_field_name("left")
+            if schluessel is None:
+                continue
+            name = _literal(schluessel) if schluessel.type in ("string", "template_string") else (
+                _text(schluessel) if schluessel.type in (
+                    "property_identifier", "shorthand_property_identifier_pattern") else None)
+            if name:
+                self.env.append(EnvLesung(name, k.start_point[0] + 1, scope))
 
     # --- Symbole ---------------------------------------------------------
     def _symbol(self, n: Node, kurz: str, scope: str | None,
@@ -184,8 +228,12 @@ class _Sammler:
                     self._route_einstieg(_text(name_n), scope, n)
                 self._rekursiv(n, qual)
                 return
+            if t == "variable_declarator":
+                self._env_destrukturierung(n, scope)
         elif t == "import_statement":
             self._import(n)
+        elif t == "export_statement":
+            self._reexport(n)
         elif t == "call_expression":
             self._aufruf(n, scope)
         elif t == "member_expression":

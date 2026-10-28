@@ -6,9 +6,10 @@ deduplizierte, sortierte Knoten und Kanten ohne hängende Enden.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import posixpath
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -351,9 +352,14 @@ def aufloesen(
         for ziel, sicher, zeile, anker in imp.ziele:
             g.kante_neu(Kante("importiert", did, id_datei(repo, ziel), sicher, beleg(repo, pfad, zeile, anker)))
 
+        weiter: Callable[[str, str], str | None] | None = None
+        if pfad.endswith(_TS_ENDUNGEN):  # TS-Barrels: Re-Exporte eine Ebene weit folgen
+            weiter = functools.partial(_ts_reexport, repos[repo], repo, ergebnisse=ergebnisse, symbole=symbole)
+
         for a in erg.aufrufe:
             von = quelle(a.in_symbol)
-            treffer = _aufruf_ziel(repo, pfad, a.in_symbol, a.name, eigene, symbole, imp, letzte[repo], von)
+            treffer = _aufruf_ziel(repo, pfad, a.in_symbol, a.name, eigene, symbole, imp, letzte[repo], von,
+                                   weiter)
             if treffer is not None:
                 nach, sicher = treffer
                 g.kante_neu(Kante("ruft_auf", von, nach, sicher, beleg(repo, pfad, a.zeile, a.name)))
@@ -376,6 +382,29 @@ def aufloesen(
     return g.abschliessen()
 
 
+def _ts_reexport(
+    repo_bestand: _Repo,
+    repo: str,
+    ziel: str,
+    qual: str,
+    ergebnisse: Mapping[tuple[str, str], DateiErgebnis],
+    symbole: Mapping[tuple[str, str], Mapping[str, Symbol]],
+) -> str | None:
+    """Symbol-Id von `qual`, wenn `ziel` (ein Barrel) es eine Ebene weit re-exportiert
+    (`export { X } from "./x"`, `export * from "./x"`). Pfad-Aliase bleiben unaufgelöst."""
+    erg = ergebnisse.get((repo, ziel))
+    if erg is None:
+        return None
+    kopf = qual.partition(".")[0]
+    for imp in erg.importe:
+        if not imp.modul.startswith(".") or (kopf not in imp.namen and "*" not in imp.namen):
+            continue
+        weiter = repo_bestand.ts_modul(ziel, imp.modul)
+        if weiter is not None and weiter != ziel and qual in symbole.get((repo, weiter), {}):
+            return id_symbol(repo, weiter, qual)
+    return None
+
+
 def _aufruf_ziel(
     repo: str,
     pfad: str,
@@ -386,10 +415,19 @@ def _aufruf_ziel(
     imp: _Importe,
     letzte: Mapping[str, list[str]],
     von: str,
+    weiter: Callable[[str, str], str | None] | None = None,
 ) -> tuple[str, bool] | None:
-    """Ziel-Id und Sicherheit eines Aufrufs, oder None."""
+    """Ziel-Id und Sicherheit eines Aufrufs, oder None. `weiter` folgt TS-Re-Exporten
+    eine Ebene weit; ein so gefundenes Ziel ist immer unsicher."""
     def in_datei(ziel: str, qual: str) -> str | None:
         return id_symbol(repo, ziel, qual) if qual in symbole.get((repo, ziel), {}) else None
+
+    def ueber_barrel(ziel: str, qual: str, sicher: bool) -> tuple[str, bool] | None:
+        treffer = in_datei(ziel, qual)
+        if treffer is not None:
+            return treffer, sicher
+        treffer = weiter(ziel, qual) if weiter is not None else None
+        return (treffer, False) if treffer is not None else None
 
     kopf, punkt, rest = name.partition(".")
     # 1) self.x / this.x: Methode derselben (innersten umschließenden) Klasse
@@ -408,14 +446,12 @@ def _aufruf_ziel(
     # Die Sicherheit kommt aus dem Import (R13): unsicher aufgelöst bleibt unsicher.
     if kopf in imp.namen:
         ziel, praefix, sicher = imp.namen[kopf]
-        treffer = in_datei(ziel, ".".join(t for t in (praefix, rest) if t))
-        return (treffer, sicher) if treffer is not None else None
+        return ueber_barrel(ziel, ".".join(t for t in (praefix, rest) if t), sicher)
     # 4) importiertes Modul: `mod.f` bzw. `a.b.f`
     for modul in imp.reihenfolge:
         if name.startswith(modul + "."):
             ziel, sicher = imp.module[modul]
-            treffer = in_datei(ziel, name[len(modul) + 1:])
-            return (treffer, sicher) if treffer is not None else None
+            return ueber_barrel(ziel, name[len(modul) + 1:], sicher)
     for ziel, sicher in imp.stern:
         treffer = in_datei(ziel, name)
         if treffer is not None:

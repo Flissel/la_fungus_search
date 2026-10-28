@@ -51,6 +51,35 @@ def test_express_route():
     assert "/x" not in json.dumps(dataclasses.asdict(e))
 
 
+def test_express_route_braucht_handler():
+    q = (b'cache.delete("/tmp");\n'
+         b'app.get("/a", h);\n'
+         b'app.post("/b", (req, res) => res.end());\n'
+         b'router.use("/c", function (req, res) {});\n'
+         b'app.get("/d");\n'
+         b'app.get("/e", "text");\n'
+         b'store.get("/f", 1);\n')
+    e = parse_ts("srv.js", q, "javascript")
+    assert [(x.art, x.zeile) for x in e.einstiege] == [("route", 2), ("route", 3), ("route", 4)]
+
+
+def test_env_destrukturierung():
+    q = b"const { API_URL, X: y, Z = 1, ...rest } = process.env;\nconst { W } = import.meta.env;\n"
+    e = parse_ts("cfg.ts", q, "typescript")
+    assert [(v.name, v.zeile) for v in e.env] == [("API_URL", 1), ("X", 1), ("Z", 1), ("W", 2)]
+    assert parse_ts("o.ts", b"const { A } = andere;\n", "typescript").env == ()
+
+
+def test_re_exporte_sind_importe():
+    q = b'export { Knopf, B as C } from "./knopf";\nexport * from "./x";\nexport * as ns from "./y";\nexport { lokal };\n'
+    e = parse_ts("ui/index.ts", q, "typescript")
+    assert e.importe == (
+        Import(modul="./knopf", namen=("Knopf", "B"), zeile=1, relativ=True),
+        Import(modul="./x", namen=("*",), zeile=2, relativ=True),
+        Import(modul="./y", namen=("*",), zeile=3, relativ=True),
+    )
+
+
 def test_ts_test():
     q = b'describe("x", () => { it("y", () => {}); });'
     e = parse_ts("a.test.ts", q, "typescript")
