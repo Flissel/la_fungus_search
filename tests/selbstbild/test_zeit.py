@@ -76,3 +76,67 @@ def test_deterministisch(git_repo, monkeypatch: pytest.MonkeyPatch) -> None:
     assert d["autoren"] == "1"
     assert len(d["lebendigkeit"].split(".")[1]) == 4
     assert [k for k, _ in a1] == sorted(k for k, _ in a1)
+
+
+def test_umbenennungskette(git_repo) -> None:
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.commit("eins", datum="2026-01-01T00:00:00Z")
+    git_repo.mv("a.py", "b.py")
+    git_repo.commit("zwei", datum="2026-01-02T00:00:00Z")
+    git_repo.mv("b.py", "c.py")
+    kopf = git_repo.commit("drei", datum="2026-01-03T00:00:00Z")
+    v = verlauf(git_repo.wurzel, kopf)
+    assert set(v) == {"c.py"}
+    assert len(v["c.py"]) == 3
+
+
+def test_pfad_wiederverwendet(git_repo) -> None:
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.commit("eins", datum="2026-01-01T00:00:00Z")
+    git_repo.mv("a.py", "b.py")
+    git_repo.commit("zwei", datum="2026-01-02T00:00:00Z")
+    git_repo.datei("a.py", "ganz anderer inhalt\n")
+    kopf = git_repo.commit("drei", datum="2026-01-03T00:00:00Z")
+    v = verlauf(git_repo.wurzel, kopf)
+    assert len(v["a.py"]) == 1
+    assert len(v["b.py"]) == 2
+
+
+def test_loeschen_und_neu_anlegen(git_repo) -> None:
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.commit("eins", datum="2026-01-01T00:00:00Z")
+    git_repo.datei("a.py", "x = 2\n")
+    git_repo.commit("zwei", datum="2026-01-02T00:00:00Z")
+    (git_repo.wurzel / "a.py").unlink()
+    git_repo.commit("weg", datum="2026-01-03T00:00:00Z")
+    git_repo.datei("a.py", "neu\n")
+    kopf = git_repo.commit("neu", datum="2026-01-04T00:00:00Z")
+    assert len(verlauf(git_repo.wurzel, kopf)["a.py"]) == 1
+
+
+def test_merge_commit_einmal(git_repo) -> None:
+    git_repo.datei("basis.py", "b\n")
+    git_repo.commit("basis", datum="2026-01-01T00:00:00Z")
+    git_repo.git("checkout", "-q", "-b", "seite")
+    git_repo.datei("seite.py", "s\n")
+    git_repo.commit("seite", datum="2026-01-02T00:00:00Z")
+    git_repo.git("checkout", "-q", "main")
+    git_repo.git("merge", "--no-ff", "-q", "-m", "merge", "seite", datum="2026-01-03T00:00:00Z")
+    kopf = git_repo.git("rev-parse", "HEAD")
+    v = verlauf(git_repo.wurzel, kopf)
+    assert len(v["seite.py"]) == 1
+    assert v["seite.py"][0].commit == kopf
+    assert len(v["basis.py"]) == 1
+
+
+def test_pfad_mit_leerzeichen_und_umlaut(git_repo) -> None:
+    git_repo.datei("dir x/größe ü.py", "x\n")
+    kopf = git_repo.commit("eins")
+    assert set(verlauf(git_repo.wurzel, kopf)) == {"dir x/größe ü.py"}
+
+
+def test_unbekannter_commit(git_repo) -> None:
+    git_repo.datei("a.py", "x\n")
+    git_repo.commit("eins")
+    with pytest.raises(RuntimeError, match="fehlgeschlagen"):
+        verlauf(git_repo.wurzel, "deadbeef" * 5)
