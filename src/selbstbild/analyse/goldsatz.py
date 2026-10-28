@@ -73,6 +73,36 @@ class Vergleich:
     laufzeit_kolonie_ms: int | None = None
     reproduzierbar_mathe: bool | None = None
     reproduzierbar_kolonie: bool | None = None
+    # Summe uebersprungener (kein Mapping, ohne Symbol), nicht erkannter (Urteil) und unbekannter
+    # (Symbol nicht in der Analyse, Praefixe ohne Treffer) Eintraege.
+    ignoriert: int = 0
+
+
+_JA = frozenset({"ja", "j", "yes", "y", "true"})
+_NEIN = frozenset({"nein", "n", "no", "false"})
+
+
+def _urteil(u: Any) -> str | None:
+    """'ja' | 'nein' | 'offen' (unbeurteilt) | None (nicht erkannt). YAML-Booleans sind erlaubt."""
+    if u is None:
+        return "offen"
+    t = str(u).strip().lower()
+    if t in _JA:
+        return "ja"
+    if t in _NEIN:
+        return "nein"
+    return "offen" if t in ("", "offen") else None
+
+
+def _liste(roh: Any) -> list[Any]:
+    return roh if isinstance(roh, list) else ([] if roh is None else [roh])
+
+
+def _eintraege(gold: dict[str, Any], schluessel: str) -> tuple[list[dict[str, Any]], int]:
+    """Dict-Eintraege der Liste `schluessel`; Rest (Nicht-Dicts) wird gezaehlt."""
+    roh = _liste(gold.get(schluessel))
+    ok = [e for e in roh if isinstance(e, dict)]
+    return ok, len(roh) - len(ok)
 
 
 def _praezision(urteile: list[str]) -> tuple[float | None, int]:
@@ -80,14 +110,34 @@ def _praezision(urteile: list[str]) -> tuple[float | None, int]:
     return (ja / (ja + nein) if ja + nein else None), ja + nein
 
 
+def _gewertet(eintraege: list[dict[str, Any]]) -> tuple[list[tuple[dict[str, Any], str]], int]:
+    """(Eintrag, 'ja'|'nein') der beurteilten Eintraege; zweite Zahl = nicht erkannte Urteile."""
+    ok: list[tuple[dict[str, Any], str]] = []
+    unklar = 0
+    for e in eintraege:
+        u = _urteil(e.get("urteil"))
+        if u is None:
+            unklar += 1
+        elif u != "offen":
+            ok.append((e, u))
+    return ok, unklar
+
+
 def _jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b) if a | b else 0.0
 
 
+def _praefixe(roh: Any) -> list[str]:
+    """Skalar wird zur Liste; Backslash wird zu Slash; leere Praefixe entfallen."""
+    return [p for p in (str(x).strip().replace("\\", "/") for x in _liste(roh)) if p]
+
+
 def _passt(datei_id: str, praefixe: list[str]) -> bool:
+    """Praefix gilt an Pfadgrenzen: gleich oder gefolgt von `/`."""
     pfad = datei_id.removeprefix("datei:")
     ohne_repo = pfad.partition(":")[2] or pfad
-    return any(c.startswith(p) for p in praefixe for c in (datei_id, pfad, ohne_repo))
+    return any(c == p.rstrip("/") or c.startswith(p.rstrip("/") + "/")
+               for p in praefixe for c in (datei_id, pfad, ohne_repo))
 
 
 def _stat(a: Analyse, schluessel: str) -> int | None:
@@ -95,30 +145,57 @@ def _stat(a: Analyse, schluessel: str) -> int | None:
 
 
 def vergleichen(gold_yaml: str, mathe: Analyse) -> Vergleich:
-    gold = yaml.safe_load(gold_yaml) or {}
+    try:
+        gold = yaml.safe_load(gold_yaml)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Goldsatz ungueltig: kein lesbares YAML ({type(e).__name__})") from e
+    if gold is None:
+        gold = {}
+    if not isinstance(gold, dict):
+        raise ValueError("Goldsatz ungueltig: Wurzel muss ein Mapping (tot/doppelt/bereiche/zentral) sein")
     kol = mathe.kolonie
     tote = set(kol.tote_ecken) if kol else set()
+    ignoriert = 0
 
-    tot = [e for e in gold.get("tot") or [] if e.get("urteil") in ("ja", "nein")]
-    p_m, n_m = _praezision([e["urteil"] for e in tot])
-    gemeldet = [e["urteil"] for e in tot if datei_von(e["symbol"]) in tote]
-    p_k, n_k = _praezision(gemeldet) if kol else (None, 0)
+    bekannte_symbole = {t.symbol for t in mathe.tot}
+    roh_tot, uebersprungen = _eintraege(gold, "tot")
+    ignoriert += uebersprungen
+    tot: list[dict[str, Any]] = []
+    for e in roh_tot:
+        sym = e.get("symbol")
+        if isinstance(sym, str) and sym in bekannte_symbole:
+            tot.append(e)
+        else:
+            ignoriert += 1          # ohne Symbol oder Symbol nicht in der Analyse
+    gewertet, unklar = _gewertet(tot)
+    ignoriert += unklar
+    p_m, n_m = _praezision([u for _, u in gewertet])
+    p_k, n_k = _praezision([u for e, u in gewertet if datei_von(e["symbol"]) in tote]) if kol else (None, 0)
 
-    p_d, n_d = _praezision([e.get("urteil", "offen") for e in gold.get("doppelt") or []])
+    roh_d, uebersprungen = _eintraege(gold, "doppelt")
+    ignoriert += uebersprungen
+    gewertet_d, unklar = _gewertet(roh_d)
+    ignoriert += unklar
+    p_d, n_d = _praezision([u for _, u in gewertet_d])
 
     bekannt = sorted({d for b in mathe.bereiche for d in b.dateien})
     b_m: list[float] = []
     b_k: list[float] = []
-    for e in gold.get("bereiche") or []:
-        praefixe = [str(p) for p in e.get("erwartet") or []]
-        erwartet = {d for d in bekannt if _passt(d, praefixe)} if praefixe else set()
+    roh_b, uebersprungen = _eintraege(gold, "bereiche")
+    ignoriert += uebersprungen
+    for e in roh_b:
+        praefixe = _praefixe(e.get("erwartet"))
+        if not praefixe:
+            continue                # noch nicht ausgefuellt
+        erwartet = {d for d in bekannt if _passt(d, praefixe)}
         if not erwartet:
+            ignoriert += 1          # Praefixe treffen keine bekannte Datei
             continue
         b_m.append(max((_jaccard(erwartet, set(b.dateien)) for b in mathe.bereiche), default=0.0))
         if kol:
             b_k.append(max((_jaccard(erwartet, set(b)) for b in kol.bereiche), default=0.0))
 
-    zentral = {str(z) for z in gold.get("zentral") or []}
+    zentral = {str(z).strip() for z in _liste(gold.get("zentral")) if str(z).strip()}
     z_m = z_k = None
     if zentral:
         top = {datei_von(s) if s.startswith("symbol:") else s for s, _ in mathe.pagerank_top[:50]}
@@ -131,6 +208,7 @@ def vergleichen(gold_yaml: str, mathe: Analyse) -> Vergleich:
 
     rm, rk = _stat(mathe, "reproduzierbar_mathe"), _stat(mathe, "reproduzierbar_kolonie")
     return Vergleich(
+        ignoriert=ignoriert,
         tot=Frage(p_m, p_k, n_m, n_k), doppelt=Frage(p_d, None, n_d, 0),
         bereiche=Frage(mittel(b_m), mittel(b_k), len(b_m), len(b_k)),
         zentrum=Frage(z_m, z_k, len(zentral) if zentral else 0, len(zentral) if z_k is not None else 0),
