@@ -53,12 +53,12 @@ def _kolonie(k: KolonieErgebnis) -> dict[str, Any]:
     p = k.parameter
     return {
         "besuche": [list(x) for x in k.besuche],
-        "bereiche": _paare(k.bereiche, 6),
+        "bereiche": [list(b) for b in k.bereiche],
         "parameter": {"agenten": p.agenten, "schritte": p.schritte, "verfall": _z(p.verfall, 6),
                       "ablage": _z(p.ablage, 6), "erkundung": _z(p.erkundung, 6)},
-        "spuren": _paare(k.spuren, 6),
+        "spuren": [[a, b, _z(w, 6)] for a, b, w in k.spuren],
         "tote_ecken": list(k.tote_ecken),
-        "zentrum": _paare(k.zentrum, 6),
+        "zentrum": list(k.zentrum),
     }
 
 

@@ -20,7 +20,7 @@ def _analyse(datei: str = "a.py") -> Analyse:
         hotspots=(Hotspot(datei, 0.5, (("aenderung", 0.25), ("groesse", 0.5), ("zentral", 1.0))),),
         tot=(TotFund("sym:" + datei, "sicher_tot", ("a", "b"), None),),
         doppelungen=(Doppelung("gleiche_datei", (datei, "b.py"), 1.0),),
-        kolonie=KolonieErgebnis(((datei, 3),), ((datei, 0.5),), (("b1", 1.0),), ((datei, 0.2),),
+        kolonie=KolonieErgebnis(((datei, 3),), ((datei, "b.py", 0.5),), ((datei, "b.py"),), (datei,),
                                 ("z.py",), KolonieParameter()),
         luecken=(("fehlende_kanten", 2),), statistik=(("doppelt_eimer_uebersprungen", 1),))
 
