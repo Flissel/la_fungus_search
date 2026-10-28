@@ -34,12 +34,12 @@ def _ergebnis(pfad: str = "a.py") -> DateiErgebnis:
 def test_cache_roundtrip(tmp_path: Path) -> None:
     e = _ergebnis()
     with Speicher(tmp_path / "g.sqlite") as s:
-        assert s.cache_holen("b1", "python") is None
-        s.cache_setzen("b1", "python", e)
-        assert s.cache_holen("b1", "python") == e
+        assert s.cache_holen("b1", "python", "a.py") is None
+        s.cache_setzen("b1", "python", e, "a.py")
+        assert s.cache_holen("b1", "python", "a.py") == e
     with Speicher(tmp_path / "g.sqlite") as s:
-        assert s.cache_holen("b1", "python") == e
-        assert s.cache_holen("b1", "sql") is None
+        assert s.cache_holen("b1", "python", "a.py") == e
+        assert s.cache_holen("b1", "sql", "a.py") is None
 
 
 def test_cache_pfad_im_schluessel(tmp_path: Path) -> None:
@@ -47,24 +47,24 @@ def test_cache_pfad_im_schluessel(tmp_path: Path) -> None:
     # einem anderen Pfad darf das Ergebnis nicht erben.
     e = _ergebnis()
     with Speicher(tmp_path / "g.sqlite") as s:
-        s.cache_setzen("b1", "python", e, pfad="src/a.py")
-        assert s.cache_holen("b1", "python", pfad="src/a.py") == e
-        assert s.cache_holen("b1", "python", pfad="tests/test_a.py") is None
-        assert s.cache_holen("b1", "python") is None
+        s.cache_setzen("b1", "python", e, "src/a.py")
+        assert s.cache_holen("b1", "python", "src/a.py") == e
+        assert s.cache_holen("b1", "python", "tests/test_a.py") is None
+        assert s.cache_holen("b1", "python", "a.py") is None
 
 
 def test_cache_parser_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     with Speicher(tmp_path / "g.sqlite") as s:
-        s.cache_setzen("b1", "python", _ergebnis())
+        s.cache_setzen("b1", "python", _ergebnis(), "a.py")
         monkeypatch.setattr(sp, "PARSER_VERSION", sp.PARSER_VERSION + 1)
-        assert s.cache_holen("b1", "python") is None
+        assert s.cache_holen("b1", "python", "a.py") is None
 
 
 def test_cache_grammatik_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     with Speicher(tmp_path / "g.sqlite") as s:
-        s.cache_setzen("b1", "python", _ergebnis())
+        s.cache_setzen("b1", "python", _ergebnis(), "a.py")
         monkeypatch.setattr(sp, "GRAMMATIK_VERSION", sp.GRAMMATIK_VERSION + "x")
-        assert s.cache_holen("b1", "python") is None
+        assert s.cache_holen("b1", "python", "a.py") is None
 
 
 def _graph() -> tuple[list[Knoten], list[Kante]]:
@@ -90,16 +90,169 @@ def test_export_deterministisch(tmp_path: Path) -> None:
     assert a.endswith(b"\n") and b'"version": 1' in a and b'"commit": "c1"' in a
 
 
+def _referenz_export(commit: str | None, kn: list[Knoten], ka: list[Kante]) -> bytes:
+    """Das bisherige (nicht streamende) Exportformat, `seit` entfernt (R17)."""
+    import json
+
+    def ohne_seit(k: Knoten) -> Knoten:
+        return Knoten(k.id, k.art, k.name, k.beleg, tuple(p for p in k.attr if p[0] != "seit"))
+
+    doc = {
+        "version": 1,
+        "commit": commit,
+        "knoten": [sp._knoten_zu(ohne_seit(k)) for k in sorted(kn, key=lambda k: k.id)],
+        "kanten": [sp._kante_zu(k) for k in sorted(
+            ka, key=lambda k: (k.art, k.von, k.nach, sp._dumps(sp._kante_zu(k))))],
+    }
+    return (sp._esc(json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=1)) + "\n").encode("utf-8")
+
+
+def test_export_streamend_bytegleich_mit_referenz(tmp_path: Path) -> None:
+    # Sortierfallen: Nicht-BMP (😀) vs. U+FFFD, Surrogate, Quotes, Backslash, Umlaute.
+    namen = ["a.py", "z\udcff.py", 'q"x.py', "b\\c.py", "ä.py", "�.py", "\U0001F600.py", "A.py"]
+    kn = [Knoten(id_datei("r", n), "datei", n, Beleg("r", n, 1, "x", "d"),
+                 (("seit", "5"), ("zuletzt", "7"))) for n in namen]
+    kn.append(Knoten(id_env("X"), "env", "X", None))
+    ka = [Kante("enthaelt", "repo:r", id_datei("r", n), True, None) for n in namen]
+    ka += [Kante("ruft_auf", id_datei("r", namen[i]), id_datei("r", namen[-1 - i]), i % 2 == 0,
+                 Beleg("r", namen[i], i, "f", "d")) for i in range(len(namen))]
+    ka.append(Kante("liest_env", id_datei("r", "a.py"), id_env("X"), True, None))
+    ka.append(Kante("liest_env", id_datei("r", "a.py"), id_env("X"), False, None))  # gleiche Enden
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.graph_ersetzen("c1", reversed(kn), reversed(ka))
+        s.export_json(tmp_path / "e.json")
+    roh = (tmp_path / "e.json").read_bytes()
+    assert roh == _referenz_export("c1", kn, ka)
+    assert b'"seit"' not in roh and b'"zuletzt"' in roh
+
+
+def test_export_leer_bytegleich(tmp_path: Path) -> None:
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.export_json(tmp_path / "e.json")
+        assert (tmp_path / "e.json").read_bytes() == _referenz_export(None, [], [])
+        s.graph_ersetzen("c", [Knoten("repo:r", "repo", "r", None)], [])
+        s.export_json(tmp_path / "f.json")
+        assert (tmp_path / "f.json").read_bytes() == _referenz_export(
+            "c", [Knoten("repo:r", "repo", "r", None)], [])
+
+
+def test_seit_bleibt_im_speicher(tmp_path: Path) -> None:
+    k = Knoten("symbol:r:a.py#f", "symbol", "f", None, (("seit", "5"),))
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.graph_ersetzen("c", [k], [])
+        assert s.knoten() == [k]
+
+
+def test_alter_graph_ohne_sortierspalten_wird_ersetzt(tmp_path: Path) -> None:
+    import sqlite3
+    c = sqlite3.connect(tmp_path / "g.sqlite")
+    c.executescript("CREATE TABLE knoten(id TEXT PRIMARY KEY, wert TEXT NOT NULL);"
+                    "CREATE TABLE kanten(wert TEXT PRIMARY KEY);"
+                    "CREATE TABLE symbolverlauf(nr INTEGER PRIMARY KEY, symbol TEXT);")
+    c.close()
+    kn, ka = _graph()
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.graph_ersetzen("c1", kn, ka)
+        assert s.knoten() == sorted(kn, key=lambda k: k.id)
+
+
+def test_stand_basis_ohne_anlegen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SELBSTBILD_HOME", str(tmp_path / "home"))
+    assert sp.stand_basis() == tmp_path / "home"
+    assert not (tmp_path / "home").exists()
+    assert re.fullmatch(r"[0-9a-f]{12}", sp.pfad_kennung(tmp_path))
+    assert stand_ordner(tmp_path, "proj").name == f"proj-{sp.pfad_kennung(tmp_path)}"
+
+
+def test_cache_pfad_pflicht(tmp_path: Path) -> None:
+    with Speicher(tmp_path / "g.sqlite") as s:
+        with pytest.raises(TypeError):
+            s.cache_holen("b1", "python")  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            s.cache_setzen("b1", "python", _ergebnis())  # type: ignore[call-arg]
+
+
 def test_symbolverlauf(tmp_path: Path) -> None:
     with Speicher(tmp_path / "g.sqlite") as s:
-        assert s.symbol_seit("s") is None
+        assert s.symbol_seit("s", 999) is None
         s.symbolverlauf_merken("c1", 100, {"s": "a"})
         s.symbolverlauf_merken("c2", 200, {"s": "a"})
-        assert s.symbol_seit("s") == 100
+        assert s.symbol_seit("s", 200) == 100
         s.symbolverlauf_merken("c3", 300, {"s": "b"})
-        assert s.symbol_seit("s") == 300
+        assert s.symbol_seit("s", 300) == 300
         s.symbolverlauf_merken("c4", 400, {"s": "a"})
-        assert s.symbol_seit("s") == 400
+        assert s.symbol_seit("s", 400) == 400
+        # bis_zeit schaut in die Vergangenheit
+        assert s.symbol_seit("s", 250) == 100
+        assert s.symbol_seit("s", 350) == 300
+        assert s.symbol_seit("s", 99) is None
+
+
+def _zeilen(s: Speicher) -> int:
+    return s._verbindung().execute("SELECT COUNT(*) FROM symbolzeit").fetchone()[0]
+
+
+def test_symbolverlauf_aelterer_lauf_nachgetragen(tmp_path: Path) -> None:
+    # R17: Ein spaeter nachgetragener aelterer Lauf wird zeitlich einsortiert und
+    # verfaelscht die spaeteren Strecken nicht.
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.symbolverlauf_merken("c1", 100, {"f": "x", "g": "x"})
+        s.symbolverlauf_merken("c3", 300, {"f": "x", "g": "x"})
+        assert s.symbol_seit("f", 300) == 100
+        s.symbolverlauf_merken("c2", 200, {"f": "y"})  # g fehlt in c2
+        assert s.symbol_seit("f", 100) == 100
+        assert s.symbol_seit("f", 200) == 200
+        assert s.symbol_seit("f", 300) == 300  # x ab c3 wieder, Strecke neu
+        assert s.symbol_seit("g", 200) is None  # in c2 abwesend
+        assert s.symbol_seit("g", 300) == 300  # Neubeginn nach der Luecke
+        assert s.symbol_seit("g", 100) == 100
+
+
+def test_symbolverlauf_idempotent(tmp_path: Path) -> None:
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.symbolverlauf_merken("c1", 100, {"f": "x", "g": "x"})
+        s.symbolverlauf_merken("c2", 200, {"f": "y"})
+        vorher = _zeilen(s)
+        s.symbolverlauf_merken("c2", 200, {"f": "y"})
+        s.symbolverlauf_merken("c1", 100, {"f": "x", "g": "x"})
+        assert _zeilen(s) == vorher
+        assert s.symbol_seit("f", 200) == 200 and s.symbol_seit("g", 100) == 100
+
+
+def test_symbolverlauf_verschwinden_und_wiederkehr(tmp_path: Path) -> None:
+    # Semantik: Fehlt ein Symbol in einem erfassten Lauf, beginnt seine Strecke danach neu,
+    # auch mit gleichem Digest. Ohne erfassten Lauf dazwischen gibt es keine Luecke.
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.symbolverlauf_merken("c1", 100, {"f": "x"})
+        s.symbolverlauf_merken("c2", 200, {})
+        s.symbolverlauf_merken("c3", 300, {"f": "x"})
+        assert s.symbol_seit("f", 200) is None
+        assert s.symbol_seit("f", 300) == 300
+    with Speicher(tmp_path / "h.sqlite") as s:
+        s.symbolverlauf_merken("c1", 100, {"f": "x"})
+        s.symbolverlauf_merken("c3", 300, {"f": "x"})
+        assert s.symbol_seit("f", 300) == 100
+
+
+def test_symbolverlauf_bereiche_getrennt(tmp_path: Path) -> None:
+    # Ein Lauf eines Repos macht die Symbole eines anderen Repos nicht abwesend.
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.symbolverlauf_merken("a1", 100, {"symbol:a:x#f": "x"}, bereich="a")
+        s.symbolverlauf_merken("b1", 200, {"symbol:b:y#g": "y"}, bereich="b")
+        assert s.symbol_seit("symbol:a:x#f", 200) == 100
+        assert s.seit_je_symbol("a", 200) == {"symbol:a:x#f": 100}
+        assert s.seit_je_symbol("b", 200) == {"symbol:b:y#g": 200}
+
+
+def test_seit_je_symbol_gleich_einzeln(tmp_path: Path) -> None:
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.symbolverlauf_merken("c1", 100, {"f": "x", "g": "x", "h": "x"})
+        s.symbolverlauf_merken("c3", 300, {"f": "x", "g": "z"})
+        s.symbolverlauf_merken("c2", 200, {"f": "x", "g": "x"})
+        for t in (100, 150, 200, 300, 400):
+            alle = s.seit_je_symbol("", t)
+            for sym in ("f", "g", "h"):
+                assert alle.get(sym) == s.symbol_seit(sym, t), (sym, t)
 
 
 def test_meta(tmp_path: Path) -> None:
@@ -115,11 +268,12 @@ def test_surrogat_pfad(tmp_path: Path) -> None:
     kn = [Knoten(id_datei("r", pfad), "datei", pfad, Beleg("r", pfad, 1, "x", "d"))]
     ka = [Kante("enthaelt", "repo:r", id_datei("r", pfad), True, None)]
     with Speicher(tmp_path / "g.sqlite") as s:
-        s.cache_setzen("b1", "python", e)
-        assert s.cache_holen("b1", "python") == e
+        s.cache_setzen("b1", "python", e, "a.py")
+        assert s.cache_holen("b1", "python", "a.py") == e
         s.graph_ersetzen("c1", kn, ka)
         s.symbolverlauf_merken("c1", 5, {id_datei("r", pfad): "d"})
-        assert s.symbol_seit(id_datei("r", pfad)) == 5
+        assert s.symbol_seit(id_datei("r", pfad), 5) == 5
+        assert s.seit_je_symbol("", 5) == {id_datei("r", pfad): 5}
         assert s.knoten() == kn and s.kanten() == ka
         s.export_json(tmp_path / "e.json")
         s.export_json(tmp_path / "e2.json")

@@ -37,19 +37,23 @@ def _vier_dateien(git_repo) -> None:
 
 def test_inkrementell_gleich_voll(git_repo, tmp_path):
     _vier_dateien(git_repo)
-    git_repo.commit("eins")
+    git_repo.commit("eins", datum="2026-01-01T00:00:00Z")
     with _speicher(tmp_path, "inkr") as s:
         vermessen(git_repo.wurzel, speicher=s)
-        # Gleiches Commit-Datum wie Commit 1 (Fixture-Vorgabe): `seit` haengt vom
-        # gemessenen Verlauf ab (test_seit_attribut) und ist dann in beiden Laeufen gleich.
+        # Verschiedene Commit-Zeiten: `seit` unterscheidet sich zwischen den Staenden,
+        # steht aber nicht im Export (R17), der bleibt eine Funktion von (Commit, Regeln).
         git_repo.datei("app/a.py", PY + "\n\ndef h():\n    return 2\n")
-        git_repo.commit("zwei")
+        git_repo.commit("zwei", datum="2026-03-01T00:00:00Z")
         bericht = vermessen(git_repo.wurzel, speicher=s)
         a = _export(s, tmp_path / "a.json")
+        seit_inkr = {k.id: dict(k.attr).get("seit") for k in s.knoten() if k.art == "symbol"}
     with _speicher(tmp_path, "voll") as s:
         voll = vermessen(git_repo.wurzel, voll=True, speicher=s)
         b = _export(s, tmp_path / "b.json")
+        seit_voll = {k.id: dict(k.attr).get("seit") for k in s.knoten() if k.art == "symbol"}
     assert a == b
+    assert b'"seit"' not in a
+    assert seit_inkr != seit_voll  # der Speicher kennt die Historie, der Export nicht
     assert isinstance(bericht, Bericht)
     assert bericht.dateien == voll.dateien == 4
     assert bericht.geparst == 1
@@ -142,6 +146,87 @@ def test_seit_attribut(git_repo, tmp_path):
     assert datei["zuletzt"] == str(t2) == f["zuletzt"]
     assert "seit" not in datei
     assert sortiert
+
+
+def test_seit_aelterer_commit_nachgemessen(git_repo, tmp_path):
+    # R17: erst C2, dann --commit C1, dann wieder C2.
+    git_repo.datei("a.py", "def f():\n    return 1\n\n\ndef g():\n    return 2\n")
+    c1 = git_repo.commit("eins", datum="2026-01-01T00:00:00Z")
+    t1 = int(git_repo.git("log", "-1", "--format=%ct"))
+    git_repo.datei("a.py", "def f():\n    return 1\n\n\ndef g():\n    return 3\n")
+    c2 = git_repo.commit("zwei", datum="2026-02-01T00:00:00Z")
+    t2 = int(git_repo.git("log", "-1", "--format=%ct"))
+    repo = git_repo.wurzel.name
+    f, g = id_symbol(repo, "a.py", "f"), id_symbol(repo, "a.py", "g")
+
+    def seit(s: Speicher) -> dict[str, str]:
+        return {k.id: dict(k.attr)["seit"] for k in s.knoten() if k.id in (f, g)}
+
+    with _speicher(tmp_path, "s") as s:
+        vermessen(git_repo.wurzel, c2, speicher=s)
+        assert seit(s) == {f: str(t2), g: str(t2)}  # frischer Stand kennt nur C2
+        vermessen(git_repo.wurzel, c1, speicher=s)
+        bei_c1 = seit(s)
+        assert int(bei_c1[f]) <= t1 and int(bei_c1[g]) <= t1
+        vermessen(git_repo.wurzel, c2, speicher=s)
+        bei_c2 = seit(s)
+        assert s.meta("commit") == c2
+    assert bei_c2[g] == str(t2)  # g hat sich in C2 geaendert
+    assert bei_c2[f] == str(t1)  # f unveraendert seit C1, jetzt bekannt
+
+
+def test_parser_ausnahme_nicht_gecacht(git_repo, tmp_path, monkeypatch):
+    from selbstbild import vermessen as vm
+
+    git_repo.datei("a.py", "def f():\n    return 1\n")
+    git_repo.commit("eins")
+    echt = vm.parsen
+
+    def kaputt(sprache, pfad, quelle):
+        raise RecursionError("zu tief")
+
+    with _speicher(tmp_path, "s") as s:
+        monkeypatch.setattr(vm, "parsen", kaputt)
+        erster = vermessen(git_repo.wurzel, speicher=s)
+        monkeypatch.setattr(vm, "parsen", echt)
+        zweiter = vermessen(git_repo.wurzel, speicher=s)
+    assert erster.fehlerhaft == 1 and erster.geparst == 1
+    assert zweiter.geparst == 1 and zweiter.fehlerhaft == 0  # nicht aus dem Cache
+
+
+def _cli(env, *args):
+    return subprocess.run([sys.executable, "-m", "selbstbild", *args],
+                          capture_output=True, env=env, timeout=120)
+
+
+def test_status_export_ohne_stand_legen_nichts_an(git_repo, tmp_path):
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.commit("eins")
+    home = tmp_path / "home"
+    env = dict(os.environ, PYTHONPATH=str(SRC), SELBSTBILD_HOME=str(home))
+    for args in (("status", str(git_repo.wurzel)),
+                 ("export", str(git_repo.wurzel), str(tmp_path / "e.json"))):
+        erg = _cli(env, *args)
+        assert erg.returncode == 1
+        assert b"noch nicht vermessen" in erg.stderr
+    assert not home.exists()
+    assert not (tmp_path / "e.json").exists()
+
+
+def test_status_findet_stand_nach_namenswechsel(git_repo, tmp_path):
+    git_repo.datei("selbstbild.yaml", "name: alt\n")
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.commit("eins")
+    env = dict(os.environ, PYTHONPATH=str(SRC), SELBSTBILD_HOME=str(tmp_path / "home"))
+    erg = _cli(env, "vermessen", str(git_repo.wurzel))
+    assert erg.returncode == 0, erg.stderr.decode("utf-8", "replace")
+    git_repo.datei("selbstbild.yaml", "name: neu\n")
+    git_repo.commit("umbenannt")
+    vorher = sorted(p.name for p in (tmp_path / "home").iterdir())
+    erg = _cli(env, "status", str(git_repo.wurzel))
+    assert erg.returncode == 0, erg.stderr.decode("utf-8", "replace")
+    assert json.loads(erg.stdout)["name"] == "alt"
+    assert sorted(p.name for p in (tmp_path / "home").iterdir()) == vorher
 
 
 def test_cli_vermessen(git_repo, tmp_path):

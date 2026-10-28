@@ -11,28 +11,33 @@ from pathlib import Path
 from typing import Any
 
 from selbstbild.speicher import Speicher
-from selbstbild.vermessen import stand_pfad, vermessen
+from selbstbild.vermessen import stand_finden, vermessen
 
 
 def _ausgeben(daten: Any) -> None:
     sys.stdout.write(json.dumps(daten, ensure_ascii=True, sort_keys=True, indent=1) + "\n")
 
 
+def _nicht_vermessen(wurzel: Path) -> int:
+    sys.stderr.write(f"noch nicht vermessen: {wurzel}\n")
+    return 1
+
+
 def _status(wurzel: Path) -> int:
-    pfad = stand_pfad(wurzel)
-    if not pfad.exists():
-        sys.stderr.write(f"noch nicht vermessen: {wurzel}\n")
-        return 1
+    pfad = stand_finden(wurzel)
+    if pfad is None:
+        return _nicht_vermessen(wurzel)
     with Speicher(pfad) as s:
         bericht_text = s.meta("bericht")
         commit_zeit = s.meta("commit_zeit")
         gemessen = s.meta("gemessen_um")
+        name = s.meta("name")
     if bericht_text is None or gemessen is None:
-        sys.stderr.write(f"noch nicht vermessen: {wurzel}\n")
-        return 1
+        return _nicht_vermessen(wurzel)
     bericht = json.loads(bericht_text)
     jetzt = int(time.time())
     _ausgeben({
+        "name": name,
         "commit": bericht["commit"],
         "commit_zeit": int(commit_zeit) if commit_zeit else None,
         "gemessen_um": int(gemessen),
@@ -68,10 +73,9 @@ def main(argv: list[str] | None = None) -> int:
         _ausgeben(dataclasses.asdict(bericht))
         return 0
     if args.befehl == "export":
-        pfad = stand_pfad(args.wurzel)
-        if not pfad.exists():
-            sys.stderr.write(f"noch nicht vermessen: {args.wurzel}\n")
-            return 1
+        pfad = stand_finden(args.wurzel)
+        if pfad is None:
+            return _nicht_vermessen(args.wurzel)
         with Speicher(pfad) as sp:
             sp.export_json(args.ziel)
         return 0

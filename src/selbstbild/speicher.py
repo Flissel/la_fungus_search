@@ -1,15 +1,21 @@
-"""SQLite-Speicher: Parse-Cache, Graph, Symbolverlauf, JSON-Export."""
+"""SQLite-Speicher: Parse-Cache, Graph, Symbolverlauf, JSON-Export.
+
+`seit` (Beginn der aktuellen Digest-Strecke eines Symbols) haengt vom gemessenen Verlauf
+dieses Stands ab. Es steht als Attribut der Symbolknoten in der Tabelle `knoten`, wird
+aber nicht exportiert (R17): Der Export ist eine reine Funktion von (Commit, Regeln).
+"""
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import re
 import sqlite3
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from .sprachen import GRAMMATIK_VERSION, PARSER_VERSION
 from .typen import (
@@ -89,14 +95,66 @@ def _ergebnis_von(d: Any) -> DateiErgebnis:
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS cache(schluessel TEXT PRIMARY KEY, wert TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS knoten(id TEXT PRIMARY KEY, wert TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS kanten(wert TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS knoten(
+    id TEXT PRIMARY KEY, sortierung BLOB NOT NULL, wert TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS knoten_sortierung ON knoten(sortierung);
+CREATE TABLE IF NOT EXISTS kanten(
+    wert TEXT PRIMARY KEY, s_art BLOB NOT NULL, s_von BLOB NOT NULL, s_nach BLOB NOT NULL);
+CREATE INDEX IF NOT EXISTS kanten_sortierung ON kanten(s_art, s_von, s_nach, wert);
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS symbolverlauf(
-    nr INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT NOT NULL,
-    zeit INTEGER NOT NULL, digest TEXT NOT NULL, commit_id TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS symbolverlauf_symbol ON symbolverlauf(symbol, nr);
+CREATE TABLE IF NOT EXISTS laeufe(
+    bereich TEXT NOT NULL, zeit INTEGER NOT NULL, commit_id TEXT NOT NULL,
+    PRIMARY KEY(bereich, zeit));
+CREATE TABLE IF NOT EXISTS symbolzeit(
+    symbol TEXT NOT NULL, bereich TEXT NOT NULL, zeit INTEGER NOT NULL,
+    digest TEXT NOT NULL, commit_id TEXT NOT NULL, PRIMARY KEY(symbol, zeit));
+CREATE INDEX IF NOT EXISTS symbolzeit_bereich ON symbolzeit(bereich, symbol, zeit);
 """
+
+# Digest-Platzhalter: Symbol war in diesem erfassten Lauf nicht vorhanden.
+_ABWESEND = ""
+
+
+def _sortierschluessel(text: str) -> bytes:
+    """UTF-8 mit surrogatepass: Bytevergleich (SQLite BLOB, memcmp) == Codepunkt-Ordnung
+    von Python-`str`, auch fuer Nicht-BMP-Zeichen und einzelne Surrogate."""
+    return text.encode("utf-8", "surrogatepass")
+
+
+def _strecke(zeilen_neu_zuerst: Iterable[tuple[int, str]]) -> int | None:
+    """Beginn der Strecke des juengsten Digests (Zeilen nach Zeit absteigend), None = abwesend."""
+    seit: int | None = None
+    aktuell: str | None = None
+    for zeit, digest in zeilen_neu_zuerst:
+        if aktuell is None:
+            if digest == _ABWESEND:
+                return None
+            aktuell = digest
+        elif digest != aktuell:
+            break
+        seit = zeit
+    return seit
+
+
+def _alte_tabellen_entfernen(c: sqlite3.Connection) -> None:
+    """Graph-Tabellen ohne Sortierspalten (vor dem streamenden Export) und den alten,
+    nach Einfuegereihenfolge gefuehrten Symbolverlauf (vor R17) verwerfen."""
+    spalten = {z[1] for z in c.execute("PRAGMA table_info(knoten)")}
+    with c:
+        if spalten and "sortierung" not in spalten:
+            c.execute("DROP TABLE IF EXISTS knoten")
+            c.execute("DROP TABLE IF EXISTS kanten")
+        c.execute("DROP TABLE IF EXISTS symbolverlauf")
+
+
+def _liste_schreiben(f: IO[bytes], objekte: Iterator[Any]) -> None:
+    """Eine JSON-Liste auf Tiefe 1 im Format von `json.dumps(..., indent=1)` streamen."""
+    erstes = True
+    for obj in objekte:
+        text = json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=1)
+        f.write(_esc(("[\n  " if erstes else ",\n  ") + text.replace("\n", "\n  ")).encode("utf-8"))
+        erstes = False
+    f.write(b"[]" if erstes else b"\n ]")
 
 
 class Speicher:
@@ -109,6 +167,7 @@ class Speicher:
             self.pfad.parent.mkdir(parents=True, exist_ok=True)
             c = sqlite3.connect(str(self.pfad))
             c.execute("PRAGMA journal_mode=WAL")
+            _alte_tabellen_entfernen(c)
             c.executescript(_SCHEMA)
             self._c = c
         return self._c
@@ -132,13 +191,13 @@ class Speicher:
     def _cache_schluessel(blob: str, sprache: str, pfad: str) -> str:
         return _dumps([PARSER_VERSION, GRAMMATIK_VERSION, blob, sprache, pfad])
 
-    def cache_holen(self, blob: str, sprache: str, pfad: str = "") -> DateiErgebnis | None:
+    def cache_holen(self, blob: str, sprache: str, pfad: str) -> DateiErgebnis | None:
         z = self._verbindung().execute(
             "SELECT wert FROM cache WHERE schluessel=?",
             (self._cache_schluessel(blob, sprache, pfad),)).fetchone()
         return None if z is None else _ergebnis_von(json.loads(z[0]))
 
-    def cache_setzen(self, blob: str, sprache: str, ergebnis: DateiErgebnis, pfad: str = "") -> None:
+    def cache_setzen(self, blob: str, sprache: str, ergebnis: DateiErgebnis, pfad: str) -> None:
         c = self._verbindung()
         with c:
             c.execute("INSERT OR REPLACE INTO cache VALUES(?,?)",
@@ -150,39 +209,97 @@ class Speicher:
         with c:
             c.execute("DELETE FROM knoten")
             c.execute("DELETE FROM kanten")
-            c.executemany("INSERT OR REPLACE INTO knoten VALUES(?,?)",
-                          [(_dumps(k.id), _dumps(_knoten_zu(k))) for k in knoten])
-            c.executemany("INSERT OR IGNORE INTO kanten VALUES(?)",
-                          [(_dumps(_kante_zu(k)),) for k in kanten])
+            c.executemany(
+                "INSERT OR REPLACE INTO knoten VALUES(?,?,?)",
+                ((_dumps(k.id), _sortierschluessel(k.id), _dumps(_knoten_zu(k))) for k in knoten))
+            c.executemany(
+                "INSERT OR IGNORE INTO kanten VALUES(?,?,?,?)",
+                ((_dumps(_kante_zu(k)), _sortierschluessel(k.art), _sortierschluessel(k.von),
+                  _sortierschluessel(k.nach)) for k in kanten))
             c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (_dumps("commit"), _dumps(commit)))
 
+    _KNOTEN_SQL = "SELECT wert FROM knoten ORDER BY sortierung"
+    # Reihenfolge wie sorted(key=(art, von, nach, _dumps(kante))): BLOB/TEXT binaer = Codepunkte
+    _KANTEN_SQL = "SELECT wert FROM kanten ORDER BY s_art, s_von, s_nach, wert"
+
     def knoten(self) -> list[Knoten]:
-        z = self._verbindung().execute("SELECT wert FROM knoten").fetchall()
-        return sorted((_knoten_von(json.loads(r[0])) for r in z), key=lambda k: k.id)
+        return [_knoten_von(json.loads(r[0])) for r in self._verbindung().execute(self._KNOTEN_SQL)]
 
     def kanten(self) -> list[Kante]:
-        z = self._verbindung().execute("SELECT wert FROM kanten").fetchall()
-        return sorted((_kante_von(json.loads(r[0])) for r in z),
-                      key=lambda k: (k.art, k.von, k.nach, _dumps(_kante_zu(k))))
+        return [_kante_von(json.loads(r[0])) for r in self._verbindung().execute(self._KANTEN_SQL)]
 
-    # -- Symbolverlauf: nur Digest-Wechsel werden festgehalten ---------------
-    def symbolverlauf_merken(self, commit: str, commit_zeit: int, symbole: Mapping[str, str]) -> None:
+    # -- Symbolverlauf: zeitlich geordnet, je Bereich (Repo) mit Abwesenheit ---
+    def symbolverlauf_merken(
+        self, commit: str, commit_zeit: int, symbole: Mapping[str, str], bereich: str = "",
+    ) -> None:
+        """Erfasst einen Lauf von `bereich` zur Zeit `commit_zeit` (Symbol-Id -> Digest).
+
+        Zeilen gibt es nur zu Zeiten erfasster Laeufe, und nur bei einem Wechsel (Digest
+        oder Abwesenheit) gegenueber dem vorigen erfassten Lauf. Ein nachgetragener aelterer
+        Lauf wird zeitlich einsortiert. Damit spaetere Strecken stimmen, wird der bisherige
+        Zustand am naechsten erfassten Lauf festgeschrieben, falls er dort keine Zeile hatte.
+        Ein Lauf auf einer schon erfassten Zeit ueberschreibt sie und ist bei gleichen Daten
+        idempotent. Fehlt ein Symbol in einem erfassten Lauf, beginnt seine Strecke danach neu.
+        """
         c = self._verbindung()
+        z = commit_zeit
         with c:
-            for sid in sorted(symbole):
-                digest = symbole[sid]
-                s = _dumps(sid)
-                z = c.execute("SELECT digest FROM symbolverlauf WHERE symbol=? "
-                              "ORDER BY nr DESC LIMIT 1", (s,)).fetchone()
-                if z is None or z[0] != digest:
-                    c.execute("INSERT INTO symbolverlauf(symbol,zeit,digest,commit_id) "
-                              "VALUES(?,?,?,?)", (s, commit_zeit, digest, commit))
+            naechster = c.execute(
+                "SELECT zeit, commit_id FROM laeufe WHERE bereich=? AND zeit>? ORDER BY zeit LIMIT 1",
+                (bereich, z)).fetchone()
+            n_zeit: int | None = naechster[0] if naechster else None
+            n_commit: str = naechster[1] if naechster else ""
+            neu = {_dumps(s): d for s, d in symbole.items()}
+            schreiben: list[tuple[str, str, int, str, str]] = []
 
-    def symbol_seit(self, symbol_id: str) -> int | None:
-        z = self._verbindung().execute(
-            "SELECT zeit FROM symbolverlauf WHERE symbol=? ORDER BY nr DESC LIMIT 1",
-            (_dumps(symbol_id),)).fetchone()
-        return None if z is None else int(z[0])
+            def pruefen(sym: str, zeilen: list[tuple[int, str]]) -> None:
+                vor, bei, am_naechsten, zeile_am_naechsten = _ABWESEND, None, _ABWESEND, False
+                for t, d in zeilen:
+                    if t < z:
+                        vor = d
+                    elif t == z:
+                        bei = d
+                    if n_zeit is not None and t <= n_zeit:
+                        am_naechsten = d
+                        zeile_am_naechsten = t == n_zeit
+                ziel = neu.get(sym, _ABWESEND)
+                if (bei is None and ziel == vor) or bei == ziel:
+                    return
+                schreiben.append((sym, bereich, z, ziel, commit))
+                if n_zeit is not None and not zeile_am_naechsten and am_naechsten != ziel:
+                    schreiben.append((sym, bereich, n_zeit, am_naechsten, n_commit))
+
+            gesehen: set[str] = set()
+            zeilen = c.execute(
+                "SELECT symbol, zeit, digest FROM symbolzeit WHERE bereich=? ORDER BY symbol, zeit",
+                (bereich,))
+            for sym, gruppe in itertools.groupby(zeilen, key=lambda r: r[0]):
+                gesehen.add(sym)
+                pruefen(sym, [(t, d) for _, t, d in gruppe])
+            for sym in neu:
+                if sym not in gesehen:
+                    pruefen(sym, [])
+            c.executemany("INSERT OR REPLACE INTO symbolzeit VALUES(?,?,?,?,?)", schreiben)
+            c.execute("INSERT OR REPLACE INTO laeufe VALUES(?,?,?)", (bereich, z, commit))
+
+    def symbol_seit(self, symbol_id: str, bis_zeit: int) -> int | None:
+        """Beginn der Strecke des bei `bis_zeit` gueltigen Digests (nur Zeilen mit zeit <= bis_zeit)."""
+        zeilen = self._verbindung().execute(
+            "SELECT zeit, digest FROM symbolzeit WHERE symbol=? AND zeit<=? ORDER BY zeit DESC",
+            (_dumps(symbol_id), bis_zeit))
+        return _strecke(zeilen)
+
+    def seit_je_symbol(self, bereich: str, bis_zeit: int) -> dict[str, int]:
+        """`symbol_seit` fuer alle Symbole eines Bereichs in einem Durchgang (abwesende fehlen)."""
+        erg: dict[str, int] = {}
+        zeilen = self._verbindung().execute(
+            "SELECT symbol, zeit, digest FROM symbolzeit WHERE bereich=? AND zeit<=? "
+            "ORDER BY symbol, zeit", (bereich, bis_zeit))
+        for sym, gruppe in itertools.groupby(zeilen, key=lambda r: r[0]):
+            seit = _strecke(reversed([(t, d) for _, t, d in gruppe]))
+            if seit is not None:
+                erg[json.loads(sym)] = seit
+        return erg
 
     # -- Meta / Export -----------------------------------------------------
     def meta_setzen(self, k: str, v: str) -> None:
@@ -195,28 +312,47 @@ class Speicher:
         return None if z is None else str(json.loads(z[0]))
 
     def export_json(self, ziel: Path) -> None:
-        doc = {
-            "version": 1,
-            "commit": self.meta("commit"),
-            "knoten": [_knoten_zu(k) for k in self.knoten()],
-            "kanten": [_kante_zu(k) for k in self.kanten()],
-        }
-        text = _esc(json.dumps(doc, ensure_ascii=False, sort_keys=True, indent=1)) + "\n"
+        """Deterministischer Export, gestreamt (nie das ganze Dokument im Speicher).
+
+        Format wie `json.dumps(doc, sort_keys=True, indent=1)` mit den Schluesseln
+        commit, kanten, knoten, version (in dieser, also sortierter, Reihenfolge). Knoten
+        nach Id, Kanten nach (art, von, nach, Serialisierung). `seit` fehlt (R17).
+        """
+        c = self._verbindung()
         ziel = Path(ziel)
         ziel.parent.mkdir(parents=True, exist_ok=True)
-        ziel.write_bytes(text.encode("utf-8"))
+
+        def knoten_ohne_seit() -> Iterator[Any]:
+            for (wert,) in c.execute(self._KNOTEN_SQL):
+                d = json.loads(wert)
+                d["attr"] = [p for p in d["attr"] if p[0] != "seit"]
+                yield d
+
+        with open(ziel, "wb", buffering=1 << 20) as f:
+            kopf = '{\n "commit": ' + json.dumps(self.meta("commit"), ensure_ascii=False) + ',\n "kanten": '
+            f.write(_esc(kopf).encode("utf-8"))
+            _liste_schreiben(f, (json.loads(w) for (w,) in c.execute(self._KANTEN_SQL)))
+            f.write(b',\n "knoten": ')
+            _liste_schreiben(f, knoten_ohne_seit())
+            f.write(b',\n "version": 1\n}\n')
+
+
+def stand_basis() -> Path:
+    """Basisordner des lokalen Stands (wird hier nicht angelegt)."""
+    home = os.environ.get("SELBSTBILD_HOME")
+    if home:
+        return Path(home)
+    if sys.platform == "win32":
+        lokal = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(lokal) / "selbstbild"
+    return Path.home() / ".local" / "state" / "selbstbild"
+
+
+def pfad_kennung(wurzel: Path) -> str:
+    return hashlib.sha256(str(Path(wurzel).resolve()).encode("utf-8", "surrogateescape")).hexdigest()[:12]
 
 
 def stand_ordner(wurzel: Path, name: str) -> Path:
-    home = os.environ.get("SELBSTBILD_HOME")
-    if home:
-        basis = Path(home)
-    elif sys.platform == "win32":
-        lokal = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        basis = Path(lokal) / "selbstbild"
-    else:
-        basis = Path.home() / ".local" / "state" / "selbstbild"
-    kurz = hashlib.sha256(str(Path(wurzel).resolve()).encode("utf-8", "surrogateescape")).hexdigest()[:12]
-    ordner = basis / f"{name}-{kurz}"
+    ordner = stand_basis() / f"{name}-{pfad_kennung(wurzel)}"
     ordner.mkdir(parents=True, exist_ok=True)
     return ordner

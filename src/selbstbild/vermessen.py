@@ -21,12 +21,12 @@ import yaml
 
 from selbstbild.aufloesen import aufloesen
 from selbstbild.parser.basis import parsen
-from selbstbild.quelle import Baum, BlobLeser, _git, _regeln_aus_commit, baum_lesen
-from selbstbild.speicher import Speicher, stand_ordner
+from selbstbild.quelle import Baum, BlobLeser, _git, baum_lesen
+from selbstbild.speicher import Speicher, pfad_kennung, stand_basis, stand_ordner
 from selbstbild.typen import DateiErgebnis, Knoten, id_datei, id_symbol
 from selbstbild.zeit import verlauf, zeit_attribute
 
-__all__ = ["Bericht", "vermessen", "stand_pfad"]
+__all__ = ["Bericht", "vermessen", "stand_finden"]
 
 log = logging.getLogger("selbstbild")
 
@@ -97,21 +97,31 @@ def _mit_attr(k: Knoten, zusatz: Mapping[str, str]) -> Knoten:
     return dataclasses.replace(k, attr=tuple(sorted(werte.items())))
 
 
-def _parsen_sicher(sprache: str, pfad: str, quelle: bytes, repo: str) -> DateiErgebnis:
+def _parsen_sicher(sprache: str, pfad: str, quelle: bytes, repo: str) -> tuple[DateiErgebnis, bool]:
+    """(Ergebnis, ok). Bei einer Parser-Ausnahme: fehlerhaft nur fuer diesen Lauf, nicht cachen."""
     try:
-        return parsen(sprache, pfad, quelle)
+        return parsen(sprache, pfad, quelle), True
     except Exception as fehler:  # ein Parserfehler darf den Lauf nicht abbrechen
         log.warning("%s:%r: Parser-Ausnahme %s, Datei als fehlerhaft markiert",
                     repo, pfad, type(fehler).__name__)
-        return DateiErgebnis(fehlerhaft=True)
+        return DateiErgebnis(fehlerhaft=True), False
 
 
-def stand_pfad(wurzel: Path, commit: str = "HEAD") -> Path:
-    """Pfad von `graph.sqlite` im lokalen Stand (Name wie in `baum_lesen`)."""
-    wurzel = Path(wurzel)
-    sha = _git(wurzel, "rev-parse", f"{commit}^{{commit}}").stdout.decode().strip()
-    name = _regeln_aus_commit(wurzel, sha).name or wurzel.resolve().name
-    return stand_ordner(wurzel, name) / "graph.sqlite"
+def stand_finden(wurzel: Path) -> Path | None:
+    """Vorhandenes `graph.sqlite` dieser Wurzel, ohne etwas anzulegen.
+
+    Gesucht wird ueber die Pfadkennung (`<name>-<kennung>`), also unabhaengig vom aktuellen
+    Namen in der Regeldatei: ein Stand, der unter einem frueheren Namen vermessen wurde, wird
+    gefunden. Gibt es mehrere, gewinnt der zuletzt geschriebene.
+    """
+    basis = stand_basis()
+    if not basis.is_dir():
+        return None
+    kandidaten = [o / "graph.sqlite" for o in basis.glob(f"*-{pfad_kennung(wurzel)}")
+                  if (o / "graph.sqlite").is_file()]
+    if not kandidaten:
+        return None
+    return max(kandidaten, key=lambda p: (p.stat().st_mtime_ns, str(p)))
 
 
 def vermessen(
@@ -140,7 +150,7 @@ def vermessen(
             offen = []
             for e in b.eintraege:
                 assert e.sprache is not None
-                erg = None if voll else s.cache_holen(e.blob, e.sprache, pfad=e.pfad)
+                erg = None if voll else s.cache_holen(e.blob, e.sprache, e.pfad)
                 if erg is None:
                     offen.append(e)
                 else:
@@ -150,8 +160,9 @@ def vermessen(
                 with BlobLeser(b.wurzel) as leser:
                     for e in offen:
                         assert e.sprache is not None
-                        erg = _parsen_sicher(e.sprache, e.pfad, leser.lesen(e.blob), e.repo)
-                        s.cache_setzen(e.blob, e.sprache, erg, pfad=e.pfad)
+                        erg, ok = _parsen_sicher(e.sprache, e.pfad, leser.lesen(e.blob), e.repo)
+                        if ok:
+                            s.cache_setzen(e.blob, e.sprache, erg, e.pfad)
                         ergebnisse[(e.repo, e.pfad)] = erg
                         geparst += 1
             log.info("%s: %d Dateien, %d geparst, %d aus Cache (%.1f s)", b.repo,
@@ -173,6 +184,7 @@ def vermessen(
         stichtag = baum.commit_zeit
         zeit_je_datei: dict[str, tuple[tuple[str, str], ...]] = {}
         symbol_datei: dict[str, str] = {}
+        seit_je: dict[str, int] = {}
         for b in baeume:
             t0 = time.monotonic()
             aenderungen = verlauf(b.wurzel, b.commit)
@@ -185,8 +197,9 @@ def vermessen(
                     digests[sid] = sym.digest
                     symbol_datei[sid] = did
             del aenderungen
-            # chronologisch je Lauf: Commit und Commit-Zeit des jeweiligen (Sub-)Repos
-            s.symbolverlauf_merken(b.commit, b.commit_zeit, digests)
+            # je (Sub-)Repo mit dessen Commit-Zeit, zeitlich einsortiert (R17)
+            s.symbolverlauf_merken(b.commit, b.commit_zeit, digests, bereich=b.repo)
+            seit_je.update(s.seit_je_symbol(b.repo, b.commit_zeit))
             log.info("%s: Zeitachse und Symbolverlauf (%.1f s)", b.repo, time.monotonic() - t0)
 
         fehlerhaft = sum(1 for erg in ergebnisse.values() if erg.fehlerhaft)
@@ -199,13 +212,17 @@ def vermessen(
                 k = _mit_attr(k, dict(zeit_je_datei[k.id]))
             elif k.art == "symbol" and k.id in symbol_datei:
                 zusatz = dict(zeit_je_datei.get(symbol_datei[k.id], ()))
-                seit = s.symbol_seit(k.id)
-                if seit is not None:
+                seit = seit_je.get(k.id)
+                if seit is not None:  # nur im Speicher, nicht im Export (R17)
                     zusatz["seit"] = str(seit)
                 k = _mit_attr(k, zusatz)
             neu.append(k)
 
+        del knoten, seit_je, symbol_datei, zeit_je_datei
+        anzahl_knoten, anzahl_kanten = len(neu), len(kanten)
+        kanten_unsicher = sum(1 for k in kanten if not k.sicher)
         s.graph_ersetzen(baum.commit, neu, kanten)
+        del neu, kanten  # vor dem Export freigeben
         s.meta_setzen("regeln_digest", _digest(
             [[b.repo, b.regeln.model_dump(mode="json")] for b in baeume] + [sorted(dienste.items())]
         ))
@@ -217,9 +234,9 @@ def vermessen(
             geparst=geparst,
             aus_cache=aus_cache,
             uebersprungen=dict(sorted(gruende.items())),
-            knoten=len(neu),
-            kanten=len(kanten),
-            kanten_unsicher=sum(1 for k in kanten if not k.sicher),
+            knoten=anzahl_knoten,
+            kanten=anzahl_kanten,
+            kanten_unsicher=kanten_unsicher,
             fehlerhaft=fehlerhaft,
             submodule=tuple(sorted(b.repo for b in baeume[1:])),
             dauer_s=round(time.monotonic() - start, 3),
@@ -229,6 +246,8 @@ def vermessen(
             )),
         )
         # nur im lokalen Stand (nicht im Export): für `status`
+        s.meta_setzen("name", baum.repo)
+        s.meta_setzen("wurzel", str(wurzel.resolve()))
         s.meta_setzen("commit_zeit", str(baum.commit_zeit))
         s.meta_setzen("gemessen_um", str(int(time.time())))
         s.meta_setzen("bericht", json.dumps(dataclasses.asdict(bericht), sort_keys=True))
