@@ -85,3 +85,22 @@ def test_tabellenzugriff():
 def test_dispatcher():
     assert parsen("python", "a.py", b"def f(): pass\n").symbole
     assert parsen("cobol", "a.cob", b"x") == DateiErgebnis()
+
+
+
+def test_docstrings_keine_tabelle():
+    e = parse_python("a.py", b"def f():\n    '''select * from docs'''\n")
+    assert e.tabellen_zugriffe == ()
+    e = parse_python("a.py", b'"""select * from docs"""\nx = 1\n')
+    assert e.tabellen_zugriffe == ()
+
+
+def test_prosa_keine_tabelle():
+    e = parse_python("a.py", b"x = 'from the start'\ny = \"update the docs please\"\n")
+    assert e.tabellen_zugriffe == ()
+
+
+def test_update_set_und_join():
+    q = b'z = "UPDATE a.b SET x=1"\nw = "select 1 from t join u on 1"\n'
+    namen = {t[0] for t in parse_python("a.py", q).tabellen_zugriffe}
+    assert namen == {"a.b", "t", "u"}

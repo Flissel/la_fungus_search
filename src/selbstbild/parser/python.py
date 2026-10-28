@@ -19,10 +19,14 @@ from selbstbild.typen import (
 
 _ENV_AUFRUFE = {"os.getenv", "os.environ.get", "environ.get", "getenv"}
 _ENV_TABELLEN = {"os.environ", "environ"}
+# Tabellenzugriff nur in Strings, die mit einem SQL-Verb beginnen (R9). UPDATE zaehlt nur
+# als "UPDATE <name> SET"; sonst waere "update the docs please" ein Treffer.
+_SQL_ANFANG_RE = re.compile(
+    r"\s*(?:SELECT|INSERT|UPDATE|DELETE|WITH|CREATE|ALTER|DROP|MERGE|UPSERT)\b", re.IGNORECASE)
+_STRING_KOPF_RE = re.compile(r"^[A-Za-z]*(?:\"\"\"|'''|\"|')")
+_NAME = r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)"
 _TABELLE_RE = re.compile(
-    r"\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)",
-    re.IGNORECASE,
-)
+    rf"\b(?:(?:FROM|JOIN|INTO|TABLE)\s+{_NAME}|UPDATE\s+{_NAME}\s+SET\b)", re.IGNORECASE)
 
 
 def _text(n: Node) -> str:
@@ -77,7 +81,7 @@ class _Sammler:
         self.aufrufe: list[Aufruf] = []
         self.env: list[EnvLesung] = []
         self.einstiege: list[Einstieg] = []
-        self.tabellen: list[tuple[str, int, str | None]] = []
+        self.tabellen: dict[tuple[str, int, str | None], None] = {}  # dict: dedupliziert, Reihenfolge stabil
         self.alias: dict[str, str] = {}
 
     # --- Importe ---------------------------------------------------------
@@ -147,15 +151,21 @@ class _Sammler:
             self.env.append(EnvLesung(name, n.start_point[0] + 1, scope))
 
     def _string(self, n: Node, scope: str | None) -> None:
-        # Docstrings und lose Strings sind Prosa, kein SQL.
-        if n.parent is not None and n.parent.type == "expression_statement":
-            return
+        eltern = n.parent
+        if eltern is not None:
+            if eltern.type == "expression_statement":
+                return  # loser String
+            if eltern.type in ("block", "module"):
+                erstes = next((k for k in eltern.named_children if k.type != "comment"), None)
+                if erstes is not None and erstes.id == n.id:
+                    return  # Docstring
         text = _text(n)
+        inhalt = _STRING_KOPF_RE.sub("", text, count=1)
+        if not _SQL_ANFANG_RE.match(inhalt):
+            return
         for m in _TABELLE_RE.finditer(text):
             zeile = n.start_point[0] + 1 + text.count("\n", 0, m.start())
-            eintrag = (m.group(1), zeile, scope)
-            if eintrag not in self.tabellen:
-                self.tabellen.append(eintrag)
+            self.tabellen[(m.group(1) or m.group(2), zeile, scope)] = None
 
     # --- Lauf ------------------------------------------------------------
     def besuche(self, n: Node, scope: str | None, in_klasse: bool) -> None:
