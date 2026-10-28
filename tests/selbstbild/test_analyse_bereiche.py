@@ -88,14 +88,24 @@ def test_name_ueber_repos(graph_stand):
     knoten = [_d("pkg/x.py", "r1"), _d("pkg/y.py", "r2")]
     kanten = [Kante("importiert", id_datei("r1", "pkg/x.py"), id_datei("r2", "pkg/y.py"), True, None)]
     erg = bereiche_finden(laden(graph_stand(knoten, kanten)))
-    assert len(erg) == 1 and erg[0].name in ("r1/pkg", "r2/pkg")
+    assert len(erg) == 1 and erg[0].name == "r1/pkg"
 
 
 def test_kohaesion_wert(graph_stand):
-    # a-b (intern, Gewicht 1) + b-c (abgehend, 1): a,b zusammen -> 1/(1+1)
-    knoten = [_d("a.py"), _d("b.py"), _d("c.py")]
-    kanten = [_imp("a.py", "b.py"), _imp("b.py", "c.py")]
-    erg = bereiche_finden(laden(graph_stand(knoten, kanten)), aufloesung=1.0)
-    for b in erg:
-        assert 0.0 <= b.kohaesion <= 1.0
-        assert b.kohaesion == round(b.kohaesion, 4)
+    # je K4: 6 interne Kanten, dazu 1 Bruecke -> 6 / 7
+    _, _, knoten, kanten = _zwei_cluster()
+    erg = bereiche_finden(laden(graph_stand(knoten, kanten)))
+    assert [b.kohaesion for b in erg] == [0.8571, 0.8571]
+
+
+def test_aufloesung_wirkt(graph_stand):
+    # Kette aus 8 Dreier-Gruppen, lose verbunden: hohe Aufloesung zerlegt feiner
+    knoten, kanten = [], []
+    for g in range(8):
+        pf = [f"g{g}/f{i}.py" for i in range(3)]
+        knoten += [_d(p) for p in pf]
+        kanten += [_imp(pf[0], pf[1]), _imp(pf[1], pf[2]), _imp(pf[0], pf[2])]
+        if g:
+            kanten.append(_imp(f"g{g - 1}/f0.py", pf[0]))
+    d = laden(graph_stand(knoten, kanten))
+    assert len(bereiche_finden(d, aufloesung=20.0)) > len(bereiche_finden(d, aufloesung=0.05))
