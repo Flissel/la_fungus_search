@@ -9,7 +9,7 @@ from pathlib import Path
 import igraph
 
 from ..speicher import Speicher, _kante_von, _knoten_von
-from ..typen import Kante, Knoten
+from ..typen import Kante, Knoten, id_datei
 
 ANALYSE_VERSION: int = 1
 SEED: int = 20261028
@@ -78,7 +78,7 @@ def laden(stand: Path) -> GraphDaten:
 
 def datei_von(symbol_id: str) -> str:
     """`symbol:<repo>:<pfad>#q` -> `datei:<repo>:<pfad>`."""
-    kopf, _, _ = symbol_id.partition("#")
+    kopf, _, _ = symbol_id.rpartition("#")  # Qualnamen enthalten nie '#', Pfade manchmal
     return "datei:" + kopf.removeprefix("symbol:")
 
 
@@ -107,22 +107,30 @@ def dateigraph(d: GraphDaten) -> Sicht:
         if k.art == "datei":
             return i
         if k.art == "symbol":
+            if k.beleg is not None:
+                f = id_datei(k.beleg.repo, k.beleg.pfad)
+                if f in dateien:
+                    return f
             f = datei_von(i)
             return f if f in dateien else None
         return None
 
     w: dict[tuple[str, str], float] = {}
+    ohne_datei = 0
     for k in d.kanten:
         if k.art == "importiert":
             a, b = (k.von if k.von in dateien else None), (k.nach if k.nach in dateien else None)
         elif k.art == "ruft_auf":
             a = datei(k.von)
+            if a is None and k.von in d.knoten and d.knoten[k.von].art == "symbol":
+                ohne_datei += 1
             b = datei(k.nach) if d.knoten.get(k.nach, None) and d.knoten[k.nach].art == "symbol" else None
         else:
             continue
         if a is None or b is None or a == b:
             continue
         w[(a, b)] = w.get((a, b), 0.0) + _gewicht(k)
+    d.luecken["symbol_ohne_datei"] = ohne_datei  # Zuweisung, nicht Addition: wiederholbar
     return _sicht(dateien, w)
 
 
