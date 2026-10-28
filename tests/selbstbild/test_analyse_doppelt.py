@@ -92,3 +92,46 @@ def test_deterministisch(git_repo):
     e1, e2 = doppelungen(git_repo.wurzel, d), doppelungen(git_repo.wurzel, d)
     assert e1 == e2 and repr(e1) == repr(e2) and len(e1) >= 2
     assert list(e1) == sorted(e1, key=lambda x: (x.art, x.mitglieder))
+
+
+def test_drei_aehnliche_ein_cluster(git_repo):
+    for n in ("p", "q", "r"):
+        git_repo.datei(f"{n}.py", _gross(n))
+    sha = git_repo.commit("x")
+    repo = git_repo.wurzel.name
+    erg = [x for x in doppelungen(git_repo.wurzel, _daten(sha)) if x.art == "aehnliche_datei"]
+    assert [x.mitglieder for x in erg] == [tuple(id_datei(repo, f"{n}.py") for n in "pqr")]
+    assert 0.9 <= erg[0].aehnlichkeit <= 1.0
+
+
+def test_boilerplate_eimer_gedeckelt(git_repo):
+    from selbstbild.analyse import doppelt
+
+    for i in range(60):  # Kommentare fallen weg: 60 verschiedene Blobs, gleiche Signatur
+        git_repo.datei(f"b{i}.py", _gross("p") + f"# nur ein Kommentar {i}\n")
+    sha = git_repo.commit("x")
+    erg = doppelungen(git_repo.wurzel, _daten(sha))
+    assert not [x for x in erg if x.art == "aehnliche_datei"]
+    assert doppelt.STATISTIK["eimer_uebersprungen"] == doppelt.BAENDER
+
+
+def test_gleiches_symbol_in_einer_datei(git_repo):
+    methode = "    def rechne(self, a, b):\n        c = a + b\n        d = c * 2\n        e = d - a\n        return e\n"
+    text = f"class A:\n{methode}\n\nclass B:\n{methode}"
+    git_repo.datei("zwei.py", text)
+    sha = git_repo.commit("x")
+    repo = git_repo.wurzel.name
+    erg = [x for x in doppelungen(git_repo.wurzel, _daten(sha, _symbolknoten(repo, "zwei.py", text)))
+           if x.art == "gleiches_symbol"]
+    assert [x.mitglieder for x in erg] == [(id_symbol(repo, "zwei.py", "A.rechne"),
+                                            id_symbol(repo, "zwei.py", "B.rechne"))]
+
+
+def test_unbeendete_literale_linear():
+    import time
+
+    from selbstbild.analyse.doppelt import _tokens
+
+    t0 = time.monotonic()
+    _tokens("`x\n" * 20000 + '"""y\n' * 20000 + "/* z\n" * 20000, "typescript")
+    assert time.monotonic() - t0 < 5
