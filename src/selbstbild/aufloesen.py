@@ -416,13 +416,22 @@ def _ts_reexport(
     erg = ergebnisse.get((repo, ziel))
     if erg is None:
         return None
-    kopf = qual.partition(".")[0]
+    kopf, _, rest = qual.partition(".")
     for imp in erg.importe:
         if not imp.modul.startswith(".") or (kopf not in imp.namen and "*" not in imp.namen):
             continue
+        quelle = dict(imp.umbenennungen).get(kopf)
+        if quelle == "*":  # `export * as ns`: nur `ns.name` loest auf, und zwar zu `name` im Ziel
+            if not rest:
+                continue
+            gesucht = rest
+        elif quelle is not None:  # `export { X as Y }`: Y loest zu X auf
+            gesucht = ".".join(t for t in (quelle, rest) if t)
+        else:
+            gesucht = qual
         weiter = repo_bestand.ts_modul(ziel, imp.modul)
-        if weiter is not None and weiter != ziel and qual in symbole.get((repo, weiter), {}):
-            return id_symbol(repo, weiter, qual)
+        if weiter is not None and weiter != ziel and gesucht in symbole.get((repo, weiter), {}):
+            return id_symbol(repo, weiter, gesucht)
     return None
 
 

@@ -109,6 +109,8 @@ class Import:
     namen: tuple[str, ...]
     zeile: int
     relativ: bool
+    # Re-Exporte: (exportierter Name, Quellname in `modul`); Quellname "*" = Namensraum (`export * as ns`)
+    umbenennungen: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

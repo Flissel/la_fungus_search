@@ -74,9 +74,9 @@ def test_re_exporte_sind_importe():
     q = b'export { Knopf, B as C } from "./knopf";\nexport * from "./x";\nexport * as ns from "./y";\nexport { lokal };\n'
     e = parse_ts("ui/index.ts", q, "typescript")
     assert e.importe == (
-        Import(modul="./knopf", namen=("Knopf", "B"), zeile=1, relativ=True),
+        Import(modul="./knopf", namen=("Knopf", "C"), zeile=1, relativ=True, umbenennungen=(("C", "B"),)),
         Import(modul="./x", namen=("*",), zeile=2, relativ=True),
-        Import(modul="./y", namen=("*",), zeile=3, relativ=True),
+        Import(modul="./y", namen=("ns",), zeile=3, relativ=True, umbenennungen=(("ns", "*"),)),
     )
 
 
@@ -97,3 +97,10 @@ def test_fehlerhaft():
     e = parse_ts("k.ts", b"export function ok() {}\nfunction kaputt( {", "typescript")
     assert e.fehlerhaft is True
     assert "ok" in {s.qualname for s in e.symbole}
+
+
+def test_express_handler_member_und_wrapper():
+    q = (b'router.get("/", ctrl.list);\napp.post("/x", asyncHandler(fn));\n'
+         b'cache.delete("/tmp");\n')
+    e = parse_ts("srv.js", q, "javascript")
+    assert [(x.art, x.zeile) for x in e.einstiege] == [("route", 1), ("route", 2)]

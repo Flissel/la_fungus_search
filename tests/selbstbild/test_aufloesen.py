@@ -482,3 +482,26 @@ def test_deterministisch():
     assert [k.id for k in knoten] == sorted(k.id for k in knoten)
     assert [(k.art, k.von, k.nach) for k in kanten] == sorted((k.art, k.von, k.nach) for k in kanten)
     assert attr(knoten_je_id(knoten)[id_datei("r", "pkg/a.py")])["einstieg"] == "regel"
+
+
+def test_barrel_stern_als_namensraum():
+    erg = {
+        ("r", "ui/index.ts"): DateiErgebnis(importe=(
+            Import("./y", ("ns",), 1, True, (("ns", "*"),)),      # export * as ns from "./y"
+            Import("./x", ("Y",), 2, True, (("Y", "X"),)),       # export { X as Y } from "./x"
+        )),
+        ("r", "ui/y.ts"): DateiErgebnis(symbole=(sym("Beliebig"),)),
+        ("r", "ui/x.ts"): DateiErgebnis(symbole=(sym("X"),)),
+        ("r", "seite.ts"): DateiErgebnis(
+            symbole=(sym("zeigen"),),
+            importe=(Import("./ui/index", ("Beliebig", "Y", "X", "ns"), 1, True),),
+            aufrufe=(Aufruf("zeigen", "Beliebig", 3), Aufruf("zeigen", "Y", 4), Aufruf("zeigen", "X", 5),
+                     Aufruf("zeigen", "ns.Beliebig", 6)),
+        ),
+    }
+    _, kanten = aufloesen(erg, {})
+    rufe = kanten_von(kanten, "ruft_auf")
+    zeigen = id_symbol("r", "seite.ts", "zeigen")
+    assert rufe[(zeigen, id_symbol("r", "ui/x.ts", "X"))] is False  # Y -> X
+    assert rufe[(zeigen, id_symbol("r", "ui/y.ts", "Beliebig"))] is False  # nur ueber ns.Beliebig
+    assert len([k for k in rufe if k[0] == zeigen]) == 2  # weder `Beliebig` noch `X` allein loesen auf

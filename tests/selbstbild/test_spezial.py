@@ -422,3 +422,27 @@ def test_add_api_route_handler_nicht_in_der_datei():
     assert {k.id for k in knoten} == {id_route(P, "GET", "/y")}
     assert not [k for k in kanten if k.art == "definiert_route"]
     assert [(e.art, e.symbol) for e in einstiege] == [("route", None)]
+
+
+def test_compose_digest_eigener_block():
+    def stack(version: str) -> str:
+        return (
+            "services:\n"
+            "  app:\n"
+            "    image: app:1\n"
+            "    depends_on:\n"
+            "      db:\n"
+            "        condition: service_healthy\n"
+            "  db:\n"
+            f"    image: postgres:{version}\n"
+        )
+
+    k15, _ = _compose(stack("15"))
+    k16, _ = _compose(stack("16"))
+    db15 = next(k for k in k15 if k.id == id_dienst("db"))
+    db16 = next(k for k in k16 if k.id == id_dienst("db"))
+    assert db15.beleg.zeile == 7  # `db:` unter `services:`, nicht das `db:` in depends_on
+    assert db15.beleg.digest != db16.beleg.digest
+    app15 = next(k for k in k15 if k.id == id_dienst("app"))
+    app16 = next(k for k in k16 if k.id == id_dienst("app"))
+    assert app15.beleg.digest == app16.beleg.digest

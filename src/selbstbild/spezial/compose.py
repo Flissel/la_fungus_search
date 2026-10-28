@@ -86,8 +86,32 @@ def _namen_liste(roh: Any) -> list[str]:
     return []
 
 
+_SERVICES = re.compile(r"^([ \t]*)services[ \t]*:[ \t]*(?:#.*)?$", re.M)
+
+
+def _tiefe(zeile: str) -> int:
+    return len(zeile) - len(zeile.lstrip(" \t"))
+
+
 def _kopf(text: str, name: str) -> re.Match[str] | None:
-    return re.search(rf"^[ \t]*['\"]?{re.escape(name)}['\"]?[ \t]*:", text, re.M)
+    """Kopfzeile `name:` als direktes Kind von `services:` (R23): Treffer tiefer im Dienstblock,
+    z. B. `depends_on: db:`, zaehlen nicht."""
+    muster = re.compile(rf"^([ \t]*)['\"]?{re.escape(name)}['\"]?[ \t]*:", re.M)
+    for s in _SERVICES.finditer(text):
+        wurzel = len(s.group(1))
+        ebene: int | None = None
+        pos = s.end() + 1
+        for zeile in text[pos:].split("\n"):
+            if zeile.strip() and not zeile.lstrip().startswith("#"):
+                tiefe = _tiefe(zeile)
+                if tiefe <= wurzel:
+                    break
+                if ebene is None:
+                    ebene = tiefe
+                if tiefe == ebene and (m := muster.match(text, pos)) is not None:
+                    return m
+            pos += len(zeile) + 1
+    return None
 
 
 def _zeile(text: str, name: str) -> int:

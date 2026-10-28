@@ -101,20 +101,37 @@ class _Sammler:
 
     def _reexport(self, n: Node) -> None:
         """`export { X } from "./x"` und `export * [as ns] from "./x"` sind Importe von ./x.
-        Bei `export { X as Y }` zaehlt der Name in ./x (X)."""
+        Gefuehrt wird der exportierte Name: bei `export { X as Y }` ist das Y (X steht in `umbenennungen`),
+        bei `export * as ns` der Namensraum ns (Quellname "*")."""
         modul = _literal(n.child_by_field_name("source"))
         if modul is None:
             return
         namen: list[str] = []
+        umbenannt: list[tuple[str, str]] = []
         for k in n.children:
-            if k.type == "*" or k.type == "namespace_export":
+            if k.type == "*":
                 namen.append("*")
+            elif k.type == "namespace_export":
+                ns = next((c for c in k.children if c.type == "identifier"), None)
+                if ns is None:
+                    namen.append("*")
+                else:
+                    namen.append(_text(ns))
+                    umbenannt.append((_text(ns), "*"))
             elif k.type == "export_clause":
                 for s in k.children:
-                    name = s.child_by_field_name("name") if s.type == "export_specifier" else None
-                    if name is not None:
-                        namen.append(_text(name))
-        self.importe.append(Import(modul, tuple(namen), n.start_point[0] + 1, modul.startswith(".")))
+                    if s.type != "export_specifier":
+                        continue
+                    quelle = s.child_by_field_name("name")
+                    alias = s.child_by_field_name("alias")
+                    if quelle is None:
+                        continue
+                    ausgang = _text(alias) if alias is not None else _text(quelle)
+                    namen.append(ausgang)
+                    if ausgang != _text(quelle):
+                        umbenannt.append((ausgang, _text(quelle)))
+        self.importe.append(Import(modul, tuple(namen), n.start_point[0] + 1, modul.startswith("."),
+                                   tuple(umbenannt)))
 
     # --- Aufrufe, Env ----------------------------------------------------
     def _aufloesen(self, name: str) -> str:
@@ -143,7 +160,7 @@ class _Sammler:
             args = n.child_by_field_name("arguments")
             werte = [a for a in args.named_children if a.type != "comment"] if args is not None else []
             pfad = _literal(werte[0]) if werte else None
-            handler = len(werte) >= 2 and (werte[1].type == "identifier"
+            handler = len(werte) >= 2 and (werte[1].type in ("identifier", "member_expression", "call_expression")
                                            or werte[1].type in _FUNKTIONSWERTE)
             if pfad is not None and pfad.startswith("/") and handler:
                 self.einstiege.append(Einstieg("route", scope, zeile))
