@@ -9,6 +9,7 @@ from selbstbild.parser.daten import (
     parse_bash, parse_dotenv, parse_json, parse_powershell, parse_sql, parse_yaml,
 )
 from selbstbild.parser.python import parse_python
+from selbstbild.parser.rust_go import parse_go, parse_rust
 from selbstbild.parser.typescript import parse_ts
 from selbstbild.typen import DateiErgebnis
 
@@ -19,6 +20,8 @@ REGISTER: dict[str, ParserFunktion] = {
     "typescript": partial(parse_ts, sprache="typescript"),
     "tsx": partial(parse_ts, sprache="tsx"),
     "javascript": partial(parse_ts, sprache="javascript"),
+    "rust": parse_rust,
+    "go": parse_go,
     "sql": parse_sql,
     "yaml": parse_yaml,
     "json": parse_json,
