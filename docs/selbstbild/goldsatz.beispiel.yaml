@@ -1,0 +1,22 @@
+# Beispiel fuer einen ausgefuellten Goldsatz (erzeugt mit selbstbild.analyse.goldsatz.kandidaten).
+# urteil: offen | ja | nein. erwartet: Pfad-Praefixe. zentral: optionale Datei-Ids.
+bereiche:
+- dateien: 42
+  erwartet:
+  - src/selbstbild/analyse/
+  id: b1
+  name: analyse
+doppelt:
+- aehnlichkeit: '0.9877'
+  art: gleiche_datei
+  mitglieder:
+  - datei:repo:a/util.py
+  - datei:repo:b/util.py
+  urteil: ja
+tot:
+- gruende:
+  - nicht_erreichbar
+  symbol: symbol:repo:pkg/alt.py#alte_funktion
+  urteil: nein
+zentral:
+- datei:repo:src/selbstbild/analyse/lader.py
