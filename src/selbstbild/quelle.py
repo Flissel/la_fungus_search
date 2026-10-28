@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import IO, Literal
 
+from selbstbild._glob import glob_passt as _ausgenommen
+from selbstbild._glob import glob_regex as _glob_regex
 from selbstbild.regeln import REGELDATEI, STANDARD_AUSGENOMMEN, Regeln, regeln_laden
 from selbstbild.sprachen import sprache_fuer
 
@@ -126,39 +127,6 @@ class BlobLeser:
         daten = stdout.read(groesse)
         stdout.read(1)  # abschliessendes LF
         return daten
-
-
-# --- Glob ------------------------------------------------------------------
-
-def _glob_regex(muster: str) -> re.Pattern[str]:
-    """`**` = beliebig viele Pfadsegmente, `*` = innerhalb eines Segments."""
-    ende = r"\Z"
-    if muster.endswith("/**"):  # `X/**` trifft auch `X` selbst (z. B. Gitlinks)
-        muster = muster[:-3]
-        ende = r"(?:/.*)?\Z"
-    teile: list[str] = []
-    i = 0
-    while i < len(muster):
-        if muster.startswith("**/", i):
-            teile.append("(?:.*/)?")
-            i += 3
-        elif muster.startswith("**", i):
-            teile.append(".*")
-            i += 2
-        elif muster[i] == "*":
-            teile.append("[^/]*")
-            i += 1
-        elif muster[i] == "?":
-            teile.append("[^/]")
-            i += 1
-        else:
-            teile.append(re.escape(muster[i]))
-            i += 1
-    return re.compile("".join(teile) + ende)
-
-
-def _ausgenommen(pfad: str, muster: list[re.Pattern[str]]) -> bool:
-    return any(m.match(pfad) for m in muster)
 
 
 # --- Baum ------------------------------------------------------------------

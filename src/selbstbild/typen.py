@@ -86,6 +86,10 @@ def id_dienst(name: str) -> str:
     return f"dienst:{name}"
 
 
+def id_doku_seite(repo: str, pfad: str) -> str:
+    return f"doku_seite:{repo}:{pfad}"
+
+
 @dataclass(frozen=True)
 class Symbol:
     qualname: str
