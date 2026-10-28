@@ -83,7 +83,65 @@ def test_import_src_relativ_und_ts():
     assert rufe[(kern, id_symbol("r", "src/app/modell.py", "laden"))] is True
     # requests.get: extern importiert, also auch keine unsichere Kante zum einzigen `get`
     assert (kern, id_symbol("r", "src/app/modell.py", "get")) not in rufe
-    assert rufe[(id_symbol("r", "web/seite.ts", "zeigen"), id_symbol("r", "web/util/index.ts", "format"))] is True
+    # TS-Name kann ein Default-Import sein (in `Import` nicht unterscheidbar): nur unsicher
+    assert rufe[(id_symbol("r", "web/seite.ts", "zeigen"), id_symbol("r", "web/util/index.ts", "format"))] is False
+
+
+def test_relativ_hoehere_ebene_bleibt_unsicher():
+    # `from .h import f` in p/q/a.py; h.py gibt es nur eine Ebene höher (p/h.py)
+    erg = {
+        ("r", "p/q/a.py"): DateiErgebnis(
+            symbole=(sym("g"),),
+            importe=(Import("h", ("f",), 1, True),),
+            aufrufe=(Aufruf("g", "f", 2),),
+        ),
+        ("r", "p/q/b.py"): DateiErgebnis(
+            symbole=(sym("k"),),
+            importe=(Import("h", ("*",), 1, True), Import("", ("h",), 2, True)),
+            aufrufe=(Aufruf("k", "f", 3), Aufruf("k", "h.f", 4)),
+        ),
+        ("r", "p/h.py"): DateiErgebnis(symbole=(sym("f"),)),
+    }
+    _, kanten = aufloesen(erg, {})
+    assert kanten_von(kanten, "importiert") == {
+        (id_datei("r", "p/q/a.py"), id_datei("r", "p/h.py")): False,
+        (id_datei("r", "p/q/b.py"), id_datei("r", "p/h.py")): False,
+    }
+    rufe = kanten_von(kanten, "ruft_auf")
+    ziel = id_symbol("r", "p/h.py", "f")
+    assert rufe[(id_symbol("r", "p/q/a.py", "g"), ziel)] is False   # importierter Name
+    assert rufe[(id_symbol("r", "p/q/b.py", "k"), ziel)] is False   # Stern bzw. Untermodul
+
+
+def test_zwei_wurzeln_naechste_gewinnt():
+    erg = {
+        ("r", "spaces/m/app/__init__.py"): DateiErgebnis(),
+        ("r", "spaces/m/app/cfg.py"): DateiErgebnis(symbole=(sym("lade"),)),
+        ("r", "spaces/s/app/__init__.py"): DateiErgebnis(),
+        ("r", "spaces/s/app/cfg.py"): DateiErgebnis(symbole=(sym("lade"),)),
+        ("r", "spaces/s/app/x.py"): DateiErgebnis(
+            symbole=(sym("lauf"),),
+            importe=(Import("app.cfg", ("lade",), 1, False),),
+            aufrufe=(Aufruf("lauf", "lade", 2),),
+        ),
+        ("r", "tools/y.py"): DateiErgebnis(
+            symbole=(sym("werkzeug"),),
+            importe=(Import("app.cfg", ("lade",), 1, False), Import("json", (), 2, False)),
+            aufrufe=(Aufruf("werkzeug", "lade", 3), Aufruf("werkzeug", "json.loads", 4)),
+        ),
+    }
+    _, kanten = aufloesen(erg, {})
+    imp = kanten_von(kanten, "importiert")
+    rufe = kanten_von(kanten, "ruft_auf")
+    x, y = id_datei("r", "spaces/s/app/x.py"), id_datei("r", "tools/y.py")
+    assert imp[(x, id_datei("r", "spaces/s/app/cfg.py"))] is True
+    assert (x, id_datei("r", "spaces/m/app/cfg.py")) not in imp
+    assert rufe[(id_symbol("r", "spaces/s/app/x.py", "lauf"), id_symbol("r", "spaces/s/app/cfg.py", "lade"))] is True
+    m_ziele = {id_datei("r", "spaces/m/app/cfg.py"), id_symbol("r", "spaces/m/app/cfg.py", "lade")}
+    assert not any(k.sicher and k.nach in m_ziele for k in kanten if k.art != "enthaelt")
+    # keine Wurzel über tools/y.py, zwei Kandidaten: geraten, also unsicher
+    assert [s for (v, _), s in imp.items() if v == y] == [False]
+    assert all(s is False for (v, _), s in rufe.items() if v == id_symbol("r", "tools/y.py", "werkzeug"))
 
 
 def test_self_methode():
@@ -114,6 +172,18 @@ def test_eindeutiger_name_unsicher():
     assert rufe == {(id_symbol("r", "a.py", "g"), id_symbol("r", "b.py", "rechnen")): False}
 
     erg[("r", "c.py")] = DateiErgebnis(symbole=(sym("rechnen"),))
+    _, kanten = aufloesen(erg, {})
+    assert kanten_von(kanten, "ruft_auf") == {}
+
+
+def test_gepunktete_namen_ohne_rueckfall():
+    erg = {
+        ("r", "a.py"): DateiErgebnis(
+            symbole=(sym("K", "klasse", 1, 9), sym("K.g", "methode", 2, 5)),
+            aufrufe=(Aufruf("K.g", "obj.rechnen", 3), Aufruf("K.g", "np.array", 4), Aufruf("K.g", "self.erbe", 5)),
+        ),
+        ("r", "b.py"): DateiErgebnis(symbole=(sym("Z.rechnen", "methode"), sym("array"), sym("erbe"))),
+    }
     _, kanten = aufloesen(erg, {})
     assert kanten_von(kanten, "ruft_auf") == {}
 
@@ -177,7 +247,7 @@ def test_einstiege_und_fehlerhaft():
     knoten, _ = aufloesen(erg, {"r": Regeln(einstiegspunkte=["t/**::test_a"])})
     k = knoten_je_id(knoten)
     s = attr(k[id_symbol("r", "t/test_x.py", "test_a")])
-    assert s["einstieg"] == "regel,test" and s["fehlerhaft"] == "1"
+    assert s == {"einstieg": "regel,test", "fehlerhaft": "1", "symbolart": "funktion"}
     assert list(k[id_symbol("r", "t/test_x.py", "test_a")].attr) == sorted(k[id_symbol("r", "t/test_x.py", "test_a")].attr)
     assert attr(k[id_datei("r", "t/test_x.py")])["einstieg"] == "main"
 
@@ -214,6 +284,7 @@ def _gemischt() -> dict[tuple[str, str], DateiErgebnis]:
                 Kante("definiert_route", f"symbol:{p}:api/app.py#liste", route, True, b),
                 Kante("definiert_route", f"symbol:{p}:api/app.py#fehlt", route, True, b),
                 Kante("nutzt_dienst", f"datei:{p}:api/app.py", "env:HTTP_ZIEL", True, b),
+                Kante("liest_env", f"symbol:{p}:api/app.py#fehlt", "env:WAISE", True, b),
             ),
         ),
         ("r", "api/zweit.py"): DateiErgebnis(
@@ -237,6 +308,8 @@ def test_keine_haengenden_kanten():
     # Kante zu einem nicht existierenden Symbol fällt weg
     assert not any(k.von.endswith("#fehlt") for k in kanten)
     assert {"dienst:a", "dienst:b", "dienst:postgres", "env:DB_URL", "tabelle:public.kunden"} <= ids
+    # Bei-Bedarf-Knoten nur für überlebende Kanten: keine Waise aus einer verworfenen Kante
+    assert "env:WAISE" not in ids
 
 
 def test_platzhalter_gebunden_und_dedupliziert():

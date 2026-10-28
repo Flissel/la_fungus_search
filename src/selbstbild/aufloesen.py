@@ -33,13 +33,18 @@ _BEI_BEDARF = {"env": "env", "tabelle": "tabelle", "dienst": "dienst", "sql_funk
 
 @dataclass
 class _Importe:
-    """Was die Importe einer Datei auflösen: Ziele und Namensraum für Aufrufe."""
+    """Was die Importe einer Datei auflösen: Ziele und Namensraum für Aufrufe, je mit Sicherheit."""
 
     ziele: list[tuple[str, bool, int, str]] = field(default_factory=list)  # (pfad, sicher, zeile, anker)
-    namen: dict[str, tuple[str, str]] = field(default_factory=dict)  # Name -> (pfad, qualname-Präfix)
-    module: dict[str, str] = field(default_factory=dict)  # Modulname/Spezifizierer -> pfad
-    stern: list[str] = field(default_factory=list)  # Dateien aus `from x import *`
+    namen: dict[str, tuple[str, str, bool]] = field(default_factory=dict)  # Name -> (pfad, Präfix, sicher)
+    module: dict[str, tuple[str, bool]] = field(default_factory=dict)  # Modul/Spezifizierer -> (pfad, sicher)
+    stern: list[tuple[str, bool]] = field(default_factory=list)  # Dateien aus `from x import *`
     extern: set[str] = field(default_factory=set)  # Köpfe nicht auflösbarer Importe
+    reihenfolge: list[str] = field(default_factory=list)  # Module, längste zuerst (einmal je Datei)
+
+    def abschluss(self) -> _Importe:
+        self.reihenfolge = sorted(self.module, key=lambda m: (-len(m), m))
+        return self
 
 
 def _verbinden(*teile: str) -> str:
@@ -48,6 +53,10 @@ def _verbinden(*teile: str) -> str:
 
 def _eltern(pfad: str) -> str:
     return posixpath.dirname(pfad)
+
+
+def _ist_vorfahr(ordner: str, pfad: str) -> bool:
+    return ordner == "" or pfad.startswith(ordner + "/")
 
 
 class _Repo:
@@ -63,8 +72,25 @@ class _Repo:
                 oben = _eltern(oben)
             if oben:  # Paket auf Repo-Ebene: Wurzel ist das Repo selbst
                 wurzeln.add(_eltern(oben))
-        # Reihenfolge = Vorrang: Repo-Root, src/, dann die Ordner über Paketketten
+        # Reihenfolge (nur für Gleichstand): Repo-Root, src/, dann die Ordner über Paketketten
         self.py_wurzeln = ["", "src", *sorted(wurzeln - {"", "src"})]
+        # oberster Modulname -> Wurzeln, unter denen er existiert (stdlib/Fremdpakete: keine)
+        self._koepfe: dict[str, set[str]] = {}
+        for p in self.pfade:
+            for w in self.py_wurzeln:
+                if not _ist_vorfahr(w, p):
+                    continue
+                rest = p[len(w) + 1:] if w else p
+                kopf, schraeg, _ = rest.partition("/")
+                if not schraeg:
+                    if not kopf.endswith(_PY_ENDUNGEN):
+                        continue
+                    kopf = posixpath.splitext(kopf)[0]
+                self._koepfe.setdefault(kopf, set()).add(w)
+
+    def wurzeln_fuer(self, modul: str) -> list[str]:
+        treffer = self._koepfe.get(modul.split(".")[0], set())
+        return [w for w in self.py_wurzeln if w in treffer]
 
     def py_modul(self, basis: str, modul: str) -> str | None:
         stamm = _verbinden(basis, *modul.split(".")) if modul else basis
@@ -84,48 +110,63 @@ class _Repo:
         return next((k for k in kandidaten if k in self.pfade), None)
 
 
+def _py_bei(repo: _Repo, basis: str, imp: Import, namen: list[str]) -> tuple[str | None, dict[str, str]] | None:
+    """(Moduldatei, Untermodule je Name) unter `basis`, oder None, wenn nichts davon existiert."""
+    moddatei = repo.py_modul(basis, imp.modul)
+    unter = {n: d for n in namen if (d := repo.py_modul(basis, _punkt(imp.modul, n))) is not None}
+    if moddatei is None and not unter:
+        return None
+    return moddatei, unter
+
+
 def _py_importe(repo: _Repo, pfad: str, importe: Iterable[Import]) -> _Importe:
     erg = _Importe()
-    ordner = _eltern(pfad)
-    vorfahren = [ordner]
+    vorfahren = [_eltern(pfad)]
     while vorfahren[-1]:
         vorfahren.append(_eltern(vorfahren[-1]))
     for imp in importe:
         namen = [n for n in imp.namen if n != "*"]
-        # relativ: der Parser kennt die Punktzahl nicht mehr; Ebene 1 ist sicher, höhere nicht
-        basen = [(b, i == 0) for i, b in enumerate(vorfahren)] if imp.relativ \
-            else [(w, True) for w in repo.py_wurzeln]
-        gefunden = False
-        for basis, sicher in basen:
-            moddatei = repo.py_modul(basis, imp.modul)
-            unter = {n: d for n in namen
-                     if (d := repo.py_modul(basis, _punkt(imp.modul, n))) is not None}
-            if moddatei is None and not unter:
-                continue
-            gefunden = True
-            if moddatei is not None and moddatei != pfad and (imp.modul or not unter):
-                erg.ziele.append((moddatei, sicher, imp.zeile, imp.modul or "."))
-            for n, d in sorted(unter.items()):
-                if d != pfad:
-                    erg.ziele.append((d, sicher, imp.zeile, _punkt(imp.modul, n)))
-            for n in namen:
-                if n in unter:
-                    erg.namen[n] = (unter[n], "")
-                elif moddatei is not None:
-                    erg.namen[n] = (moddatei, n)
-            if "*" in imp.namen and moddatei is not None:
-                erg.stern.append(moddatei)
-            if not imp.namen and not imp.relativ:  # `import a.b` bindet a und a.b
-                teile = imp.modul.split(".")
-                for i in range(1, len(teile) + 1):
-                    teil = ".".join(teile[:i])
-                    d = repo.py_modul(basis, teil)
-                    if d is not None:
-                        erg.module[teil] = d
-            break
-        if not gefunden:
+        wahl: tuple[str, str | None, dict[str, str], bool] | None = None
+        if imp.relativ:
+            # Der Parser kennt die Punktzahl nicht mehr: Ebene 1 ist sicher, höhere nicht.
+            for i, basis in enumerate(vorfahren):
+                if (t := _py_bei(repo, basis, imp, namen)) is not None:
+                    wahl = (basis, t[0], t[1], i == 0)
+                    break
+        else:
+            treffer = [(w, t) for w in repo.wurzeln_fuer(imp.modul)
+                       if (t := _py_bei(repo, w, imp, namen)) is not None]
+            nah = [x for x in treffer if _ist_vorfahr(x[0], pfad)]
+            if nah:  # die nächste Wurzel über der importierenden Datei gewinnt
+                w, t = max(nah, key=lambda x: len(x[0]))
+                wahl = (w, t[0], t[1], True)
+            elif treffer:  # nur fremde Wurzeln: bei mehreren geraten, also unsicher
+                w, t = treffer[0]
+                wahl = (w, t[0], t[1], len(treffer) == 1)
+        if wahl is None:
             erg.extern.update(namen or [imp.modul.split(".")[0]])
-    return erg
+            continue
+        basis, moddatei, unter, sicher = wahl
+        if moddatei is not None and moddatei != pfad and (imp.modul or not unter):
+            erg.ziele.append((moddatei, sicher, imp.zeile, imp.modul or "."))
+        for n, d in sorted(unter.items()):
+            if d != pfad:
+                erg.ziele.append((d, sicher, imp.zeile, _punkt(imp.modul, n)))
+        for n in namen:
+            if n in unter:
+                erg.namen[n] = (unter[n], "", sicher)
+            elif moddatei is not None:
+                erg.namen[n] = (moddatei, n, sicher)
+        if "*" in imp.namen and moddatei is not None:
+            erg.stern.append((moddatei, sicher))
+        if not imp.namen and not imp.relativ:  # `import a.b` bindet a und a.b
+            teile = imp.modul.split(".")
+            for i in range(1, len(teile) + 1):
+                teil = ".".join(teile[:i])
+                d = repo.py_modul(basis, teil)
+                if d is not None:
+                    erg.module[teil] = (d, sicher)
+    return erg.abschluss()
 
 
 def _punkt(modul: str, name: str) -> str:
@@ -142,10 +183,12 @@ def _ts_importe(repo: _Repo, pfad: str, importe: Iterable[Import]) -> _Importe:
                 erg.extern.update([*namen, imp.modul])
             continue
         erg.ziele.append((ziel, True, imp.zeile, imp.modul))
-        erg.module[imp.modul] = ziel  # `import * as m` wird im Parser zu `<modul>.f`
+        erg.module[imp.modul] = (ziel, True)  # `import * as m` wird im Parser zu `<modul>.f`
         for n in namen:
-            erg.namen[n] = (ziel, n)
-    return erg
+            # `Import` unterscheidet `import x from` (Default, lokaler Name) nicht von
+            # `import { x }`: Auflösung über den Namen ist deshalb nur unsicher.
+            erg.namen[n] = (ziel, n, False)
+    return erg.abschluss()
 
 
 def _attr(werte: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
@@ -186,12 +229,18 @@ class _Graph:
             self.kanten[schluessel] = dataclasses.replace(alt, sicher=True)
 
     def abschliessen(self) -> tuple[list[Knoten], list[Kante]]:
+        def haltbar(ende: str) -> bool:
+            return ende in self.knoten or ende.partition(":")[0] in _BEI_BEDARF
+
+        kanten: list[Kante] = []
         for k in sorted(self.kanten.values(), key=lambda k: (k.art, k.von, k.nach)):
+            if not (haltbar(k.von) and haltbar(k.nach)):
+                continue  # hängendes Ende: Kante fällt weg, ohne Waisen-Knoten zu erzeugen
             for ende in (k.von, k.nach):
-                art, _, name = ende.partition(":")
-                if ende not in self.knoten and art in _BEI_BEDARF:
+                if ende not in self.knoten:
+                    art, _, name = ende.partition(":")
                     self.knoten[ende] = Knoten(ende, _BEI_BEDARF[art], name, None)
-        kanten = [k for k in self.kanten.values() if k.von in self.knoten and k.nach in self.knoten]
+            kanten.append(k)
         return (
             sorted(self.knoten.values(), key=lambda k: k.id),
             sorted(kanten, key=lambda k: (k.art, k.von, k.nach)),
@@ -252,7 +301,7 @@ def aufloesen(
         for s in erg.symbole:
             sid = id_symbol(repo, pfad, s.qualname)
             attr = _einstieg_attr(symbol_arten.get(s.qualname, set()), erg.fehlerhaft,
-                                  {"art": s.art, "zeilen": f"{s.zeile_von}-{s.zeile_bis}"})
+                                  {"symbolart": s.art})
             g.knoten_neu(Knoten(sid, "symbol", s.qualname, Beleg(repo, pfad, s.zeile_von, s.qualname, s.digest), attr))
             g.kante_neu(Kante("enthaelt", did, sid, True, None))
         for o in erg.sql:
@@ -341,23 +390,25 @@ def _aufruf_ziel(
     if name in eigene:
         return id_symbol(repo, pfad, name), True
     # 3) importierter Name (ggf. mit Attributkette, z. B. Klasse.methode)
+    # Die Sicherheit kommt aus dem Import (R13): unsicher aufgelöst bleibt unsicher.
     if kopf in imp.namen:
-        ziel, praefix = imp.namen[kopf]
+        ziel, praefix, sicher = imp.namen[kopf]
         treffer = in_datei(ziel, ".".join(t for t in (praefix, rest) if t))
-        return (treffer, True) if treffer is not None else None
+        return (treffer, sicher) if treffer is not None else None
     # 4) importiertes Modul: `mod.f` bzw. `a.b.f`
-    for modul in sorted(imp.module, key=lambda m: (-len(m), m)):
+    for modul in imp.reihenfolge:
         if name.startswith(modul + "."):
-            treffer = in_datei(imp.module[modul], name[len(modul) + 1:])
-            return (treffer, True) if treffer is not None else None
-    for ziel in imp.stern:
+            ziel, sicher = imp.module[modul]
+            treffer = in_datei(ziel, name[len(modul) + 1:])
+            return (treffer, sicher) if treffer is not None else None
+    for ziel, sicher in imp.stern:
         treffer = in_datei(ziel, name)
         if treffer is not None:
-            return treffer, True
-    # 5) unsicher: Name repo-weit genau einmal; nie für Aufrufe in fremde Pakete
-    if kopf in imp.extern or name in imp.extern:
+            return treffer, sicher
+    # 5) unsicher: nur schlichte Namen (ohne Punkt), repo-weit genau einmal, nie aus fremden Paketen
+    if punkt or name in imp.extern:
         return None
-    kandidaten = letzte.get(name.rpartition(".")[2], [])
+    kandidaten = letzte.get(name, [])
     if len(kandidaten) == 1 and kandidaten[0] != von:
         return kandidaten[0], False
     return None
