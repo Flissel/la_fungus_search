@@ -21,7 +21,7 @@ import yaml
 
 from selbstbild.aufloesen import aufloesen
 from selbstbild.parser.basis import parsen
-from selbstbild.quelle import Baum, BlobLeser, _git, baum_lesen
+from selbstbild.quelle import Baum, BlobLeser, _git, baum_lesen, repo_name
 from selbstbild.speicher import Speicher, pfad_kennung, stand_basis, stand_ordner
 from selbstbild.typen import DateiErgebnis, Knoten, id_datei, id_symbol
 from selbstbild.zeit import verlauf, zeit_attribute
@@ -134,14 +134,16 @@ def vermessen(
     """Vermisst `commit` (inkl. initialisierter Submodule); `voll=True` umgeht den Parse-Cache."""
     start = time.monotonic()
     wurzel = Path(wurzel)
-    baum = baum_lesen(wurzel, commit)
-    baeume = list(_alle(baum))
-    log.info("%s @ %s: Baum gelesen, %d Repos, %d Dateien",
-             baum.repo, baum.commit[:12], len(baeume), sum(len(b.eintraege) for b in baeume))
-
     eigen = speicher is None
-    s = speicher if speicher is not None else Speicher(stand_ordner(wurzel, baum.repo) / "graph.sqlite")
+    s = speicher if speicher is not None else Speicher(
+        stand_ordner(wurzel, repo_name(wurzel, commit)) / "graph.sqlite")
     try:
+        # Cache-Treffer muss baum_lesen nicht lesen (die Klassifikation ist schon bekannt)
+        baum = baum_lesen(wurzel, commit, bekannt=None if voll else s.cache_hat)
+        baeume = list(_alle(baum))
+        log.info("%s @ %s: Baum gelesen, %d Repos, %d Dateien",
+                 baum.repo, baum.commit[:12], len(baeume), sum(len(b.eintraege) for b in baeume))
+
         # --- Parsen (Cache je Blob, Sprache und Pfad) ------------------------
         ergebnisse: dict[tuple[str, str], DateiErgebnis] = {}
         geparst = aus_cache = 0

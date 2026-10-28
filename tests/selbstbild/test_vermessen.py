@@ -78,6 +78,35 @@ def test_zweiter_lauf_ohne_aenderung(git_repo, tmp_path):
     assert a == b
 
 
+def test_zweiter_lauf_liest_keine_blobs(git_repo, tmp_path, monkeypatch):
+    from selbstbild.quelle import BlobLeser
+
+    _vier_dateien(git_repo)
+    git_repo.datei("bild.png", b"\x89PNG\x00\x01")
+    git_repo.commit("eins")
+    gelesen: list[str] = []
+    original = BlobLeser.lesen
+
+    def spion(self, blob):
+        gelesen.append(blob)
+        return original(self, blob)
+
+    monkeypatch.setattr(BlobLeser, "lesen", spion)
+    png = git_repo.git("rev-parse", "HEAD:bild.png")
+    with _speicher(tmp_path, "s") as s:
+        vermessen(git_repo.wurzel, speicher=s)
+        erster = len(gelesen)
+        assert png not in gelesen
+        gelesen.clear()
+        zweiter = vermessen(git_repo.wurzel, speicher=s)
+        assert gelesen == []  # Cache-Treffer: Inhalt weder in baum_lesen noch zum Parsen gelesen
+        gelesen.clear()
+        voll = vermessen(git_repo.wurzel, voll=True, speicher=s)
+    assert erster == 8  # erster Lauf: je Sprach-Datei Klassifikation + Parsen, bild.png nie
+    assert zweiter.aus_cache == 4 and zweiter.uebersprungen == {"keine_sprache": 1}
+    assert len(gelesen) == 8 and voll.geparst == 4  # voll umgeht den Cache auch beim Lesen
+
+
 def test_keine_secret_werte(git_repo, tmp_path):
     git_repo.datei(".env", "TOKEN=wert-geheim-1\n")
     git_repo.datei(".env.example", "TOKEN=wert-geheim-2\n")

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import IO, Literal
@@ -149,9 +150,29 @@ def _submodul_vorhanden(wurzel: Path, pfad: str, sha: str) -> Path | None:
     return ziel
 
 
-def baum_lesen(wurzel: Path, commit: str = "HEAD", name: str | None = None) -> Baum:
+def _commit_sha(wurzel: Path, commit: str) -> str:
+    return _git(wurzel, "rev-parse", f"{commit}^{{commit}}").stdout.decode().strip()
+
+
+def repo_name(wurzel: Path, commit: str = "HEAD") -> str:
+    """Repo-Name wie in `baum_lesen` (Regeldatei im Commit, sonst Ordnername), ohne den Baum
+    zu lesen; z. B. um den lokalen Stand vor `baum_lesen` zu oeffnen."""
     wurzel = Path(wurzel)
-    sha = _git(wurzel, "rev-parse", f"{commit}^{{commit}}").stdout.decode().strip()
+    return _regeln_aus_commit(wurzel, _commit_sha(wurzel, commit)).name or wurzel.resolve().name
+
+
+# (blob, sprache, pfad) -> ist das Parser-Ergebnis schon bekannt (Cache-Treffer)?
+Bekannt = Callable[[str, str, str], bool]
+
+
+def baum_lesen(
+    wurzel: Path, commit: str = "HEAD", name: str | None = None, bekannt: Bekannt | None = None,
+) -> Baum:
+    """Committeter Baum mit Submodulen. Gelesen wird ein Blob nur, wenn seine Sprache bekannt
+    ist und `bekannt` ihn nicht als Cache-Treffer meldet: Ein Treffer war schon einmal als
+    Text (nicht binaer, kein LFS) klassifiziert und geparst, sein Inhalt wird nicht gebraucht."""
+    wurzel = Path(wurzel)
+    sha = _commit_sha(wurzel, commit)
     zeit = int(_git(wurzel, "log", "-1", "--no-show-signature", "--format=%ct", sha).stdout.decode().strip())
     regeln = _regeln_aus_commit(wurzel, sha)
     repo = name or regeln.name or wurzel.resolve().name
@@ -179,7 +200,7 @@ def baum_lesen(wurzel: Path, commit: str = "HEAD", name: str | None = None) -> B
                 if ziel is None:
                     uebersprungen.append(Uebersprungen(repo, pfad, "submodul_fehlt"))
                 else:
-                    unterbaeume.append(baum_lesen(ziel, blob, name=f"{repo}/{pfad}"))
+                    unterbaeume.append(baum_lesen(ziel, blob, name=f"{repo}/{pfad}", bekannt=bekannt))
                 continue
             if art != "blob":
                 continue
@@ -196,17 +217,19 @@ def baum_lesen(wurzel: Path, commit: str = "HEAD", name: str | None = None) -> B
             if groesse > max_bytes:
                 uebersprungen.append(Uebersprungen(repo, pfad, "zu_gross"))
                 continue
-            inhalt = leser.lesen(blob)
-            if inhalt.startswith(_LFS_KOPF):
-                uebersprungen.append(Uebersprungen(repo, pfad, "lfs"))
-                continue
-            if b"\0" in inhalt[:8192]:
-                uebersprungen.append(Uebersprungen(repo, pfad, "binaer"))
-                continue
             sprache = sprache_fuer(pfad)
-            if sprache is None:
+            if sprache is None:  # vor dem Lesen: Blobs ohne Sprache werden nie gelesen
                 uebersprungen.append(Uebersprungen(repo, pfad, "keine_sprache"))
                 continue
+            if bekannt is None or not bekannt(blob, sprache, pfad):
+                inhalt = leser.lesen(blob)
+                if inhalt.startswith(_LFS_KOPF):
+                    uebersprungen.append(Uebersprungen(repo, pfad, "lfs"))
+                    continue
+                if b"\0" in inhalt[:8192]:
+                    uebersprungen.append(Uebersprungen(repo, pfad, "binaer"))
+                    continue
+                del inhalt
             eintraege.append(Eintrag(repo, pfad, blob, groesse, sprache))
 
     eintraege.sort(key=lambda e: (e.repo, e.pfad))

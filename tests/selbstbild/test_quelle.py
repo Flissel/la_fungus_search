@@ -24,13 +24,57 @@ def test_nur_committet(git_repo):
 
 def test_binaer_und_gross(git_repo):
     git_repo.datei("bild.png", b"\x89PNG\x00\x01\x02")
+    git_repo.datei("daten.py", b"\x89PNG\x00\x01\x02")  # Sprache per Endung, Inhalt binaer
     git_repo.datei("gross.py", "x = 1\n" * 100_000)
     git_repo.datei("modell.bin.py", "version https://git-lfs.github.com/spec/v1\noid sha256:ab\nsize 9\n")
     git_repo.commit("x")
     g = _gruende(baum_lesen(git_repo.wurzel))
-    assert g["bild.png"] == "binaer"
+    assert g["bild.png"] == "keine_sprache"  # ohne Sprache wird der Inhalt gar nicht gelesen
+    assert g["daten.py"] == "binaer"
     assert g["gross.py"] == "zu_gross"
     assert g["modell.bin.py"] == "lfs"
+
+
+def _spion(monkeypatch) -> list[str]:
+    angefragt: list[str] = []
+    original = BlobLeser.lesen
+
+    def spion(self, blob):
+        angefragt.append(blob)
+        return original(self, blob)
+
+    monkeypatch.setattr(BlobLeser, "lesen", spion)
+    return angefragt
+
+
+def test_keine_sprache_wird_nicht_gelesen(git_repo, monkeypatch):
+    git_repo.datei("bild.png", b"\x89PNG\x00\x01\x02")
+    git_repo.datei("notiz.txt", "hallo\n")
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.commit("x")
+    angefragt = _spion(monkeypatch)
+    baum = baum_lesen(git_repo.wurzel)
+    assert angefragt == [git_repo.git("rev-parse", "HEAD:a.py")]
+    assert _gruende(baum) == {"bild.png": "keine_sprache", "notiz.txt": "keine_sprache"}
+
+
+def test_bekannte_blobs_werden_nicht_gelesen(git_repo, monkeypatch):
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.datei("b.py", "y = 2\n")
+    git_repo.commit("x")
+    a_blob = git_repo.git("rev-parse", "HEAD:a.py")
+    gefragt: list[tuple[str, str, str]] = []
+
+    def bekannt(blob: str, sprache: str, pfad: str) -> bool:
+        gefragt.append((blob, sprache, pfad))
+        return pfad == "a.py"
+
+    angefragt = _spion(monkeypatch)
+    baum = baum_lesen(git_repo.wurzel, bekannt=bekannt)
+    assert a_blob not in angefragt and len(angefragt) == 1
+    assert [(e.pfad, e.blob, e.sprache) for e in baum.eintraege] == [
+        ("a.py", a_blob, "python"), ("b.py", git_repo.git("rev-parse", "HEAD:b.py"), "python")]
+    assert ("a.py", "python") in {(p, s) for _, s, p in gefragt}
 
 
 def test_env_nie_gelesen(git_repo, monkeypatch):
