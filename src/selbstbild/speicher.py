@@ -140,10 +140,13 @@ def _alte_tabellen_entfernen(c: sqlite3.Connection) -> None:
     """Graph-Tabellen ohne Sortierspalten (vor dem streamenden Export) und den alten,
     nach Einfuegereihenfolge gefuehrten Symbolverlauf (vor R17) verwerfen."""
     spalten = {z[1] for z in c.execute("PRAGMA table_info(knoten)")}
+    hat_meta = bool(list(c.execute("PRAGMA table_info(meta)")))
     with c:
         if spalten and "sortierung" not in spalten:
             c.execute("DROP TABLE IF EXISTS knoten")
             c.execute("DROP TABLE IF EXISTS kanten")
+            if hat_meta:  # der verworfene Graph darf nicht mehr als vermessen gelten
+                c.executemany("DELETE FROM meta WHERE k=?", [(_dumps("commit"),), (_dumps("bericht"),)])
         c.execute("DROP TABLE IF EXISTS symbolverlauf")
 
 
@@ -221,6 +224,12 @@ class Speicher:
     _KNOTEN_SQL = "SELECT wert FROM knoten ORDER BY sortierung"
     # Reihenfolge wie sorted(key=(art, von, nach, _dumps(kante))): BLOB/TEXT binaer = Codepunkte
     _KANTEN_SQL = "SELECT wert FROM kanten ORDER BY s_art, s_von, s_nach, wert"
+
+    def hat_graph(self) -> bool:
+        """Ist ein vermessener Graph vorhanden (Commit gesetzt und mindestens ein Knoten)?"""
+        c = self._verbindung()
+        return self.meta("commit") is not None and \
+            c.execute("SELECT 1 FROM knoten LIMIT 1").fetchone() is not None
 
     def knoten(self) -> list[Knoten]:
         return [_knoten_von(json.loads(r[0])) for r in self._verbindung().execute(self._KNOTEN_SQL)]

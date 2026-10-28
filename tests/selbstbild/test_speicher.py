@@ -148,11 +148,21 @@ def test_alter_graph_ohne_sortierspalten_wird_ersetzt(tmp_path: Path) -> None:
     c = sqlite3.connect(tmp_path / "g.sqlite")
     c.executescript("CREATE TABLE knoten(id TEXT PRIMARY KEY, wert TEXT NOT NULL);"
                     "CREATE TABLE kanten(wert TEXT PRIMARY KEY);"
+                    "CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);"
                     "CREATE TABLE symbolverlauf(nr INTEGER PRIMARY KEY, symbol TEXT);")
+    c.executemany("INSERT INTO meta VALUES(?,?)", [('"commit"', '"alt"'), ('"bericht"', '"{}"'),
+                                                   ('"name"', '"proj"')])
+    c.execute("INSERT INTO knoten VALUES(?,?)", ('"x"', "{}"))
+    c.commit()
     c.close()
     kn, ka = _graph()
     with Speicher(tmp_path / "g.sqlite") as s:
+        # Der alte Graph ist verworfen: Commit und Bericht duerfen ihn nicht mehr behaupten.
+        assert s.meta("commit") is None and s.meta("bericht") is None
+        assert s.meta("name") == "proj"
+        assert not s.hat_graph()
         s.graph_ersetzen("c1", kn, ka)
+        assert s.hat_graph()
         assert s.knoten() == sorted(kn, key=lambda k: k.id)
 
 

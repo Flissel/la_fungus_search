@@ -229,6 +229,40 @@ def test_status_findet_stand_nach_namenswechsel(git_repo, tmp_path):
     assert sorted(p.name for p in (tmp_path / "home").iterdir()) == vorher
 
 
+def test_alter_stand_ohne_graph_neu_vermessen(git_repo, tmp_path):
+    import sqlite3
+
+    from selbstbild.speicher import pfad_kennung
+
+    git_repo.datei("a.py", "x = 1\n")
+    git_repo.commit("eins")
+    home = tmp_path / "home"
+    ordner = home / f"{git_repo.wurzel.name}-{pfad_kennung(git_repo.wurzel)}"
+    ordner.mkdir(parents=True)
+    c = sqlite3.connect(ordner / "graph.sqlite")  # Stand im alten Format (ohne Sortierspalten)
+    c.executescript("CREATE TABLE knoten(id TEXT PRIMARY KEY, wert TEXT NOT NULL);"
+                    "CREATE TABLE kanten(wert TEXT PRIMARY KEY);"
+                    "CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);")
+    c.executemany("INSERT INTO meta VALUES(?,?)", [
+        ('"commit"', '"' + "a" * 40 + '"'), ('"gemessen_um"', '"1"'),
+        ('"bericht"', json.dumps(json.dumps({"commit": "a" * 40}))),
+    ])
+    c.commit()
+    c.close()
+    env = dict(os.environ, PYTHONPATH=str(SRC), SELBSTBILD_HOME=str(home))
+    ziel = tmp_path / "e.json"
+    for args in (("export", str(git_repo.wurzel), str(ziel)), ("status", str(git_repo.wurzel)),
+                 ("export", str(git_repo.wurzel), str(ziel))):
+        erg = _cli(env, *args)
+        assert erg.returncode != 0, args
+        assert b"neu vermessen" in erg.stderr, erg.stderr
+    assert not ziel.exists()
+    erg = _cli(env, "vermessen", str(git_repo.wurzel))
+    assert erg.returncode == 0, erg.stderr.decode("utf-8", "replace")
+    assert _cli(env, "export", str(git_repo.wurzel), str(ziel)).returncode == 0
+    assert json.loads(ziel.read_bytes())["knoten"]
+
+
 def test_cli_vermessen(git_repo, tmp_path):
     git_repo.datei("a.py", "def f():\n    return 1\n")
     git_repo.commit("eins")

@@ -7,12 +7,16 @@ Aufruf (startet der User selbst, mit seiner echten .env):
 Die Werte bleiben nur im Speicher dieses Prozesses. Gesucht wird jeder Wert (roh und
 JSON-escaped):
 - als UTF-8-Bytefolge in den Dateibytes von `graph.sqlite`, einer evtl. vorhandenen
-  `graph.sqlite-wal` und des Exports (per mmap), und
+  `graph.sqlite-wal` und des Exports (blockweise gelesen), und
 - in allen Text- und Blob-Spalten aller Tabellen von `graph.sqlite`, gelesen ueber sqlite3
   (nur lesend). Das findet auch Werte, die in der Datei ueber Overflow-Seiten verteilt oder
   anders kodiert (UTF-16) stehen.
 Ausgegeben werden NUR die Namen der Variablen mit Treffer und die Zahl der Fundstellen
-(Dateibytes plus Spaltenwerte), nie Werte. Exit 1 bei mindestens einem Treffer.
+(Dateibytes plus Spaltenwerte), nie Werte.
+
+Exit-Codes: 0 = kein Treffer, 1 = mindestens ein Treffer, 2 = Pruefung nicht moeglich
+(Datei fehlt oder ist unlesbar, `--graph` ist keine lesbare SQLite-Datenbank). Fail-closed:
+Ein Fehler wird nie als "0 Treffer" gemeldet.
 
 Werte kuerzer als 6 Zeichen werden ignoriert (z. B. `true`, `8080`, `1`): Sie kommen als
 gewoehnliche Teilstrings ueberall vor und waeren keine aussagekraeftigen Treffer.
@@ -22,12 +26,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import mmap
 import sqlite3
 import sys
 from pathlib import Path
 
 MIN_LAENGE = 6
+_SQLITE_KOPF = b"SQLite format 3\x00"
+
+
+class ProbeFehler(Exception):
+    """Pruefung nicht moeglich (Exit 2). Die Meldung enthaelt nie Werte aus der .env."""
 
 
 def env_werte(text: str) -> dict[str, str]:
@@ -57,29 +65,56 @@ def _formen(wert: str) -> set[str]:
     return {wert, json.dumps(wert, ensure_ascii=False)[1:-1], json.dumps(wert, ensure_ascii=True)[1:-1]}
 
 
-def _datei_treffer(pfad: Path, muster: list[bytes]) -> int:
-    if not pfad.exists() or pfad.stat().st_size == 0:
+def _lesbar(pfad: Path, schalter: str) -> None:
+    """Datei muss existieren und lesbar sein, sonst ProbeFehler."""
+    try:
+        with open(pfad, "rb") as f:
+            f.read(1)
+    except OSError as fehler:
+        raise ProbeFehler(f"{schalter} {pfad}: nicht lesbar ({type(fehler).__name__})") from None
+
+
+def _datei_treffer(pfad: Path, muster: list[bytes], block: int = 16 * 1024 * 1024) -> int:
+    """Fundstellen aller Muster in der Datei, blockweise gelesen (konstanter Speicher).
+
+    Kein mmap: `mmap.find` stuerzt unter CPython 3.11.0/Windows mit einer Zugriffsverletzung
+    ab. Zwischen den Bloecken ueberlappt der Puffer um (laengstes Muster - 1) Bytes; gezaehlt
+    wird nur, was im neuen Block endet, also jede Fundstelle genau einmal.
+    """
+    if not muster:
         return 0
+    rest_laenge = max(len(m) for m in muster) - 1
     anzahl = 0
-    with open(pfad, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
-        for mu in muster:
-            pos = m.find(mu)
-            while pos != -1:
-                anzahl += 1
-                pos = m.find(mu, pos + 1)
+    rest = b""
+    try:
+        with open(pfad, "rb") as f:
+            while True:
+                stueck = f.read(block)
+                if not stueck:
+                    break
+                puffer = rest + stueck
+                for mu in muster:
+                    pos = puffer.find(mu, max(0, len(rest) - len(mu) + 1))
+                    while pos != -1:
+                        anzahl += 1
+                        pos = puffer.find(mu, pos + 1)
+                rest = puffer[-rest_laenge:] if rest_laenge else b""
+    except OSError as fehler:
+        raise ProbeFehler(f"{pfad}: Bytesuche fehlgeschlagen ({type(fehler).__name__})") from None
     return anzahl
 
 
 def _spalten_treffer(db: Path, formen: dict[str, set[str]]) -> dict[str, int]:
     """Name -> Fundstellen in allen Text-/Blob-Zellen aller Tabellen (nur lesend)."""
+    with open(db, "rb") as f:
+        if f.read(len(_SQLITE_KOPF)) != _SQLITE_KOPF:
+            raise ProbeFehler(f"--graph {db}: keine SQLite-Datenbank")
     treffer: dict[str, int] = {}
+    roh = {n: {f.encode("utf-8") for f in fs} for n, fs in formen.items()}
+    c: sqlite3.Connection | None = None
     try:
         c = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return treffer
-    try:
         tabellen = [z[0] for z in c.execute("SELECT name FROM sqlite_master WHERE type='table'")]
-        roh = {n: {f.encode("utf-8") for f in fs} for n, fs in formen.items()}
         for tabelle in tabellen:
             for zeile in c.execute(f'SELECT * FROM "{tabelle.replace(chr(34), chr(34) * 2)}"'):
                 for zelle in zeile:
@@ -93,15 +128,19 @@ def _spalten_treffer(db: Path, formen: dict[str, set[str]]) -> dict[str, int]:
                             n = sum(zelle.count(b) for b in bs)
                             if n:
                                 treffer[name] = treffer.get(name, 0) + n
-    except sqlite3.DatabaseError:
-        pass  # keine (gueltige) SQLite-Datei: nur die Bytesuche zaehlt
+    except sqlite3.Error as fehler:
+        raise ProbeFehler(f"--graph {db}: SQLite nicht lesbar ({type(fehler).__name__})") from None
     finally:
-        c.close()
+        if c is not None:
+            c.close()
     return treffer
 
 
 def pruefen(werte: dict[str, str], dateien: list[Path], db: Path | None) -> dict[str, int]:
-    """Name -> Fundstellen ueber Dateibytes und (falls db) Spaltenwerte, nur Werte ab MIN_LAENGE."""
+    """Name -> Fundstellen ueber Dateibytes und (falls db) Spaltenwerte, nur Werte ab MIN_LAENGE.
+
+    Wirft ProbeFehler, wenn eine Quelle nicht vollstaendig geprueft werden kann.
+    """
     formen = {n: _formen(w) for n, w in werte.items() if len(w) >= MIN_LAENGE}
     treffer: dict[str, int] = {}
     for name, fs in formen.items():
@@ -122,12 +161,23 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--export", required=True, type=Path)
     args = p.parse_args(argv)
 
-    werte = env_werte(args.env.read_text(encoding="utf-8", errors="replace"))
-    wal = args.graph.with_name(args.graph.name + "-wal")
-    dateien = [args.graph, args.export] + ([wal] if wal.exists() else [])
-    geprueft = sum(1 for w in werte.values() if len(w) >= MIN_LAENGE)
-    treffer = pruefen(werte, dateien, args.graph)
-    del werte
+    try:
+        for pfad, schalter in ((args.env, "--env"), (args.graph, "--graph"), (args.export, "--export")):
+            _lesbar(pfad, schalter)
+        try:
+            text = args.env.read_text(encoding="utf-8", errors="replace")
+        except OSError as fehler:
+            raise ProbeFehler(f"--env {args.env}: nicht lesbar ({type(fehler).__name__})") from None
+        werte = env_werte(text)
+        del text
+        wal = args.graph.with_name(args.graph.name + "-wal")
+        dateien = [args.graph, args.export] + ([wal] if wal.exists() else [])
+        geprueft = sum(1 for w in werte.values() if len(w) >= MIN_LAENGE)
+        treffer = pruefen(werte, dateien, args.graph)
+        del werte
+    except ProbeFehler as fehler:
+        sys.stderr.write(f"FEHLER: {fehler}. Pruefung nicht moeglich, Exit 2.\n")
+        return 2
 
     for name, anzahl in treffer.items():
         sys.stdout.write(f"TREFFER {name}: {anzahl}\n")

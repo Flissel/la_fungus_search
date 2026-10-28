@@ -23,6 +23,11 @@ def _nicht_vermessen(wurzel: Path) -> int:
     return 1
 
 
+def _neu_vermessen(wurzel: Path) -> int:
+    sys.stderr.write(f"neu vermessen nötig: {wurzel} (Stand ohne Graph, z. B. nach einem Formatwechsel)\n")
+    return 3
+
+
 def _status(wurzel: Path) -> int:
     pfad = stand_finden(wurzel)
     if pfad is None:
@@ -32,8 +37,9 @@ def _status(wurzel: Path) -> int:
         commit_zeit = s.meta("commit_zeit")
         gemessen = s.meta("gemessen_um")
         name = s.meta("name")
-    if bericht_text is None or gemessen is None:
-        return _nicht_vermessen(wurzel)
+        hat_graph = s.hat_graph()
+    if bericht_text is None or gemessen is None or not hat_graph:
+        return _neu_vermessen(wurzel)
     bericht = json.loads(bericht_text)
     jetzt = int(time.time())
     _ausgeben({
@@ -77,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
         if pfad is None:
             return _nicht_vermessen(args.wurzel)
         with Speicher(pfad) as sp:
+            if not sp.hat_graph():  # nie einen leeren Graphen unter altem Commit exportieren
+                return _neu_vermessen(args.wurzel)
             sp.export_json(args.ziel)
         return 0
     return _status(args.wurzel)

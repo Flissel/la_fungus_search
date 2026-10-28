@@ -23,7 +23,9 @@ $env:PYTHONPATH = "src"
 `export` und `status` legen nichts an. Sie suchen den vorhandenen Stand über die Pfadkennung
 der Wurzel (`<name>-<sha256(Pfad)[:12]>`), finden ihn also auch nach einer Namensänderung in
 der `selbstbild.yaml`. Der vermessene Name steht in der Meta `name`. Ohne Stand: Meldung
-`noch nicht vermessen`, Exit 1.
+`noch nicht vermessen`, Exit 1. Stand ohne Graph (z. B. ein Stand im alten Format, dessen
+Graph beim Öffnen verworfen wurde): Meldung `neu vermessen nötig`, Exit 3. Es wird dann nie
+ein leerer Graph exportiert.
 
 ## Abnahme-Läufe
 
@@ -87,8 +89,11 @@ vermessen): `vibemind-os/spaces/desktop/Automation_ui`, `vibemind-os/spaces/sale
 `scripts/secret_probe.py` liest die Werte einer `.env` nur im Speicher und sucht jeden Wert
 (roh und JSON-escaped, als UTF-8-Bytes) in `graph.sqlite`, einer evtl. vorhandenen
 `graph.sqlite-wal` und im Export. Ausgegeben werden nur Variablennamen mit Treffer und Zähler.
-Exit 1 bei mindestens einem Treffer. Werte unter 6 Zeichen werden ignoriert, weil sie als
-gewöhnliche Teilstrings überall vorkommen.
+Exit-Codes: 0 kein Treffer, 1 mindestens ein Treffer, 2 Prüfung nicht möglich (`--env`,
+`--graph` oder `--export` fehlt oder ist unlesbar, `--graph` ist keine lesbare
+SQLite-Datenbank). Die Probe schlägt also geschlossen fehl: Ein Fehler wird nie als „0 Treffer“
+gemeldet. Werte unter 6 Zeichen werden ignoriert, weil sie als gewöhnliche Teilstrings überall
+vorkommen.
 
 Abweichung von Spec 12a: Statt sha256-Vergleich mit Kandidaten-Strings wird direkt nach
 Teilstrings gesucht (Ruling R16). Das ist strenger, weil es auch Werte findet, die in
@@ -96,7 +101,8 @@ längere Strings eingebettet sind.
 
 Zusätzlich liest das Skript alle Text- und Blob-Spalten aller Tabellen über sqlite3 (nur
 lesend). Das findet auch Werte, die in der Datei über Overflow-Seiten verteilt sind. Die
-Dateien werden per mmap durchsucht. Unquotierte Werte enden vor ` #` (Inline-Kommentar), in
+Dateien werden blockweise mit Überlappung durchsucht. Auf mmap wird verzichtet, weil
+`mmap.find` unter dem hier genutzten CPython 3.11.0 unter Windows abstürzt. Unquotierte Werte enden vor ` #` (Inline-Kommentar), in
 Quotes gehört `#` zum Wert.
 
 Aufruf (PowerShell, nach Lauf a):
@@ -139,7 +145,8 @@ PowerShell und Python.
      Commit-Zeit gelten als derselbe Lauf.
    - Submodul-Symbole tragen die Commit-Zeit ihres Submoduls.
    - Der alte, nach Einfügereihenfolge geführte Verlauf (vor R17) wird beim ersten Öffnen
-     verworfen.
+     verworfen. Ebenso ein Graph ohne Sortierspalten. Dabei werden auch die Meta-Einträge
+     `commit` und `bericht` gelöscht, `status`/`export` melden dann `neu vermessen nötig`.
 4. **Export streamt.** `export_json` schreibt Kopf, Kanten und Knoten nacheinander aus
    sortierten Abfragen (Sortierspalten als UTF-8-BLOB, Bytevergleich = Codepunkt-Ordnung).
    Das Format bleibt `json.dumps(sort_keys=True, indent=1)`, deshalb stehen die Kanten vor den
