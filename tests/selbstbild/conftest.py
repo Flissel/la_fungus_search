@@ -71,3 +71,21 @@ def git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> GitRepo:
     repo.git("config", "core.hooksPath", str(hooks))
     repo.git("config", "core.autocrlf", "false")
     return repo
+
+
+@pytest.fixture
+def graph_stand(tmp_path: Path):
+    """Schreibt ueber `Speicher` einen Graph-Stand und liefert dessen Ordner."""
+    from selbstbild.speicher import Speicher
+
+    zaehler = [0]
+
+    def bauen(knoten, kanten, commit: str = "c1", commit_zeit: int = 1_700_000_000) -> Path:
+        zaehler[0] += 1
+        ordner = tmp_path / f"stand{zaehler[0]}"
+        with Speicher(ordner / "graph.sqlite") as s:
+            s.graph_ersetzen(commit, knoten, kanten)
+            s.meta_setzen("commit_zeit", str(commit_zeit))
+        return ordner
+
+    return bauen
