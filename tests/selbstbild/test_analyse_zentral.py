@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import random
+import time
+
 import pytest
 
 from selbstbild.analyse.lader import laden, symbolgraph
-from selbstbild.analyse.zentral import Hotspot, betweenness, hotspots, pagerank
+from selbstbild.analyse.zentral import Hotspot, _perzentile, betweenness, hotspots, pagerank
 from selbstbild.typen import Kante, Knoten, id_datei, id_symbol
 
 
@@ -110,3 +113,31 @@ def test_leer(graph_stand):
     assert betweenness(d) == {}
     assert hotspots(d, {}) == ()
     assert symbolgraph(d).ids == ()
+
+
+def test_perzentile_schnell_und_wie_referenz():
+    rng = random.Random(20261028)
+    werte = {f"k{i}": float(rng.randint(0, 800)) for i in range(5000)}  # viele Gleichstaende
+    t0 = time.perf_counter()
+    erg = _perzentile(werte)
+    assert time.perf_counter() - t0 < 1.0
+    n = len(werte)
+    for k in list(werte)[:50]:
+        w = werte[k]
+        kleiner = sum(1 for x in werte.values() if x < w)
+        gleich = sum(1 for x in werte.values() if x == w)
+        assert erg[k] == (kleiner + (gleich - 1) / 2) / (n - 1)
+
+
+def test_lebendigkeit_nicht_endlich_ist_null(graph_stand):
+    knoten = [_d("a.py", "nan"), _d("b.py", "inf"), _d("c.py", "2.0")]
+    d = laden(graph_stand(knoten, []))
+    erg = {h.datei: dict(h.teile)["aenderung"] for h in hotspots(d, {})}
+    assert erg[id_datei("r", "a.py")] == erg[id_datei("r", "b.py")] == 0.25
+    assert erg[id_datei("r", "c.py")] == 1.0
+
+
+def test_top_nicht_positiv(graph_stand):
+    d = laden(graph_stand([_d("a.py", "1.0")], []))
+    assert hotspots(d, {}, top=0) == ()
+    assert hotspots(d, {}, top=-3) == ()

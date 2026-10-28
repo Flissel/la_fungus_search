@@ -1,7 +1,9 @@
 """Zentralitaet und Hotspots: PageRank (Symbolgraph), Betweenness (Dateigraph, E3), Hotspot-Wert."""
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections.abc import Mapping
+import math
 from dataclasses import dataclass
 
 from .lader import GraphDaten, dateigraph, datei_von, symbolgraph
@@ -55,8 +57,8 @@ def _perzentile(werte: Mapping[str, float]) -> dict[str, float]:
     sortiert = sorted(werte.values())
     erg: dict[str, float] = {}
     for k, w in werte.items():
-        kleiner = sum(1 for x in sortiert if x < w)
-        gleich = sum(1 for x in sortiert if x == w)
+        kleiner = bisect_left(sortiert, w)
+        gleich = bisect_right(sortiert, w) - kleiner
         erg[k] = (kleiner + (gleich - 1) / 2) / (n - 1)
     return erg
 
@@ -65,9 +67,10 @@ def _lebendigkeit(attr: tuple[tuple[str, str], ...]) -> float:
     for k, v in attr:
         if k == "lebendigkeit":
             try:
-                return float(v)
+                x = float(v)
             except ValueError:
                 return 0.0
+            return x if math.isfinite(x) else 0.0
     return 0.0
 
 
@@ -75,7 +78,7 @@ def hotspots(d: GraphDaten, pr: Mapping[str, float], top: int = 50) -> tuple[Hot
     """Wert = Produkt dreier Perzentile: zentral (PageRank Datei + Symbole), aenderung
     (Attr `lebendigkeit`, fehlend = 0), groesse (Anzahl Symbole, Ruling S1)."""
     dateien = sorted(i for i, k in d.knoten.items() if k.art == "datei")
-    if not dateien:
+    if top <= 0 or not dateien:
         return ()
     zentral = {f: pr.get(f, 0.0) for f in dateien}
     groesse = {f: 0.0 for f in dateien}
