@@ -25,26 +25,38 @@ def _repo_pfad(datei_id: str) -> tuple[str, str]:
     return repo, pfad
 
 
-def _name(dateien: tuple[str, ...]) -> str:
-    teile = [_repo_pfad(i) for i in dateien]
-    ordner = [(r, tuple(p.split("/")[:-1])) for r, p in teile]
-    repos = {r for r, _ in ordner}
-    if len(repos) == 1:
-        folgen = [o for _, o in ordner]
-    else:  # ueber Repos hinweg: Repo ist das erste Segment
-        folgen = [(r, *o) for r, o in ordner]
-    gemeinsam: list[str] = []
+def _gemeinsam(folgen: list[tuple[str, ...]]) -> list[str]:
+    erg: list[str] = []
     for stufe in zip(*folgen):
         if len(set(stufe)) != 1:
             break
-        gemeinsam.append(stufe[0])
-    if gemeinsam:
-        return "/".join(gemeinsam)
+        erg.append(stufe[0])
+    return erg
+
+
+def _haeufigster(folgen: list[tuple[str, ...]]) -> str | None:
     haeufig = Counter("/".join(f) for f in folgen if f)
     if not haeufig:
-        return "."
+        return None
     n = max(haeufig.values())
     return min(o for o, c in haeufig.items() if c == n)
+
+
+def _name(dateien: tuple[str, ...]) -> str:
+    """Name `<repo>/<ordner>`, immer mit Repo-Praefix (Fix-Welle).
+
+    Ein Repo: gemeinsamer Ordner, sonst der haeufigste Ordner (bei Gleichstand der kleinste), ohne
+    Ordner das Repo selbst. Mehrere Repos: Repo-Segmente zaehlen wie Ordner (Submodul `v/os/sub` teilt
+    `v/os` mit seinem Elternrepo); gemeinsames Praefix, sonst der haeufigste volle Pfad."""
+    teile = [_repo_pfad(i) for i in dateien]
+    repos = {r for r, _ in teile}
+    if len(repos) == 1:
+        repo = next(iter(repos))
+        ordner = [tuple(p.split("/")[:-1]) for _, p in teile]
+        rest = "/".join(_gemeinsam(ordner)) or _haeufigster(ordner)
+        return f"{repo}/{rest}" if rest else repo
+    folgen = [(*r.split("/"), *p.split("/")[:-1]) for r, p in teile]
+    return "/".join(_gemeinsam(folgen)) or _haeufigster(folgen) or "."
 
 
 def _kohaesionen(label: list[int], anzahl: int, kanten: list[tuple[int, int, float]]) -> list[float]:

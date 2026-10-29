@@ -41,7 +41,7 @@ def test_zwei_cluster(graph_stand):
     assert all(0.0 < x.kohaesion < 1.0 for x in erg)
     assert all(x.dateien == tuple(sorted(x.dateien)) for x in erg)
     # Gleichstand der Groesse: kleinste Datei-Id zuerst (spaces/learning < spaces/marketing)
-    assert erg[0].name == "spaces/learning" and erg[1].name == "spaces/marketing"
+    assert erg[0].name == "r/spaces/learning" and erg[1].name == "r/spaces/marketing"
 
 
 def test_deterministisch(graph_stand):
@@ -73,7 +73,7 @@ def test_name_praefix(graph_stand):
     kanten = [_imp("spaces/marketing/api/a.py", "spaces/marketing/b.py"),
               _imp("spaces/marketing/b.py", "spaces/marketing/ui/c.py")]
     erg = bereiche_finden(laden(graph_stand(knoten, kanten)))
-    assert [b.name for b in erg] == ["spaces/marketing"]
+    assert [b.name for b in erg] == ["r/spaces/marketing"]  # immer mit Repo-Praefix
     assert erg[0].kohaesion == 1.0
 
 
@@ -81,7 +81,7 @@ def test_name_haeufigster_ordner(graph_stand):
     knoten = [_d("a/x.py"), _d("a/y.py"), _d("b/z.py")]
     kanten = [_imp("a/x.py", "a/y.py"), _imp("a/y.py", "b/z.py")]
     erg = bereiche_finden(laden(graph_stand(knoten, kanten)))
-    assert [b.name for b in erg] == ["a"]
+    assert [b.name for b in erg] == ["r/a"]
 
 
 def test_name_ueber_repos(graph_stand):
@@ -109,3 +109,15 @@ def test_aufloesung_wirkt(graph_stand):
             kanten.append(_imp(f"g{g - 1}/f0.py", pf[0]))
     d = laden(graph_stand(knoten, kanten))
     assert len(bereiche_finden(d, aufloesung=20.0)) > len(bereiche_finden(d, aufloesung=0.05))
+
+
+def test_name_verschachtelte_repos_gemeinsamer_praefix(graph_stand):
+    """Fix-Welle: Bereichsnamen tragen immer das Repo; Submodul-Repos teilen den Pfad ihres Elternrepos."""
+    knoten = [_d("a/x.py", "v/os"), _d("b/y.py", "v/os/sub"), _d("x.py", "v/os")]
+    kanten = [Kante("importiert", knoten[0].id, knoten[1].id, True, None),
+              Kante("importiert", knoten[1].id, knoten[2].id, True, None)]
+    erg = bereiche_finden(laden(graph_stand(knoten, kanten)))
+    assert [b.name for b in erg] == ["v/os"]
+    knoten = [_d("x.py", "solo"), _d("y.py", "solo")]
+    erg = bereiche_finden(laden(graph_stand(knoten, [Kante("importiert", knoten[0].id, knoten[1].id, True, None)])))
+    assert [b.name for b in erg] == ["solo"]

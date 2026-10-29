@@ -1,22 +1,31 @@
 # Beispiel fuer einen ausgefuellten Goldsatz (erzeugt mit selbstbild.analyse.goldsatz.kandidaten).
 # urteil: offen | ja | nein. erwartet: Pfad-Praefixe. zentral: optionale Datei-Ids.
+# Ids und Gruende im Format eines echten VibeMind-Laufs (Repo-Praefix, Gruende aus analyse/tot.py).
 bereiche:
-- dateien: 42
+- dateien: 518
   erwartet:
-  - src/selbstbild/analyse/
-  id: b1
-  name: analyse
+  - services/local-api/
+  id: bereich:5
+  name: vibemind/vibemind-os/spaces/video/laura/services/local-api
 doppelt:
-- aehnlichkeit: '0.9877'
+- aehnlichkeit: '1.0000'
   art: gleiche_datei
   mitglieder:
-  - datei:repo:a/util.py
-  - datei:repo:b/util.py
+  - datei:vibemind/vibemind-os:spaces/business/llm_client.py
+  - datei:vibemind/vibemind-os:spaces/devops/llm_client.py
   urteil: ja
 tot:
 - gruende:
-  - nicht_erreichbar
-  symbol: symbol:repo:pkg/alt.py#alte_funktion
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/tools/fix_migrate_tool.py#FixMigrateTool.get_fix
+  urteil: ja
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os:brain/the_brain/core/ewc_regularization.py#MemoryAwareConsolidation.add_task
   urteil: nein
 zentral:
-- datei:repo:src/selbstbild/analyse/lader.py
+- datei:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:run_agent.py

@@ -114,3 +114,49 @@ def test_beispiel_yaml_ladbar() -> None:
     a = Analyse("c", 1, (), (), (), (), (), (), (), None, ())
     v = vergleichen(pfad.read_text(encoding="utf-8"), a)
     assert v.tot.mathe is None and v.doppelt.mathe == 1.0
+
+
+def test_kolonie_metrik_uebereinstimmung_s12() -> None:
+    """Ruling S12: (ja und tote Ecke) + (nein und keine tote Ecke), geteilt durch ja + nein."""
+    gold = yaml.safe_dump({"tot": [{"symbol": _sym(i), "urteil": "ja"} for i in range(10)]
+                           + [{"symbol": _sym(i), "urteil": "nein"} for i in range(30, 40)]})
+    v = vergleichen(gold, _analyse())
+    assert v.tot.mathe == 0.5 and v.tot.n_mathe == 20
+    assert v.tot.kolonie == 1.0 and v.tot.n_kolonie == 20
+    gold = yaml.safe_dump({"tot": [{"symbol": _sym(i), "urteil": "ja"} for i in range(35, 40)]})
+    assert vergleichen(gold, _analyse()).tot.kolonie == 0.0  # kann jetzt verlieren
+
+
+def test_nur_aktuell_sicher_tot_gewertet_s12() -> None:
+    a = _analyse()
+    tot = tuple(TotFund(f.symbol, "wahrscheinlich_tot", ("dekorator",), None) if f.symbol == _sym(1) else f
+                for f in a.tot)
+    a = Analyse(**{**a.__dict__, "tot": tot})
+    gold = yaml.safe_dump({"tot": [{"symbol": _sym(0), "urteil": "ja"}, {"symbol": _sym(1), "urteil": "ja"}]})
+    v = vergleichen(gold, a)
+    assert v.tot.n_mathe == 1 and v.ignoriert == 1
+
+
+def test_bereiche_unter_spaces_zuerst() -> None:
+    """Fix-Welle: die drei groessten Bereiche unter spaces/ (auch Submodul-Repos), sonst aufgefuellt."""
+    def b(i: str, name: str, n: int) -> Bereich:
+        return Bereich(i, name, tuple(f"datei:r:{i}/{k}.py" for k in range(n)), 0.5)
+
+    a = _analyse()
+    a = Analyse(**{**a.__dict__, "bereiche": (
+        b("bereich:1", "(isoliert)", 90), b("bereich:2", "v/os/hermes/tests", 80),
+        b("bereich:3", "v/os/spaces/captain_cook/minibook", 70), b("bereich:4", "v/os/brain", 60),
+        b("bereich:5", "v/os/spaces/marketing/claw", 50), b("bereich:6", "v/os/spaces", 40))})
+    doc = yaml.safe_load(kandidaten(a))
+    assert [x["id"] for x in doc["bereiche"]] == ["bereich:2", "bereich:3", "bereich:5"]
+    assert {x["name"] for x in doc["bereiche"]} == {"v/os/spaces/captain_cook/minibook", "v/os/spaces/marketing/claw",
+                                                     "v/os/hermes/tests"}
+
+
+def test_zentrum_top50_sind_dateien() -> None:
+    """Top-50 meint 50 DATEIEN: viele Symbole derselben Datei verdraengen keine andere Datei."""
+    a = _analyse()
+    top = tuple((f"symbol:r:pkg/m0.py#s{k}", 1.0 - k / 1000) for k in range(60)) + ((_sym(5), 0.001),)
+    a = Analyse(**{**a.__dict__, "pagerank_top": top})
+    gold = yaml.safe_dump({"zentral": ["datei:r:pkg/m5.py"]})
+    assert vergleichen(gold, a).zentrum.mathe == 1.0

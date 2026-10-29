@@ -3,15 +3,21 @@
 `kandidaten` erzeugt deterministisches YAML (Urteil je Eintrag `offen | ja | nein`). `vergleichen`
 liest das ausgefuellte YAML und misst die Mathe-Analyse und die Kolonie dagegen:
 
-- tot: Praezision = ja / (ja + nein) ueber die beurteilten Eintraege. Die Kolonie "sagt tot", wenn die
-  Datei des Symbols in `kolonie.tote_ecken` steht; ihre Praezision zaehlt nur beurteilte Eintraege,
-  die sie so markiert (n_kolonie).
+- tot (Ruling S12): gewertet werden nur Gold-Eintraege, deren Symbol im aktuellen Lauf `sicher_tot`
+  ist; alle anderen zaehlen als `ignoriert`. Mathe: Praezision = ja / (ja + nein). Kolonie: Die
+  Kolonie "sagt tot", wenn die Datei des Symbols in `kolonie.tote_ecken` steht; gemessen wird die
+  Uebereinstimmung ueber ALLE beurteilten Eintraege: ((ja und tote Ecke) + (nein und keine tote
+  Ecke)) / (ja + nein), n_kolonie = ja + nein.
 - doppelt: nur Mathe (die Kolonie kennt keine Doppelungen); Praezision wie bei tot.
 - bereiche: Mittel ueber Eintraege mit nicht leerem `erwartet` der Jaccard-Werte zwischen der erwarteten
   Dateimenge (Dateien aus den Bereichen der Analyse, deren Pfad mit einem Praefix beginnt) und dem
   jeweils besten Bereich (Mathe bzw. Kolonie).
 - zentrum: nur wenn `zentral` Eintraege hat: Anteil der markierten Dateien, die in den Top-50 stehen
-  (Mathe: `pagerank_top`, auf Dateien abgebildet; Kolonie: `kolonie.zentrum`).
+  (Mathe: die ersten 50 DATEIEN aus `pagerank_top`, `zentral.dateien_top`; Kolonie: `kolonie.zentrum`).
+
+Kandidaten fuer `bereiche` (Fix-Welle): die drei groessten Bereiche, deren Name unter `spaces/` liegt
+(ein Pfadsegment `spaces` mit mindestens einem Segment danach, auch in Submodul-Repos); gibt es
+weniger, wird mit den groessten uebrigen (ohne `(isoliert)`) aufgefuellt.
 - Laufzeit: nur wenn `statistik` die Schluessel `laufzeit_mathe_ms` / `laufzeit_kolonie_ms` traegt,
   Reproduzierbarkeit (1/0) nur mit `reproduzierbar_mathe` / `reproduzierbar_kolonie`; sonst None.
 Metriken ohne Daten sind None (keine Division durch null).
@@ -24,8 +30,10 @@ from typing import Any
 
 import yaml
 
+from .bereiche import ISOLIERT, Bereich
 from .ergebnis import Analyse
 from .lader import SEED, datei_von
+from .zentral import dateien_top
 
 KOPF = """\
 # Goldsatz-Kandidaten (Selbstbild). So fuellst du ihn aus:
@@ -38,20 +46,31 @@ KOPF = """\
 """
 
 
+def _unter_spaces(name: str) -> bool:
+    teile = name.split("/")
+    return any(t == "spaces" and n < len(teile) - 1 for n, t in enumerate(teile))
+
+
+def _bereich_kandidaten(bereiche: tuple[Bereich, ...], n: int = 3) -> list[Bereich]:
+    gross = sorted((b for b in bereiche if b.name != ISOLIERT), key=lambda b: (-len(b.dateien), b.id))
+    erst = [b for b in gross if _unter_spaces(b.name)][:n]
+    rest = [b for b in gross if b not in erst][:n - len(erst)]
+    return sorted(erst + rest, key=lambda b: b.id)
+
+
 def kandidaten(a: Analyse, n_tot: int = 40, n_doppelt: int = 15) -> str:
     tot = sorted((t for t in a.tot if t.stufe == "sicher_tot"), key=lambda t: t.symbol)
     if len(tot) > n_tot:
         tot = sorted(random.Random(SEED).sample(tot, n_tot), key=lambda t: t.symbol)
     dopp = sorted(a.doppelungen, key=lambda d: (-d.aehnlichkeit, d.art, d.mitglieder))[:n_doppelt]
-    gross = sorted((b for b in a.bereiche if b.name != "(isoliert)"),
-                   key=lambda b: (-len(b.dateien), b.id))[:3]
+    gross = _bereich_kandidaten(a.bereiche)
     doc: dict[str, Any] = {
         "commit": a.commit,  # Commit des Graphen/Laufs; vergleichen warnt bei Abweichung
         "tot": [{"symbol": t.symbol, "gruende": list(t.gruende), "urteil": "offen"} for t in tot],
         "doppelt": [{"art": d.art, "mitglieder": list(d.mitglieder),
                      "aehnlichkeit": f"{d.aehnlichkeit:.4f}", "urteil": "offen"} for d in dopp],
         "bereiche": [{"id": b.id, "name": b.name, "dateien": len(b.dateien), "erwartet": []}
-                     for b in sorted(gross, key=lambda b: b.id)],
+                     for b in gross],
         "zentral": [],
     }
     return KOPF + yaml.safe_dump(doc, sort_keys=True, allow_unicode=True)
@@ -159,20 +178,24 @@ def vergleichen(gold_yaml: str, mathe: Analyse) -> Vergleich:
     tote = set(kol.tote_ecken) if kol else set()
     ignoriert = 0
 
-    bekannte_symbole = {t.symbol for t in mathe.tot}
+    sicher_tot = {t.symbol for t in mathe.tot if t.stufe == "sicher_tot"}
     roh_tot, uebersprungen = _eintraege(gold, "tot")
     ignoriert += uebersprungen
     tot: list[dict[str, Any]] = []
     for e in roh_tot:
         sym = e.get("symbol")
-        if isinstance(sym, str) and sym in bekannte_symbole:
+        if isinstance(sym, str) and sym in sicher_tot:
             tot.append(e)
         else:
-            ignoriert += 1          # ohne Symbol oder Symbol nicht in der Analyse
+            ignoriert += 1          # ohne Symbol, nicht in der Analyse oder nicht mehr sicher_tot (S12)
     gewertet, unklar = _gewertet(tot)
     ignoriert += unklar
     p_m, n_m = _praezision([u for _, u in gewertet])
-    p_k, n_k = _praezision([u for e, u in gewertet if datei_von(e["symbol"]) in tote]) if kol else (None, 0)
+    p_k: float | None = None
+    n_k = 0
+    if kol and gewertet:  # Ruling S12: Uebereinstimmung ueber alle beurteilten Eintraege
+        treffer = sum(1 for e, u in gewertet if (datei_von(e["symbol"]) in tote) == (u == "ja"))
+        p_k, n_k = treffer / len(gewertet), len(gewertet)
 
     roh_d, uebersprungen = _eintraege(gold, "doppelt")
     ignoriert += uebersprungen
@@ -200,7 +223,7 @@ def vergleichen(gold_yaml: str, mathe: Analyse) -> Vergleich:
     zentral = {str(z).strip() for z in _liste(gold.get("zentral")) if str(z).strip()}
     z_m = z_k = None
     if zentral:
-        top = {datei_von(s) if s.startswith("symbol:") else s for s, _ in mathe.pagerank_top[:50]}
+        top = set(dateien_top(mathe.pagerank_top, 50))
         z_m = len(zentral & top) / len(zentral)
         if kol:
             z_k = len(zentral & set(kol.zentrum[:50])) / len(zentral)
