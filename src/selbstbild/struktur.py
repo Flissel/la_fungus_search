@@ -19,7 +19,7 @@ from pathlib import Path
 from ._glob import glob_regex
 from .hooks import REGELDATEI, regeln_lesen, repo_wurzeln
 
-__all__ = ["Verstoss", "pruefe_schreibziel", "regeln_fuer", "pruefen"]
+__all__ = ["Verstoss", "pruefe_schreibziel", "regel_trifft", "regeln_fuer", "pruefen"]
 
 GROSSKLEIN_EGAL = os.name == "nt"
 _UEBERSPRUNGEN = {".git", "node_modules", "__pycache__", ".venv", ".venv-selbstbild"}
@@ -34,16 +34,39 @@ class Verstoss:
     hart: bool
 
 
-def _flags() -> int:
-    return re.IGNORECASE if GROSSKLEIN_EGAL else 0
+def _flags(grossklein_egal: bool | None = None) -> int:
+    egal = GROSSKLEIN_EGAL if grossklein_egal is None else grossklein_egal
+    return re.IGNORECASE if egal else 0
 
 
-def _muster(m: str) -> re.Pattern[str]:
+def _muster(m: str, flags: int | None = None) -> re.Pattern[str]:
     """Verzeichnismuster (`.../`) = Praefix, sonst exakter Glob."""
+    f = _flags() if flags is None else flags
     m = m.replace("\\", "/").lstrip("/")
     if m.endswith("/"):  # Praefix: mindestens ein weiteres Segment unterhalb des Verzeichnisses
-        return re.compile(glob_regex(m.rstrip("/")).pattern.removesuffix(r"\Z") + r"/.+\Z", _flags())
-    return re.compile(glob_regex(m).pattern, _flags())
+        return re.compile(glob_regex(m.rstrip("/")).pattern.removesuffix(r"\Z") + r"/.+\Z", f)
+    return re.compile(glob_regex(m).pattern, f)
+
+
+def ort_ist_wurzel(ort: object) -> bool:
+    """`ort` der Repo-Wurzel (`""`, `.`, `./`): die Regel gilt fuer das ganze Repo."""
+    return str(ort).replace("\\", "/").strip().rstrip("/") in ("", ".")
+
+
+def regel_trifft(regel: dict, rel: str, *, grossklein_egal: bool | None = None) -> bool:
+    """Gilt die Regel fuer den repo-relativen Pfad `rel` (mit `/`)? Gemeinsamer Trefferbegriff von Waechter-Umfeld
+    (`regeln_fuer`) und MCP-Server (`selbstbild_regeln`), damit beide nicht auseinanderlaufen.
+
+    Ja, wenn `ort/**` den Pfad umfasst (ein Wurzel-`ort` umfasst alles) oder eines ihrer `verboten`-Muster ihn trifft
+    (dieselbe Muster-Semantik wie der Waechter)."""
+    f = _flags(grossklein_egal)
+    ort = str(regel.get("ort", "")).replace("\\", "/").strip()
+    if ort_ist_wurzel(ort):
+        return True
+    ort = ort.removeprefix("./").rstrip("/")
+    if re.compile(glob_regex(ort + "/**").pattern, f).match(rel):
+        return True
+    return any(_muster(str(m), f).match(rel) for m in regel.get("verboten") or [])
 
 
 def _regeln_von(ordner: Path) -> list[dict]:
@@ -70,8 +93,7 @@ def _hinweis(r: dict) -> str | None:
     """`hinweis` der Regel, sonst der richtige Ort; ein `ort` der Repo-Wurzel ist nur der Geltungsbereich."""
     if r.get("hinweis"):
         return r["hinweis"]
-    ort = str(r.get("ort", "")).replace("\\", "/").strip().rstrip("/")
-    return None if ort in ("", ".") else f"richtiger Ort: {r.get('ort', '?')}"
+    return None if ort_ist_wurzel(r.get("ort", "")) else f"richtiger Ort: {r.get('ort', '?')}"
 
 
 def _aufloesen(ziel: Path, cwd: Path | None) -> Path:
@@ -122,15 +144,9 @@ def _relativ(wurzel: Path, pfad: str) -> str:
 
 
 def regeln_fuer(wurzel: Path, pfad: str) -> tuple[dict, ...]:
-    """Regeln der `selbstbild.yaml` in `wurzel`, deren `ort` den Pfad umfasst oder deren `verboten` ihn trifft."""
+    """Regeln der `selbstbild.yaml` in `wurzel` (Arbeitsbaum), die laut `regel_trifft` fuer den Pfad gelten."""
     rel = _relativ(wurzel, pfad)
-    aus: list[dict] = []
-    for r in _regeln_von(Path(wurzel)):
-        ort = str(r.get("ort", "")).replace("\\", "/").rstrip("/")
-        umfasst = bool(ort) and re.compile(glob_regex(ort + "/**").pattern, _flags()).match(rel) is not None
-        if umfasst or any(_muster(m).match(rel) for m in r.get("verboten", [])):
-            aus.append({k: v for k, v in r.items()})
-    return tuple(aus)
+    return tuple(dict(r) for r in _regeln_von(Path(wurzel)) if regel_trifft(r, rel))
 
 
 def _hat_pflichtteil(ordner: Path, teil: str) -> bool:

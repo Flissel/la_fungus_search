@@ -213,3 +213,36 @@ def test_selftest(tmp_path):
                  "selbstbild_lebendigkeit", "selbstbild_tot", "selbstbild_doku"):
         assert name in erg.stdout
     assert str(tmp_path) in erg.stdout and "erst vermessen" in erg.stdout
+
+
+# Aufbau wie die aeussere VibeMind-`selbstbild.yaml` (Wurzel-`ort` "./" mit Verboten + Space-Regel im Submodul)
+AUSSEN_REGELN = (
+    "name: vibemind\n"
+    "struktur:\n"
+    "  - art: kein_space_im_root\n"
+    "    ort: \"./\"\n"
+    "    pflicht: []\n"
+    "    verboten:\n"
+    "      - \"spaces/*/\"\n"
+    "      - \"*/capabilities.yaml\"\n"
+    "    hinweis: \"Spaces gehoeren nach vibemind-os/spaces/<name>/\"\n"
+    "  - art: space\n"
+    "    ort: \"vibemind-os/spaces/*/\"\n"
+    "    pflicht: []\n"
+    "    verboten: []\n"
+    "    hinweis: \"Spaces gehoeren nach vibemind-os/spaces/<name>/\"\n"
+)
+
+
+def test_w_regeln_wie_waechter(git_repo, graph_stand, monkeypatch):
+    """I1: was der Waechter verbietet, nennt auch `selbstbild_regeln` (ein gemeinsamer Trefferbegriff)."""
+    from selbstbild import struktur
+
+    _aufbauen(git_repo, graph_stand, monkeypatch, regeln=AUSSEN_REGELN)
+    w = git_repo.wurzel
+    arten = [r["art"] for r in mcp_server.w_regeln(w, "spaces/testspace/main.py")["regeln"]]
+    assert "kein_space_im_root" in arten and "space" not in arten
+    assert struktur.pruefe_schreibziel(w / "spaces" / "testspace" / "main.py")  # Waechter verbietet denselben Pfad
+    arten_sub = [r["art"] for r in mcp_server.w_regeln(w, "vibemind-os/spaces/x/main.py")["regeln"]]
+    assert "space" in arten_sub
+    assert struktur.pruefe_schreibziel(w / "vibemind-os" / "spaces" / "x" / "main.py") == ()

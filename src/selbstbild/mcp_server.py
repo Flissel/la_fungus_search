@@ -10,21 +10,20 @@ Entscheidungen:
   Analyse: der Server laedt so weder Graph noch Analyse. (`suche.index` zieht transitiv `igraph` ueber
   `analyse.lader`; `leidenalg` und `numpy` werden hier nicht geladen.)
 - Regeln stammen aus dem committeten `selbstbild.yaml` des gemessenen Commits (wie die Vermessung, R21),
-  nicht aus dem Arbeitsbaum. Bis T8 (`struktur.regeln_fuer`) sind es die rohen Strukturregeln (U1).
+  nicht aus dem Arbeitsbaum. Welche Regel fuer einen Pfad gilt, entscheidet `struktur.regel_trifft`, derselbe
+  Trefferbegriff wie beim Waechter.
 - Antworten enthalten nie Env-Werte; Env-Knoten tragen im Graphen nur Namen.
 """
 from __future__ import annotations
 
 import os
 import posixpath
-import re
 import sqlite3
 import sys
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-from ._glob import glob_regex
 from .vermessen import stand_finden
 
 Antwort = dict[str, Any]
@@ -67,7 +66,7 @@ def wurzel_waehlen(wurzel: str | None, pfad: str | None) -> Path | None:
 
 def relativ_zur_wurzel(wurzel: Path, eingabe: str) -> str:
     """Pfad relativ zur Wurzel mit `/`: absolute Pfade werden aufgeloest und (unter Windows ohne Beachtung der
-    Schreibweise) relativ zur Wurzel genommen; relative Pfade werden nur normalisiert (`./`, `\`, `..`).
+    Schreibweise) relativ zur Wurzel genommen; relative Pfade werden nur normalisiert (`./`, Backslash, `..`).
     Ausserhalb der Wurzel: `_Meldung`. Die Wurzel selbst ergibt `""`."""
     if not eingabe:
         return ""
@@ -237,10 +236,13 @@ def w_tot(wurzel: Path, stufe: str = "sicher_tot", praefix: str = "", limit: int
 
 
 def w_regeln(wurzel: Path, pfad: str) -> Antwort:
-    """Strukturregeln des gemessenen Commits, deren `ort` den Pfad umschliesst (roh, bis T8)."""
+    """Strukturregeln des gemessenen Commits, die fuer den Pfad gelten: `ort` umfasst ihn (Wurzel-`ort` = ganzes
+    Repo) oder ein `verboten`-Muster trifft ihn. Trefferbegriff = `struktur.regel_trifft` (wie der Waechter);
+    gelesen wird aber die committete Regeldatei (R21), nicht der Arbeitsbaum (F5)."""
     def tun(stand: Path) -> Antwort:
         import yaml
 
+        from . import struktur
         from .analyse.lauf import _stand_meta
         from .quelle import _regeln_aus_commit
 
@@ -250,9 +252,8 @@ def w_regeln(wurzel: Path, pfad: str) -> Antwort:
             regeln = _regeln_aus_commit(Path(wurzel), commit or "HEAD")
         except (ValueError, yaml.YAMLError) as e:  # u. a. pydantic.ValidationError; Text enthaelt Inhalte
             raise _Meldung("Regeldatei ungueltig: selbstbild.yaml im gemessenen Commit") from e
-        flags = re.IGNORECASE if PFAD_OHNE_GROSSKLEIN else 0
-        treffer = [r.model_dump() for r in regeln.struktur
-                   if re.compile(glob_regex(r.ort.rstrip("/") + "/**").pattern, flags).match(rel)]
+        treffer = [d for d in (r.model_dump() for r in regeln.struktur)
+                   if struktur.regel_trifft(d, rel, grossklein_egal=PFAD_OHNE_GROSSKLEIN)]
         return {"regeln": treffer}
     return _mit_stand(wurzel, tun)
 

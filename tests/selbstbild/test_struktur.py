@@ -176,3 +176,26 @@ def test_pruefen_unlesbare_regeldatei_faellt_geschlossen(root):
 def test_pruefen_ohne_struktur_kein_verstoss(root):
     (root / "selbstbild.yaml").write_text("name: x" + chr(10), encoding="utf-8")
     assert pruefen(root) == ()
+
+
+@pytest.mark.parametrize("ort", ["./", ".", ""])
+def test_regel_trifft_wurzel_ort_ganzes_repo(ort):
+    r = {"art": "w", "ort": ort, "pflicht": [], "verboten": []}
+    assert struktur.regel_trifft(r, "irgendwo/x.py") and struktur.regel_trifft(r, "x.py")
+
+
+def test_regel_trifft_ort_oder_verboten():
+    r = {"art": "space", "ort": "vibemind-os/spaces/*/", "pflicht": [], "verboten": ["spaces/*/"]}
+    assert struktur.regel_trifft(r, "vibemind-os/spaces/a/b.py")
+    assert struktur.regel_trifft(r, "spaces/a/b.py")  # nur ueber verboten
+    assert not struktur.regel_trifft(r, "docs/a.md")
+    assert struktur.regel_trifft({"art": "a", "ort": "./app/", "verboten": []}, "app/x.py")  # ./-Praefix
+    assert not struktur.regel_trifft(r, "VIBEMIND-OS/spaces/a/b.py", grossklein_egal=False)
+    assert struktur.regel_trifft(r, "VIBEMIND-OS/spaces/a/b.py", grossklein_egal=True)
+
+
+def test_regeln_fuer_wurzel_ort(root):
+    (root / "selbstbild.yaml").write_text(
+        "struktur:\n  - art: kein_space_im_root\n    ort: \"./\"\n    pflicht: []\n    verboten: ['spaces/*/']\n",
+        encoding="utf-8")
+    assert [x["art"] for x in regeln_fuer(root, "spaces/x/main.py")] == ["kein_space_im_root"]
