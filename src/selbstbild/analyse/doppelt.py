@@ -9,7 +9,13 @@ und geparst, die Laenge ist `zeile_bis - zeile_von + 1` des Symbols mit passende
 
 Normalisierung der Shingles: sprachunabhaengiger Regex-Tokenizer; Kommentare entfallen,
 Bezeichner werden zu `ID`, String- und Zahlenliterale zu `LIT`; Schluesselwoerter und
-Satzzeichen bleiben. Datenformate ohne Code-Struktur (json, dotenv) bleiben aussen vor.
+Satzzeichen bleiben.
+
+Nur Code zaehlt (Fix-Welle): `gleiche_datei` und `aehnliche_datei` betrachten nur Dateien einer
+Code-Sprache (`CODE_SPRACHEN`); json, yaml, markdown, sql, dotenv und Dateien ohne Sprache entfallen.
+Ein `aehnliche_datei`-Cluster, dessen Pfade alle zu EINER Blob-SHA gehoeren, entfaellt (das ist
+`gleiche_datei`). Das Neu-Parsen fuer die Zeilenregel laeuft ueber `_parsen_sicher`: Eine
+Parser-Ausnahme bricht den Lauf nicht ab, die Datei liefert dann keine Zeilen.
 
 `aehnlichkeit` bei `aehnliche_datei` ist der exakte Jaccard-Wert der Shingle-Mengen
 (Kandidaten werden aus den gelesenen Blobs nachgerechnet). Bestaetigte Paare werden per Union-Find
@@ -30,9 +36,9 @@ from typing import Literal
 
 import numpy as np
 
-from ..parser.basis import parsen
 from ..quelle import Baum, BlobLeser, Eintrag, baum_lesen
 from ..typen import id_datei
+from . import CODE_SPRACHEN
 from .lader import SEED, GraphDaten
 
 MIN_BYTES = 200
@@ -47,7 +53,6 @@ MAX_EIMER = 50  # groessere LSH-Eimer (Boilerplate) werden uebersprungen und gez
 _CHUNK = 4096
 STATISTIK: dict[str, int] = {"eimer_uebersprungen": 0}  # Kennzahlen des letzten Laufs
 _VORFILTER = 0.1  # Kandidaten brauchen Signatur-Gleichheit >= schwelle - _VORFILTER
-_OHNE_SHINGLES = frozenset({"json", "dotenv"})
 
 Art = Literal["gleiche_datei", "gleiches_symbol", "aehnliche_datei"]
 
@@ -133,10 +138,14 @@ def _text(leser: BlobLeser, blob: str) -> str:
     return leser.lesen(blob).decode("utf-8", errors="replace")
 
 
+def _ist_code(e: Eintrag) -> bool:
+    return e.sprache in CODE_SPRACHEN
+
+
 def _gleiche_dateien(eintraege: list[Eintrag]) -> list[Doppelung]:
     je_blob: dict[str, set[str]] = {}
     for e in eintraege:
-        if e.groesse >= MIN_BYTES:
+        if e.groesse >= MIN_BYTES and _ist_code(e):
             je_blob.setdefault(e.blob, set()).add(id_datei(e.repo, e.pfad))
     return [Doppelung("gleiche_datei", tuple(sorted(m)), 1.0) for m in je_blob.values() if len(m) >= 2]
 
@@ -170,7 +179,10 @@ def _gleiche_symbole(d: GraphDaten, blob_von: dict[tuple[str, str], tuple[Eintra
                 continue
             eintrag, baum = ziel
             if schluessel not in laengen:
-                p = parsen(eintrag.sprache or "", eintrag.pfad, leser[baum.repo].lesen(eintrag.blob))
+                from ..vermessen import _parsen_sicher  # spaet: vermessen zieht den ganzen Stufe-1-Lauf
+
+                p, _ = _parsen_sicher(eintrag.sprache or "", eintrag.pfad, leser[baum.repo].lesen(eintrag.blob),
+                                      baum.repo)
                 je: dict[tuple[str, str], int] = {}
                 for s in p.symbole:
                     je.setdefault((s.qualname, s.digest), s.zeile_bis - s.zeile_von + 1)
@@ -198,7 +210,7 @@ def _aehnliche_dateien(eintraege: list[Eintrag], leser: dict[str, BlobLeser],
     sig: dict[str, np.ndarray] = {}
     for blob in sorted(erster):
         e = erster[blob]
-        if e.sprache is None or e.sprache in _OHNE_SHINGLES or e.groesse < MIN_ZEILEN_DATEI:
+        if not _ist_code(e) or e.groesse < MIN_ZEILEN_DATEI:
             continue
         text = _text(leser[e.repo], blob)
         if text.count("\n") + 1 < MIN_ZEILEN_DATEI:
@@ -254,6 +266,8 @@ def _aehnliche_dateien(eintraege: list[Eintrag], leser: dict[str, BlobLeser],
         gruppen.setdefault(wurzel_von(blob), set()).add(blob)
     erg: list[Doppelung] = []
     for w, blobs in gruppen.items():
+        if len(blobs) < 2:
+            continue  # nur Pfade einer einzigen Blob-SHA: das ist gleiche_datei, kein Cluster
         ids: set[str] = set()
         for blob in blobs:
             ids |= ids_je_blob[blob]

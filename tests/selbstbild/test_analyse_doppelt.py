@@ -135,3 +135,37 @@ def test_unbeendete_literale_linear():
     t0 = time.monotonic()
     _tokens("`x\n" * 20000 + '"""y\n' * 20000 + "/* z\n" * 20000, "typescript")
     assert time.monotonic() - t0 < 5
+
+
+def _yaml_gross(praefix: str) -> str:
+    return "".join(f"{praefix}_schluessel_{i}:\n  wert: {i}\n  name: eintrag_{i}\n" for i in range(20))
+
+
+def test_nur_code_sprachen(git_repo):
+    """Fix-Welle: gleiche_datei und aehnliche_datei zaehlen nur Code (kein json/yaml/markdown/sql)."""
+    daten = '{"liste": [' + ", ".join(f'"eintrag_{i}"' for i in range(40)) + "]}\n"
+    doku = "# Titel\n\n" + "".join(f"Absatz {i} mit genug Text, damit die Datei gross genug ist.\n" for i in range(40))
+    for pfad, text in (("a/d.json", daten), ("b/d.json", daten), ("a/r.md", doku), ("b/r.md", doku),
+                       ("a/x.sql", "SELECT 1;\n" * 40), ("b/x.sql", "SELECT 1;\n" * 40),
+                       ("a/k.yaml", _yaml_gross("a")), ("b/k.yaml", _yaml_gross("b"))):
+        git_repo.datei(pfad, text)
+    sha = git_repo.commit("daten")
+    assert doppelungen(git_repo.wurzel, _daten(sha)) == ()
+
+
+def test_parser_ausnahme_bricht_gleiche_symbole_nicht_ab(git_repo, monkeypatch):
+    from selbstbild.parser import basis
+
+    fn = "def rechne(a, b):\n    c = a + b\n    d = c * 2\n    e = d - a\n    return e\n"
+    git_repo.datei("a.py", fn)
+    git_repo.datei("b.py", "X = 1\n" + fn)
+    sha = git_repo.commit("x")
+    repo = git_repo.wurzel.name
+    kn = _symbolknoten(repo, "a.py", fn) + _symbolknoten(repo, "b.py", "X = 1\n" + fn)
+
+    def kaputt(pfad: str, quelle: bytes):
+        raise RecursionError("zu tief")
+
+    monkeypatch.setitem(basis.REGISTER, "python", kaputt)
+    erg = doppelungen(git_repo.wurzel, _daten(sha, kn))
+    assert not [x for x in erg if x.art == "gleiches_symbol"]  # ohne Zeilen keine Gruppe, aber kein Abbruch

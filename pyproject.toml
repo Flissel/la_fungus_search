@@ -20,6 +20,9 @@ reranker = [
     "torch>=2.0.0",
 ]
 
+# Selbstbild-Stack: braucht Python 3.11 bis 3.12. numpy==1.26.4 hat keine Wheels fuer 3.13+, und
+# der Stack ist nur auf 3.11 (Windows-Wheels igraph/leidenalg) erprobt. Ein Extra kann kein eigenes
+# requires-python tragen, deshalb steht die Untergrenze hier und in docs/selbstbild/STUFE2.md.
 selbstbild = [
     "tree-sitter==0.26.0",
     "tree-sitter-language-pack==1.22.1",
