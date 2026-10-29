@@ -514,3 +514,58 @@ def test_dekoriert_als_symbol_attr_sortiert_s10():
     assert attr(k[id_symbol("r", "a.py", "f")]) == {"dekoriert": "kopf.timer,staticmethod",
                                                      "symbolart": "funktion"}
     assert "dekoriert" not in attr(k[id_symbol("r", "a.py", "g")])
+
+
+def test_builtin_ohne_rueckfall():
+    # S16: `list(x)` ist ein Builtin; ein gleichnamiges Symbol in einer fremden Datei gibt keine Kante
+    erg = {
+        ("r", "a.py"): DateiErgebnis(symbole=(sym("g"),), aufrufe=(Aufruf("g", "list", 3),)),
+        ("r", "b.py"): DateiErgebnis(symbole=(sym("list"),)),
+    }
+    _, kanten = aufloesen(erg, {})
+    assert kanten_von(kanten, "ruft_auf") == {}
+
+
+def test_builtin_name_mit_import_und_gleicher_datei_bleibt_sicher():
+    ziel = id_symbol("r", "b.py", "list")
+    erg = {
+        ("r", "a.py"): DateiErgebnis(
+            symbole=(sym("g"),),
+            importe=(Import("b", ("list",), 1, False),),
+            aufrufe=(Aufruf("g", "list", 3),),
+        ),
+        ("r", "b.py"): DateiErgebnis(symbole=(sym("list"),)),
+        ("r", "c.py"): DateiErgebnis(symbole=(sym("h"), sym("print")), aufrufe=(Aufruf("h", "print", 2),)),
+    }
+    _, kanten = aufloesen(erg, {})
+    rufe = kanten_von(kanten, "ruft_auf")
+    assert rufe[(id_symbol("r", "a.py", "g"), ziel)] is True
+    assert rufe[(id_symbol("r", "c.py", "h"), id_symbol("r", "c.py", "print"))] is True
+
+
+def test_kein_builtin_bleibt_unsicherer_rueckfall():
+    erg = {
+        ("r", "a.py"): DateiErgebnis(symbole=(sym("g"),), aufrufe=(Aufruf("g", "helfer", 3),)),
+        ("r", "b.py"): DateiErgebnis(symbole=(sym("helfer"),)),
+    }
+    _, kanten = aufloesen(erg, {})
+    assert kanten_von(kanten, "ruft_auf") == {
+        (id_symbol("r", "a.py", "g"), id_symbol("r", "b.py", "helfer")): False}
+
+
+def test_js_global_ohne_rueckfall():
+    erg = {
+        ("r", "a.ts"): DateiErgebnis(
+            symbole=(sym("g"),),
+            aufrufe=(Aufruf("g", "fetch", 3), Aufruf("g", "JSON.parse", 4), Aufruf("g", "helfer", 5)),
+        ),
+        ("r", "b.ts"): DateiErgebnis(symbole=(sym("fetch"), sym("JSON", "klasse"), sym("helfer"))),
+        ("r", "c.py"): DateiErgebnis(symbole=(sym("k"),), aufrufe=(Aufruf("k", "fetch", 2),)),
+    }
+    _, kanten = aufloesen(erg, {})
+    von_g = id_symbol("r", "a.ts", "g")
+    assert kanten_von(kanten, "ruft_auf") == {
+        (von_g, id_symbol("r", "b.ts", "helfer")): False,
+        # Python kennt `fetch` nicht als Global: der Rückfall bleibt dort
+        (id_symbol("r", "c.py", "k"), id_symbol("r", "b.ts", "fetch")): False,
+    }

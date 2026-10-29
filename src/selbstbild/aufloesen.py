@@ -5,6 +5,7 @@ deduplizierte, sortierte Knoten und Kanten ohne hängende Enden.
 """
 from __future__ import annotations
 
+import builtins
 import dataclasses
 import functools
 import posixpath
@@ -16,6 +17,7 @@ from typing import cast
 from selbstbild._glob import glob_regex
 from selbstbild.regeln import Regeln
 from selbstbild.spezial import repo_binden
+from selbstbild.sprachen import SPRACHEN
 from selbstbild.typen import (
     Beleg, DateiErgebnis, Import, Kante, Knoten, Symbol, id_datei, id_dienst, id_doku_seite,
     id_env, id_repo, id_sql_funktion, id_symbol, id_tabelle,
@@ -27,6 +29,13 @@ _PY_ENDUNGEN = (".py", ".pyi")
 _TS_ENDUNGEN = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
 _TS_AUFLOESUNG = (".ts", ".tsx", ".js", ".jsx", ".mjs")
 _HOOK_ORDNER = ("/.githooks/", "/.claude/hooks/")
+# S16: Namen, die ohne Import zur Sprache gehören; für sie gibt es keinen Namens-Rückfall
+PY_BUILTINS: frozenset[str] = frozenset(dir(builtins))
+JS_GLOBALE: frozenset[str] = frozenset(
+    "Array Object String Number Boolean JSON Math Promise Date RegExp Map Set WeakMap WeakSet "
+    "Symbol Error console parseInt parseFloat isNaN setTimeout setInterval clearTimeout "
+    "clearInterval fetch require".split())
+_JS_ENDUNGEN = tuple(e for sprache in ("typescript", "tsx", "javascript") for e in SPRACHEN[sprache])
 # Knotenarten, die bei Bedarf aus der Id entstehen (geteilte Ressourcen ohne eigene Datei)
 _BEI_BEDARF = {"env": "env", "tabelle": "tabelle", "dienst": "dienst", "sql_funktion": "sql_funktion"}
 
@@ -491,6 +500,9 @@ def _aufruf_ziel(
     # 5) unsicher: nur schlichte Namen (ohne Punkt), repo-weit genau einmal, nie aus fremden Paketen
     if punkt or name in imp.extern:
         return None
+    if (name in PY_BUILTINS and pfad.endswith(_PY_ENDUNGEN)) or (
+            name in JS_GLOBALE and pfad.endswith(_JS_ENDUNGEN)):
+        return None  # S16: Builtin bzw. Global, kein Treffer auf ein gleichnamiges Repo-Symbol
     kandidaten = letzte.get(name, [])
     if len(kandidaten) == 1 and kandidaten[0] != von:
         return kandidaten[0], False
