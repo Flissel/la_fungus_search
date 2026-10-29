@@ -261,7 +261,7 @@ def test_main_harter_stopp(monkeypatch, capsysbinary):
     import time
     from selbstbild.hooks import einspeisung
 
-    def langsam(cwd, prompt, *, frist_s):
+    def langsam(cwd, prompt, **kw):
         time.sleep(5)
         return "sollte nie erscheinen"
 
@@ -316,3 +316,190 @@ def test_git_head_worktree_gitdir_commondir(tmp_path):
     wt.mkdir()
     (wt / ".git").write_text(f"gitdir: {wt_git}\n")
     assert _git_head(wt) == SHA
+
+
+# --- Task 12: Gespraechskontext, Schweigeschwelle, zweiter Checkout ----------------------------------------------
+GEHEIM = "GEHEIMER-VERLAUFSTEXT-0815"
+
+
+def _aufbauen_kontext(git_repo) -> Path:
+    git_repo.datei("selbstbild.yaml", REGELN)
+    git_repo.datei("app/__init__.py", "")
+    git_repo.datei("app/versand.py", "def newsletter_freigeben():\n    return 1\n")
+    git_repo.datei("app/cron.py", "from app.versand import newsletter_freigeben\n\n\ndef taeglich():\n"
+                                  "    return newsletter_freigeben()\n")
+    git_repo.datei("app/archiv.py", "def newsletter_freigeben_archiv():\n    return 3\n")
+    git_repo.datei("app/sonst.py", "def unbeteiligt():\n    return 4\n")
+    git_repo.commit("init")
+    vermessen(git_repo.wurzel)
+    stand = stand_fuer(git_repo.wurzel)
+    assert stand is not None
+    index_bauen(git_repo.wurzel, stand.parent)
+    return stand.parent
+
+
+def _transkript(tmp_path: Path, *pfade: str, name: str = "s.jsonl") -> Path:
+    zeilen = [json.dumps({"type": "user", "message": {"role": "user", "content": GEHEIM}})]
+    for p in pfade:
+        zeilen.append(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": GEHEIM}, {"type": "tool_use", "name": "Edit", "input": {"file_path": p}}]}}))
+    d = tmp_path / name
+    d.write_bytes(("\n".join(zeilen) + "\n").encode("utf-8"))
+    return d
+
+
+def _abschnitt(block: str, titel: str) -> list[str]:
+    zeilen = block.splitlines()
+    if titel not in zeilen:
+        return []
+    aus = []
+    for z in zeilen[zeilen.index(titel) + 1:]:
+        if not z.startswith("- "):
+            break
+        aus.append(z)
+    return aus
+
+
+def test_schwacher_prompt_ohne_verlauf_schweigt(git_repo, heim):
+    """Ein einziges Prompt-Token, das eine Datei trifft, ist nicht stark: kein Block statt eines unpassenden."""
+    _aufbauen_kontext(git_repo)
+    assert kontextblock(git_repo.wurzel, "ja, bitte weiter mit unbeteiligt") is None
+    assert kontextblock(git_repo.wurzel, "newsletter") is None
+
+
+def test_starker_prompt_ohne_verlauf_spricht(git_repo, heim):
+    _aufbauen_kontext(git_repo)
+    block = kontextblock(git_repo.wurzel, "newsletter freigeben")
+    assert block is not None and "app/versand.py:1" in block
+    assert "Zuletzt bearbeitet und Nachbarn:" not in block
+
+
+def test_kontext_aus_verlauf_bei_kurzem_prompt(git_repo, heim, tmp_path):
+    _aufbauen_kontext(git_repo)
+    tr = _transkript(tmp_path, str(git_repo.wurzel / "app" / "versand.py"))
+    block = kontextblock(git_repo.wurzel, "ja weiter", transkript=tr)
+    assert block is not None
+    kontext = _abschnitt(block, "Zuletzt bearbeitet und Nachbarn:")
+    assert kontext and kontext[0].startswith("- app/versand.py") and "zuletzt bearbeitet" in kontext[0]
+    assert any(z.startswith("- app/cron.py") and "Nachbar" in z for z in kontext)  # 1-Hop ueber Import/Aufruf
+    assert not any("app/sonst.py" in z for z in kontext)
+    assert "Regel dienst" in kontext[0]  # Strukturregel mit ort app/ greift
+    assert GEHEIM not in block
+
+
+def test_kontext_und_prompt_treffer_nach_oben(git_repo, heim, tmp_path):
+    _aufbauen_kontext(git_repo)
+    ohne = _abschnitt(kontextblock(git_repo.wurzel, "newsletter freigeben") or "", "Stellen:")
+    assert ohne[0].startswith("- app/versand.py")  # bm25: kuerzerer Name zuerst
+    tr = _transkript(tmp_path, str(git_repo.wurzel / "app" / "archiv.py"))
+    block = kontextblock(git_repo.wurzel, "newsletter freigeben", transkript=tr)
+    assert block is not None
+    stellen = _abschnitt(block, "Stellen:")
+    assert stellen[0].startswith("- app/archiv.py") and "zuletzt bearbeitet" in stellen[0]
+    assert not any("app/archiv.py" in z for z in _abschnitt(block, "Zuletzt bearbeitet und Nachbarn:"))
+
+
+def test_transkript_ende_sieht_nur_verlauf_davor(git_repo, heim, tmp_path):
+    _aufbauen_kontext(git_repo)
+    tr = _transkript(tmp_path, str(git_repo.wurzel / "app" / "versand.py"))
+    erste = len(tr.read_bytes().split(b"\n")[0]) + 1  # nur die Prompt-Zeile liegt davor
+    assert kontextblock(git_repo.wurzel, "ja weiter", transkript=tr, transkript_ende=erste) is None
+    assert kontextblock(git_repo.wurzel, "ja weiter", transkript=tr, transkript_ende=None) is not None
+
+
+def test_verlauf_ausserhalb_des_index_schweigt(git_repo, heim, tmp_path):
+    _aufbauen_kontext(git_repo)
+    tr = _transkript(tmp_path, str(tmp_path / "anderswo.py"), str(git_repo.wurzel / "app" / "neu_untracked.py"),
+                     str(git_repo.wurzel / "app"))
+    assert kontextblock(git_repo.wurzel, "ja weiter", transkript=tr) is None
+    assert kontextblock(git_repo.wurzel, "ja weiter", transkript=tmp_path / "fehlt.jsonl") is None
+
+
+def test_zweiter_checkout_warnung(git_repo, heim, tmp_path):
+    _aufbauen_kontext(git_repo)
+    wt = git_repo.wurzel / ".worktrees" / "wt-feature" / "app" / "versand.py"
+    tr = _transkript(tmp_path, str(wt))
+    block = kontextblock(git_repo.wurzel, "ja weiter", transkript=tr)
+    assert block is not None
+    warnung = [z for z in block.splitlines() if "zweiter Checkout" in z]
+    assert len(warnung) == 1 and "wt-feature" in warnung[0] and "app/versand.py" in warnung[0]
+    assert _abschnitt(block, "Zuletzt bearbeitet und Nachbarn:")[0].startswith("- app/versand.py")
+
+
+def test_geaenderte_kontextdatei_nur_name(git_repo, heim, tmp_path):
+    _aufbauen_kontext(git_repo)
+    git_repo.datei("app/versand.py", "# fremde Aenderung\ndef newsletter_freigeben():\n    return 2\n")
+    tr = _transkript(tmp_path, str(git_repo.wurzel / "app" / "versand.py"))
+    block = kontextblock(git_repo.wurzel, "ja weiter", transkript=tr)
+    assert block is not None
+    kontext = _abschnitt(block, "Zuletzt bearbeitet und Nachbarn:")
+    assert "- app/versand.py – seit Index geändert" in kontext
+    assert any(z.startswith("- app/cron.py") for z in kontext)
+
+
+def test_nur_geaenderte_kontextdatei_ohne_frisches_schweigt(git_repo, heim, tmp_path):
+    """Ruling U6: ein Block nur aus Namen ("seit Index geändert") wird nicht ausgegeben."""
+    _aufbauen_kontext(git_repo)
+    git_repo.datei("app/sonst.py", "# anders\n")
+    tr = _transkript(tmp_path, str(git_repo.wurzel / "app" / "sonst.py"))
+    assert kontextblock(git_repo.wurzel, "ja weiter", transkript=tr) is None
+
+
+def test_frist_inklusive_transkript(git_repo, heim, tmp_path, monkeypatch):
+    import time as _time
+    from selbstbild.hooks import einspeisung
+
+    _aufbauen_kontext(git_repo)
+    tr = _transkript(tmp_path, str(git_repo.wurzel / "app" / "versand.py"))
+    echt = einspeisung.letzte_dateien
+
+    def langsam(*a, **kw):
+        _time.sleep(0.4)
+        return echt(*a, **kw)
+
+    monkeypatch.setattr(einspeisung, "letzte_dateien", langsam)
+    assert kontextblock(git_repo.wurzel, "ja weiter", transkript=tr, frist_s=0.3) is None
+
+
+def test_main_reicht_transkript_durch(git_repo, heim, tmp_path):
+    _aufbauen_kontext(git_repo)
+    tr = _transkript(tmp_path, str(git_repo.wurzel / "app" / "versand.py"))
+    env = dict(os.environ, PYTHONPATH=str(SRC), SELBSTBILD_HOME=str(heim))
+    eingabe = {"session_id": "x", "transcript_path": str(tr), "cwd": str(git_repo.wurzel),
+               "hook_event_name": "UserPromptSubmit", "prompt": "ja weiter"}
+    erg = subprocess.run([sys.executable, "-m", "selbstbild.hooks.einspeisung"], cwd=git_repo.wurzel, env=env,
+                         input=json.dumps(eingabe).encode(), capture_output=True, timeout=60)
+    assert erg.returncode == 0
+    text = json.loads(erg.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "app/versand.py" in text and GEHEIM not in text
+    eingabe["transcript_path"] = 17  # falscher Typ -> wie ohne Verlauf (schwacher Prompt -> still)
+    erg = subprocess.run([sys.executable, "-m", "selbstbild.hooks.einspeisung"], cwd=git_repo.wurzel, env=env,
+                         input=json.dumps(eingabe).encode(), capture_output=True, timeout=60)
+    assert erg.returncode == 0 and erg.stdout == b""
+
+
+def test_budget_mit_kontext(git_repo, heim, tmp_path):
+    regeln = "struktur:\n" + "".join(
+        f"  - art: dienst{i}\n    ort: app/\n    pflicht: [README.md]\n" for i in range(600))
+    _aufbauen_kontext(git_repo)
+    git_repo.datei("selbstbild.yaml", regeln)
+    tr = _transkript(tmp_path, *[str(git_repo.wurzel / "app" / f) for f in ("versand.py", "cron.py", "archiv.py")])
+    block = kontextblock(git_repo.wurzel, "newsletter freigeben", transkript=tr)
+    assert block is not None and len(block) <= 8000
+
+
+def test_trifft_wortgrenze_und_akzent():
+    from selbstbild.hooks.einspeisung import _ohne_akzent, _trifft
+
+    text = _ohne_akzent("Änderung im newsletter_freigeben; Newsletterarchiv")
+    assert _trifft(_ohne_akzent("änderung"), text) and _trifft("anderung", text)
+    assert _trifft("newsletter", text) and _trifft("freigeben", text)  # '_' trennt wie unicode61
+    assert not _trifft("archiv", text) and not _trifft("news", text)
+
+
+def test_schwelle_begruendet():
+    import math
+    from selbstbild.hooks import einspeisung
+
+    assert einspeisung.MIN_TOKENS_STARK == 2
+    assert einspeisung.BM25_STARK == pytest.approx(-2 * math.log(1000))
