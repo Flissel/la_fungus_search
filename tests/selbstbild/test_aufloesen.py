@@ -505,3 +505,12 @@ def test_barrel_stern_als_namensraum():
     assert rufe[(zeigen, id_symbol("r", "ui/x.ts", "X"))] is False  # Y -> X
     assert rufe[(zeigen, id_symbol("r", "ui/y.ts", "Beliebig"))] is False  # nur ueber ns.Beliebig
     assert len([k for k in rufe if k[0] == zeigen]) == 2  # weder `Beliebig` noch `X` allein loesen auf
+
+
+def test_dekoriert_als_symbol_attr_sortiert_s10():
+    s = Symbol("f", "funktion", 1, 2, "d-f", ("staticmethod", "kopf.timer", "kopf.timer"))
+    erg = {("r", "a.py"): DateiErgebnis(symbole=(s, sym("g")))}
+    k = knoten_je_id(aufloesen(erg, {})[0])
+    assert attr(k[id_symbol("r", "a.py", "f")]) == {"dekoriert": "kopf.timer,staticmethod",
+                                                     "symbolart": "funktion"}
+    assert "dekoriert" not in attr(k[id_symbol("r", "a.py", "g")])

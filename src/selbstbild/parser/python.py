@@ -91,6 +91,27 @@ def _punktname(n: Node) -> str | None:
     return None
 
 
+def _dekorator_name(d: Node) -> str:
+    """Kopf eines Decorators ohne Argumente (Ruling S10): `@kopf.timer("x")` -> `kopf.timer`."""
+    ausdruck = next((k for k in d.named_children if k.type != "comment"), None)
+    if ausdruck is None:
+        return ""
+    if ausdruck.type == "call":
+        ausdruck = ausdruck.child_by_field_name("function") or ausdruck
+    name = _punktname(ausdruck)
+    if name is None:  # z. B. `@x[0]`: Text bis zur ersten Klammer, ohne Leerraum und Kommas
+        name = re.sub(r"[\s,]", "", _text(ausdruck).split("(", 1)[0])
+    return name
+
+
+def _dekoratoren(n: Node) -> tuple[str, ...]:
+    """Decorator-Koepfe einer Funktions-/Klassendefinition in Quellreihenfolge."""
+    eltern = n.parent
+    if eltern is None or eltern.type != "decorated_definition":
+        return ()
+    return tuple(x for x in (_dekorator_name(k) for k in eltern.children if k.type == "decorator") if x)
+
+
 def _ist_testdatei(pfad: str) -> bool:
     name = posixpath.basename(pfad.replace("\\", "/"))
     return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
@@ -203,7 +224,7 @@ class _Sammler:
                 else:
                     art = "methode" if in_klasse else "funktion"
                 self.symbole.append(Symbol(
-                    qual, art, n.start_point[0] + 1, n.end_point[0] + 1, _digest(n)))
+                    qual, art, n.start_point[0] + 1, n.end_point[0] + 1, _digest(n), _dekoratoren(n)))
                 self._test_einstieg(kurz, art, scope, n)
                 for k in n.children:
                     self.besuche(k, qual, t == "class_definition")

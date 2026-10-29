@@ -358,3 +358,11 @@ def test_stand_ordner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert o.parent == tmp_path / "home" and o.is_dir()
     assert re.fullmatch(r"proj-[0-9a-f]{12}", o.name)
     assert stand_ordner(tmp_path, "proj") == o
+
+
+def test_cache_roundtrip_mit_dekoratoren_s10(tmp_path: Path) -> None:
+    e = DateiErgebnis(symbole=(Symbol("f", "funktion", 1, 3, "d1", ("app.get", "property")),
+                               Symbol("g", "funktion", 4, 5, "d2")))
+    with Speicher(tmp_path / "g.sqlite") as s:
+        s.cache_setzen("b1", "python", e, "a.py")
+        assert s.cache_holen("b1", "python", "a.py") == e

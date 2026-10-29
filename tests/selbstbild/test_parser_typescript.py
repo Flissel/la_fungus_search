@@ -104,3 +104,20 @@ def test_express_handler_member_und_wrapper():
          b'cache.delete("/tmp");\n')
     e = parse_ts("srv.js", q, "javascript")
     assert [(x.art, x.zeile) for x in e.einstiege] == [("route", 1), ("route", 2)]
+
+
+def test_dekoratoren_als_namen_ohne_argumente_s10():
+    src = b'''
+@Component({a: 1})
+export class A {
+  @Input() x = () => 1;
+  @HostListener("click") onClick() {}
+  @a.b.c m() {}
+  plain() {}
+}
+@dec class B {}
+function f() {}
+'''
+    deko = {s.qualname: s.dekoriert for s in parse_ts("src/a.ts", src, "typescript").symbole}
+    assert deko == {"A": ("Component",), "A.x": ("Input",), "A.onClick": ("HostListener",),
+                    "A.m": ("a.b.c",), "A.plain": (), "B": ("dec",), "f": ()}

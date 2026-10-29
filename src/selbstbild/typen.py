@@ -101,6 +101,8 @@ class Symbol:
     zeile_von: int
     zeile_bis: int
     digest: str
+    # Ruling S10: Decorator-Koepfe ohne Argumente in Quellreihenfolge (`kopf.timer`, `app.get`)
+    dekoriert: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

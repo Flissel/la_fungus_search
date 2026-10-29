@@ -320,8 +320,10 @@ def aufloesen(
         g.kante_neu(Kante("enthaelt", id_repo(repo), did, True, None))
         for s in erg.symbole:
             sid = id_symbol(repo, pfad, s.qualname)
-            attr = _einstieg_attr(symbol_arten.get(s.qualname, set()), erg.fehlerhaft,
-                                  {"symbolart": s.art})
+            werte = {"symbolart": s.art}
+            if s.dekoriert:  # Ruling S10: Decorator-Koepfe, sortiert und eindeutig
+                werte["dekoriert"] = ",".join(sorted(set(s.dekoriert)))
+            attr = _einstieg_attr(symbol_arten.get(s.qualname, set()), erg.fehlerhaft, werte)
             g.knoten_neu(Knoten(sid, "symbol", s.qualname, Beleg(repo, pfad, s.zeile_von, s.qualname, s.digest), attr))
             g.kante_neu(Kante("enthaelt", did, sid, True, None))
         for o in erg.sql:

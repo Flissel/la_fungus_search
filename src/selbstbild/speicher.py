@@ -65,7 +65,8 @@ def _kante_von(d: Any) -> Kante:
 
 def _ergebnis_zu(e: DateiErgebnis) -> Any:
     return {
-        "symbole": [[s.qualname, s.art, s.zeile_von, s.zeile_bis, s.digest] for s in e.symbole],
+        "symbole": [[s.qualname, s.art, s.zeile_von, s.zeile_bis, s.digest, list(s.dekoriert)]
+                    for s in e.symbole],
         "importe": [[i.modul, list(i.namen), i.zeile, i.relativ, [list(u) for u in i.umbenennungen]] for i in e.importe],
         "aufrufe": [[a.in_symbol, a.name, a.zeile] for a in e.aufrufe],
         "env": [[x.name, x.zeile, x.in_symbol] for x in e.env],
@@ -81,7 +82,7 @@ def _ergebnis_zu(e: DateiErgebnis) -> Any:
 
 def _ergebnis_von(d: Any) -> DateiErgebnis:
     return DateiErgebnis(
-        symbole=tuple(Symbol(*s) for s in d["symbole"]),
+        symbole=tuple(Symbol(*s[:5], tuple(s[5]) if len(s) > 5 else ()) for s in d["symbole"]),
         importe=tuple(Import(i[0], tuple(i[1]), i[2], i[3], tuple((u[0], u[1]) for u in (i[4] if len(i) > 4 else ()))) for i in d["importe"]),
         aufrufe=tuple(Aufruf(*a) for a in d["aufrufe"]),
         env=tuple(EnvLesung(*x) for x in d["env"]),

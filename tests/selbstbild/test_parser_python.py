@@ -137,3 +137,26 @@ def test_update_set_und_join():
     q = b'z = "UPDATE a.b SET x=1"\nw = "select 1 from t join u on 1"\n'
     namen = {t[0] for t in parse_python("a.py", q).tabellen_zugriffe}
     assert namen == {"a.b", "t", "u"}
+
+
+def test_dekoratoren_als_namen_ohne_argumente_s10():
+    src = b'''
+import kopf
+
+@kopf.timer("x", interval=5)
+@property
+def zeit(): pass
+
+class K:
+    @staticmethod
+    @app.get("/x")
+    def m(self): pass
+
+    def roh(self): pass
+
+@marketplace.command()
+class Befehl: pass
+'''
+    deko = {s.qualname: s.dekoriert for s in parse_python("a/b.py", src).symbole}
+    assert deko == {"zeit": ("kopf.timer", "property"), "K": (), "K.m": ("staticmethod", "app.get"),
+                    "K.roh": (), "Befehl": ("marketplace.command",)}

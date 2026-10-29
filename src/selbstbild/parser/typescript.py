@@ -57,6 +57,33 @@ def _punktname(n: Node) -> str | None:
     return None
 
 
+def _dekorator_name(d: Node) -> str:
+    """Kopf eines Decorators ohne Argumente (Ruling S10): `@HostListener("x")` -> `HostListener`."""
+    ausdruck = next((k for k in d.named_children if k.type != "comment"), None)
+    if ausdruck is None:
+        return ""
+    if ausdruck.type == "call_expression":
+        ausdruck = ausdruck.child_by_field_name("function") or ausdruck
+    name = _punktname(ausdruck)
+    if name is None:
+        name = re.sub(r"[\s,]", "", _text(ausdruck).split("(", 1)[0])
+    return name
+
+
+def _dekoratoren(n: Node) -> tuple[str, ...]:
+    """Decorators einer Deklaration in Quellreihenfolge: vorangehende Geschwister (TS-Klassenrumpf,
+    `@d export class`) und eigene Kinder (Klassen, Felder, JS-Methoden)."""
+    vorne: list[Node] = []
+    v = n.prev_named_sibling
+    while v is not None and v.type in ("decorator", "comment"):
+        if v.type == "decorator":
+            vorne.append(v)
+        v = v.prev_named_sibling
+    knoten = list(reversed(vorne))  # deckt auch `@d export class` (Decorator im export-Statement)
+    knoten += [k for k in n.children if k.type == "decorator"]
+    return tuple(x for x in (_dekorator_name(k) for k in knoten) if x)
+
+
 class _Sammler:
     def __init__(self, pfad: str) -> None:
         norm = pfad.replace("\\", "/")
@@ -208,7 +235,8 @@ class _Sammler:
     def _symbol(self, n: Node, kurz: str, scope: str | None,
                 art: Literal["funktion", "klasse", "methode"]) -> str:
         qual = kurz if scope is None else f"{scope}.{kurz}"
-        self.symbole.append(Symbol(qual, art, n.start_point[0] + 1, n.end_point[0] + 1, _digest(n)))
+        self.symbole.append(Symbol(qual, art, n.start_point[0] + 1, n.end_point[0] + 1, _digest(n),
+                                   _dekoratoren(n)))
         return qual
 
     def _route_einstieg(self, kurz: str, scope: str | None, n: Node) -> None:

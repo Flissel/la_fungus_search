@@ -17,7 +17,7 @@ from functools import lru_cache
 import tree_sitter
 import tree_sitter_language_pack as _pack
 
-PARSER_VERSION: int = 3  # 3: Stufe 2 Task 1 (Express-Handler, Re-Export-Namen); 2: Final-Fix-Welle Stufe 1 (Tabellen, TS-Re-Exporte, ruft_http, Beleg-Digests)
+PARSER_VERSION: int = 4  # 4: Stufe 2 Final-Fix-Welle (Decorator-Namen, Ruling S10); 3: Stufe 2 Task 1 (Express-Handler, Re-Export-Namen); 2: Final-Fix-Welle Stufe 1 (Tabellen, TS-Re-Exporte, ruft_http, Beleg-Digests)
 GRAMMATIK_VERSION: str = "1.22.1"  # = gepinnte tree-sitter-language-pack-Version
 
 SPRACHEN: dict[str, tuple[str, ...]] = {
