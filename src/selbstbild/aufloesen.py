@@ -30,7 +30,10 @@ _TS_ENDUNGEN = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
 _TS_AUFLOESUNG = (".ts", ".tsx", ".js", ".jsx", ".mjs")
 _HOOK_ORDNER = ("/.githooks/", "/.claude/hooks/")
 # S16: Namen, die ohne Import zur Sprache gehören; für sie gibt es keinen Namens-Rückfall
-PY_BUILTINS: frozenset[str] = frozenset(dir(builtins))
+# Ohne die Namen, die `site` beim Start einsetzt (fehlen z. B. mit `python -S`); so haengt die Liste nicht davon ab,
+# wie der Interpreter gestartet wurde. Ein gleichnamiges Symbol (`def help()`) bekommt den unsicheren Rueckfall.
+_SITE_NAMEN = frozenset({"exit", "quit", "help", "copyright", "credits", "license"})
+PY_BUILTINS: frozenset[str] = frozenset(dir(builtins)) - _SITE_NAMEN
 JS_GLOBALE: frozenset[str] = frozenset(
     "Array Object String Number Boolean JSON Math Promise Date RegExp Map Set WeakMap WeakSet "
     "Symbol Error console parseInt parseFloat isNaN setTimeout setInterval clearTimeout "

@@ -569,3 +569,18 @@ def test_js_global_ohne_rueckfall():
         # Python kennt `fetch` nicht als Global: der Rückfall bleibt dort
         (id_symbol("r", "c.py", "k"), id_symbol("r", "b.ts", "fetch")): False,
     }
+
+
+def test_py_builtins_ohne_site_namen():
+    """Minor 14: `site` setzt exit/quit/help/... nur je nach Interpreter-Start; sie sind keine Sprach-Builtins."""
+    from selbstbild.aufloesen import PY_BUILTINS
+
+    assert not PY_BUILTINS & {"exit", "quit", "help", "copyright", "credits", "license"}
+    assert {"list", "print", "len", "open", "isinstance", "ValueError"} <= PY_BUILTINS
+    erg = {
+        ("r", "a.py"): DateiErgebnis(symbole=(sym("g"),), aufrufe=(Aufruf("g", "help", 3),)),
+        ("r", "b.py"): DateiErgebnis(symbole=(sym("help"),)),
+    }
+    _, kanten = aufloesen(erg, {})
+    assert kanten_von(kanten, "ruft_auf") == {
+        (id_symbol("r", "a.py", "g"), id_symbol("r", "b.py", "help")): False}
