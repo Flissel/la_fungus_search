@@ -235,6 +235,22 @@ def _pruefen(args: argparse.Namespace) -> int:
     return 1 if verstoesse else 0
 
 
+def _skill(args: argparse.Namespace) -> int:
+    from selbstbild.skill import skill_neuer_space
+
+    if args.ziel.exists() and not args.ueberschreiben:
+        return _fehler(f"Skill existiert schon: {args.ziel}. Nicht ueberschrieben; zum Neu-Erzeugen"
+                       " --ueberschreiben angeben.", 2)
+    text = skill_neuer_space(args.wurzel)
+    try:
+        args.ziel.parent.mkdir(parents=True, exist_ok=True)
+        args.ziel.write_bytes(text.encode("utf-8"))  # LF auch unter Windows
+    except OSError as e:
+        return _fehler(f"Skill nicht schreibbar: {args.ziel} ({type(e).__name__}: {e.strerror})", 2)
+    _ausgeben({"ziel": str(args.ziel), "zeichen": len(text)})
+    return 0
+
+
 def _text_ausgeben(text: str) -> None:
     """UTF-8 ueber stdout.buffer; ohne buffer ersatzweise backslashreplace (nie ein UnicodeEncodeError)."""
     puffer = getattr(sys.stdout, "buffer", None)
@@ -301,6 +317,11 @@ def main(argv: list[str] | None = None) -> int:
     su.add_argument("--top", type=int, default=10)
     pr = befehle.add_parser("pruefen", help="CI: fehlende Pflichtteile der Strukturregeln als JSON, Exit 1 bei Verstoessen")
     pr.add_argument("wurzel", type=Path)
+    sk = befehle.add_parser("skill", help="Claude-Code-Skill aus Regeln und Stand erzeugen (neuer-space)")
+    sk.add_argument("name", choices=["neuer-space"])
+    sk.add_argument("wurzel", type=Path)
+    sk.add_argument("ziel", type=Path)
+    sk.add_argument("--ueberschreiben", action="store_true", help="vorhandene Zieldatei ersetzen")
     sm = befehle.add_parser("suche-messen", help="recall@10 und MRR der Suche gegen KETTEN- und Transkript-Gold")
     sm.add_argument("wurzel", type=Path)
     sm.add_argument("--ollama", action="append", default=[], help="Ollama-URL (paarweise mit --modell)")
@@ -351,6 +372,8 @@ def main(argv: list[str] | None = None) -> int:
         return _pruefen(args)
     if args.befehl == "hooks":
         return _hooks(args)
+    if args.befehl == "skill":
+        return _skill(args)
     if args.befehl == "suche-messen":
         return _suche_messen(args)
     return _status(args.wurzel)
