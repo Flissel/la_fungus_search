@@ -20,7 +20,7 @@ from ..analyse.lader import ANALYSE_VERSION, GraphDaten, StandOhneGraph, StandUn
 from ..analyse.lauf import _stand_meta, parameter
 from ..quelle import Baum, BlobLeser, baum_lesen
 
-INDEX_VERSION: int = 1
+INDEX_VERSION: int = 2  # 2: doku_seite traegt ihren Blob (Frische-Pruefung im Hook)
 
 _ARTEN = frozenset({"datei", "symbol", "route", "mcp_werkzeug", "tabelle", "dienst", "env", "doku_seite"})
 # Reihenfolge wie `gespeicherte_analyse`: mit Kolonie bevorzugt, sonst ohne.
@@ -170,7 +170,7 @@ def _bauen(d: GraphDaten, wurzel: Path, stand: Path, ziel: Path) -> dict[str, in
                     repo, pfad, zeile = k.beleg.repo, k.beleg.pfad, k.beleg.zeile
                 datei = i if k.art == "datei" else (datei_von(i) if k.art == "symbol" else None)
                 datei_attr = d.knoten[datei].attr if datei is not None and datei in d.knoten else ()
-                blob = blob_von.get((repo, pfad)) if k.art in ("datei", "symbol") and repo and pfad else None
+                blob = blob_von.get((repo, pfad)) if k.art in ("datei", "symbol", "doku_seite") and repo and pfad else None
                 text = ""
                 if k.art == "datei":
                     text = " ".join(zerlegen(n) for n in sorted(symbole_von.get(i, ())))

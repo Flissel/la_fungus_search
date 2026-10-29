@@ -15,6 +15,7 @@ import os
 import re
 import sqlite3
 import sys
+import threading
 import time
 from collections.abc import Callable
 from contextlib import closing
@@ -29,6 +30,9 @@ MAX_STELLEN = 8
 MAX_DOKU = 3
 MAX_TOKENS = 12
 _KANDIDATEN = 40
+MAX_PROMPT = 20_000
+MAX_GEAENDERT = 3
+STANDARD_MAX_KB = 512
 
 # Spiegel von suche.abfrage (Stoppwoerter DE/EN, Camel-/snake-Zerlegung, >= 3 Zeichen, <= 12 Tokens).
 _STOPP = frozenset("""
@@ -53,24 +57,44 @@ class _Frist(Exception):
 
 
 def _tokens(text: str) -> tuple[str, ...]:
+    """Nur die ersten 20.000 Zeichen des Prompts; Sammeln endet bei MAX_TOKENS (kein quadratischer Aufwand)."""
     aus: list[str] = []
-    for wort in _NICHT_WORT.split(_GRENZE.sub(" ", text)):
+    gesehen: set[str] = set()
+    for wort in _NICHT_WORT.split(_GRENZE.sub(" ", text[:MAX_PROMPT])):
         w = wort.lower()
-        if len(w) >= 3 and w not in _STOPP and w not in aus:
+        if len(w) >= 3 and w not in _STOPP and w not in gesehen:
+            gesehen.add(w)
             aus.append(w)
-    return tuple(aus[:MAX_TOKENS])
+            if len(aus) >= MAX_TOKENS:
+                break
+    return tuple(aus)
 
 
 def _fts(tokens: tuple[str, ...]) -> str:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in tokens)
 
 
-def _ro(db: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
+def _ro(db: Path, pruefen: Callable[[], None]) -> sqlite3.Connection:
+    """Schreibgeschuetzt oeffnen; sqlite bricht ab (OperationalError), sobald `pruefen` die Frist meldet."""
+    c = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
+
+    def fortschritt() -> int:
+        try:
+            pruefen()
+        except _Frist:
+            return 1
+        return 0
+
+    c.set_progress_handler(fortschritt, 1000)
+    return c
 
 
 def _git_head(wurzel: Path) -> str | None:
-    """HEAD-Commit aus den Git-Dateien (kein Prozess); None, wenn irgendetwas unklar ist."""
+    """HEAD-Commit aus den Git-Dateien (kein Prozess); None, wenn irgendetwas unklar ist.
+
+    Erwartet `.git` (Ordner oder gitdir-Datei) direkt in der Repo-Wurzel; liegt es woanders, ist das Ergebnis
+    None und der Index gilt als veraltet (fail-closed).
+    """
     try:
         git = wurzel / ".git"
         gemeinsam = git
@@ -103,9 +127,9 @@ def _git_head(wurzel: Path) -> str | None:
         return None
 
 
-def _graph_meta(graph: Path) -> dict[str, str]:
+def _graph_meta(graph: Path, pruefen: Callable[[], None]) -> dict[str, str]:
     """Schluessel/Werte von graph.sqlite sind JSON-kodiert (Speicher._dumps)."""
-    with closing(_ro(graph)) as c:
+    with closing(_ro(graph, pruefen)) as c:
         roh = c.execute("SELECT k, v FROM meta").fetchall()
     aus: dict[str, str] = {}
     for k, v in roh:
@@ -167,6 +191,8 @@ def kontextblock(cwd: Path, prompt: str, *, frist_s: float = FRIST_S) -> str | N
         return _block(Path(cwd), prompt, pruefen)
     except _Frist:
         return None
+    except sqlite3.OperationalError:  # u. a. vom Fortschritts-Handler abgebrochene Abfrage; auch Gesperrt/Defekt
+        return None
 
 
 def _block(cwd: Path, prompt: str, pruefen: Callable[[], None]) -> str | None:
@@ -188,9 +214,13 @@ def _block(cwd: Path, prompt: str, pruefen: Callable[[], None]) -> str | None:
         return None
     pruefen()
 
-    graph = _graph_meta(stand)
-    with closing(_ro(stand.parent / "suche.sqlite")) as c:
+    graph = _graph_meta(stand, pruefen)
+    with closing(_ro(stand.parent / "suche.sqlite", pruefen)) as c:
         meta = dict(c.execute("SELECT k, v FROM meta"))
+        commit = meta.get("commit", "")
+        # Ruling U6: Index aelter/anders als der Stand -> stille Ausgabe.
+        if not commit or commit != graph.get("commit") or meta.get("gemessen_um", "") != graph.get("gemessen_um", ""):
+            return None
         pruefen()
         zeilen = c.execute(
             "SELECT e.id, e.art, e.pfad, e.zeile, e.blob, e.lebendigkeit, e.tot, e.bereich, e.warnung, e.repo"
@@ -200,44 +230,57 @@ def _block(cwd: Path, prompt: str, pruefen: Callable[[], None]) -> str | None:
     if not zeilen:
         return None
 
-    commit = meta.get("commit", "")
-    frisch = (bool(commit) and commit == graph.get("commit")
-              and meta.get("gemessen_um", "") == graph.get("gemessen_um", "")
-              and commit == _git_head(wurzel))
+    frisch = commit == _git_head(wurzel)
     name = graph.get("name")
+    try:
+        max_kb = int(regeln_lesen((wurzel / REGELDATEI).read_text(encoding="utf-8")).get("max_dateigroesse_kb",
+                                                                                          STANDARD_MAX_KB))
+    except OSError:
+        max_kb = STANDARD_MAX_KB
+
+    def datei_frisch(repo: str | None, pfad: str | None, blob: str | None) -> bool:
+        """Frische-Regel: Blob-SHA im Arbeitsbaum (roh oder CRLF->LF) == Index-Blob. Zu grosse Dateien gelten
+        als geaendert, ohne gelesen zu werden."""
+        ziel = _pfad_im_arbeitsbaum(wurzel, repo, pfad, name)
+        if ziel is None or not blob:
+            return False
+        if ziel not in cache:
+            try:
+                cache[ziel] = None if ziel.stat().st_size > max_kb * 1024 else blob_sha(ziel)
+            except OSError:
+                cache[ziel] = None
+        shas = cache[ziel]
+        return shas is not None and blob in shas
 
     cache: dict[Path, tuple[str, str] | None] = {}
     stellen: list[str] = []
     doku: list[str] = []
+    geaendert: list[str] = []
     bereiche: list[str] = []
     gesehen: set[str] = set()
     for (i, art, pfad, zeile, blob, leb, tot, bereich, warnung, repo) in zeilen:
         pruefen()
-        if i in gesehen:
+        if i in gesehen or art not in ("datei", "symbol", "doku_seite") or not pfad:
             continue
         gesehen.add(i)
+        ort = pfad if "#" not in i else f"{i.split('#', 1)[1][:120]} ({pfad})"
         if art == "doku_seite":
-            if pfad and len(doku) < MAX_DOKU:
+            if len(doku) >= MAX_DOKU:
+                continue
+            if datei_frisch(repo, pfad, blob):
                 doku.append(f"- {pfad}")
+            elif len(geaendert) < MAX_GEAENDERT:
+                geaendert.append(f"- {ort} – seit Index geändert")
             continue
-        if art not in ("datei", "symbol") or len(stellen) >= MAX_STELLEN or not pfad:
+        if not datei_frisch(repo, pfad, blob):
+            if len(geaendert) < MAX_GEAENDERT:
+                geaendert.append(f"- {ort} – seit Index geändert")
             continue
-        ziel = _pfad_im_arbeitsbaum(wurzel, repo, pfad, name)
-        shas = None
-        if ziel is not None and blob:
-            if ziel not in cache:
-                try:
-                    cache[ziel] = blob_sha(ziel)
-                except OSError:
-                    cache[ziel] = None
-            shas = cache[ziel]
-        ort = i.split("#", 1)[1][:120] if "#" in i else pfad
-        if shas is None or blob not in shas:
-            stellen.append(f"- {ort} ({pfad}) – seit Index geändert")
+        if len(stellen) >= MAX_STELLEN:
             continue
         text = f"- {pfad}:{zeile}" if zeile else f"- {pfad}"
         if "#" in i:
-            text += f" {ort}"
+            text += " " + i.split("#", 1)[1][:120]
         if leb is not None:
             text += f" [Lebendigkeit {float(leb):.2f}]"
         w = _warnungen(tot, warnung)
@@ -246,7 +289,7 @@ def _block(cwd: Path, prompt: str, pruefen: Callable[[], None]) -> str | None:
         stellen.append(text)
         if bereich and bereich not in bereiche and len(bereiche) < MAX_BEREICHE:
             bereiche.append(bereich)
-    if not stellen and not doku:
+    if not stellen and not doku:  # Ruling U6: ohne Frisch-Treffer nichts
         return None
 
     aus = [f"Selbstbild (Commit {commit[:7]}, Index {'frisch' if frisch else 'veraltet'})"]
@@ -256,6 +299,8 @@ def _block(cwd: Path, prompt: str, pruefen: Callable[[], None]) -> str | None:
         aus += ["Stellen:", *stellen]
     if doku:
         aus += ["Doku:", *doku]
+    if geaendert:
+        aus += ["Seit Index geändert:", *geaendert]
     regeln: list[str] = []
     for w in wurzeln:
         try:
@@ -283,7 +328,20 @@ def main() -> int:
         prompt, cwd = eingabe.get("prompt"), eingabe.get("cwd")
         if isinstance(prompt, str) and isinstance(cwd, str):
             rest = FRIST_S - (time.monotonic() - start)
-            block = kontextblock(Path(cwd), prompt, frist_s=rest)
+            ergebnis: list[str | None] = []
+
+            def arbeit() -> None:
+                try:
+                    ergebnis.append(kontextblock(Path(cwd), prompt, frist_s=rest))
+                except Exception:  # noqa: BLE001
+                    pass
+
+            # Harter Stopp: ein Daemon-Thread, auf den hoechstens bis zur Frist gewartet wird (blockierende
+            # Dateizugriffe, die keinen Fristtest erreichen, koennen den Hook so nicht aufhalten).
+            t = threading.Thread(target=arbeit, daemon=True)
+            t.start()
+            t.join(max(0.0, rest))
+            block = ergebnis[0] if ergebnis and not t.is_alive() else None
             if block and time.monotonic() - start < FRIST_S:
                 antwort = {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": block}}
                 sys.stdout.buffer.write(json.dumps(antwort).encode("ascii"))

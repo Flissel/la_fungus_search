@@ -53,13 +53,14 @@ def stand_fuer(wurzel: Path) -> Path | None:
 
 
 def blob_sha(datei: Path) -> tuple[str, str]:
-    """Git-Blob-SHA1 der Datei wie gelesen und nach CRLF->LF."""
+    """Git-Blob-SHA1 der Datei wie gelesen und nach CRLF->LF (eine Lesung; LF-Kopie nur, wenn CRLF vorkommt)."""
     daten = Path(datei).read_bytes()
-
-    def sha(b: bytes) -> str:
-        return hashlib.sha1(b"blob %d\0" % len(b) + b).hexdigest()
-
-    return sha(daten), sha(daten.replace(b"\r\n", b"\n"))
+    roh = hashlib.sha1(b"blob %d\0" % len(daten) + daten).hexdigest()
+    if b"\r\n" not in daten:
+        return roh, roh
+    lf = daten.replace(b"\r\n", b"\n")
+    del daten
+    return roh, hashlib.sha1(b"blob %d\0" % len(lf) + lf).hexdigest()
 
 
 _ERLAUBT = ("art", "ort", "pflicht", "verboten", "hinweis")
@@ -89,13 +90,14 @@ def _fluss(roh: str) -> list[str]:
 
 
 def regeln_lesen(yaml_text: str) -> dict:
-    """Minimaler Leser fuer `name` und `struktur[*].{art,ort,pflicht,verboten,hinweis}`; sonst `{}`.
+    """Minimaler Leser fuer `name`, `max_dateigroesse_kb` und `struktur[*].{art,ort,pflicht,verboten,hinweis}`; sonst `{}`.
 
     Kann nur Skalare, Flow-Listen (`[a, b]`) und Block-Listen. Alles andere (Anker, Mehrzeiler, verschachtelte
     Strukturen innerhalb der Regeln) fuehrt zu `{}` und damit zu keiner Regelzeile im Hook.
     """
     try:
         name: str | None = None
+        max_kb: int | None = None
         regeln: list[dict] = []
         im_struktur = False
         akt: dict | None = None
@@ -112,6 +114,8 @@ def regeln_lesen(yaml_text: str) -> dict:
                     raise _Unbekannt
                 if m.group(1) == "name" and m.group(2):
                     name = _skalar(m.group(2))
+                elif m.group(1) == "max_dateigroesse_kb" and m.group(2):
+                    max_kb = int(_skalar(m.group(2)))
                 elif m.group(1) == "struktur":
                     if m.group(2):
                         raise _Unbekannt
@@ -149,10 +153,12 @@ def regeln_lesen(yaml_text: str) -> dict:
         ergebnis: dict = {}
         if name:
             ergebnis["name"] = name
+        if max_kb is not None:
+            ergebnis["max_dateigroesse_kb"] = max_kb
         if regeln:
             if any("art" not in r or "ort" not in r for r in regeln):
                 raise _Unbekannt
             ergebnis["struktur"] = [{k: v for k, v in r.items() if k != "_einzug"} for r in regeln]
         return ergebnis
-    except _Unbekannt:
+    except (_Unbekannt, ValueError):
         return {}

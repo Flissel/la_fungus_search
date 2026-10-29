@@ -166,3 +166,153 @@ def test_keine_schweren_importe():
     erg = subprocess.run([sys.executable, "-c", code], env=dict(os.environ, PYTHONPATH=str(SRC)),
                          capture_output=True, timeout=60)
     assert erg.returncode == 0, erg.stdout
+
+
+# --- Fix-Runde 1 -----------------------------------------------------------------------------------------------
+def test_index_aelter_als_stand_schweigt(git_repo, heim):
+    """Ruling U6: Index-Commit != Graph-Commit -> stille Ausgabe."""
+    _aufbauen(git_repo)
+    git_repo.datei("neu.txt", "x")
+    git_repo.commit("weiter")
+    vermessen(git_repo.wurzel)  # Graph neu, Index nicht
+    assert kontextblock(git_repo.wurzel, "newsletter freigeben") is None
+
+
+def test_veraltet_geaenderte_stellen_getrennt(git_repo, heim):
+    """Index = Graph, aber HEAD weiter: Frisch-Treffer mit Zeile, Geaenderte nur als Name in eigener Liste."""
+    _aufbauen(git_repo)
+    git_repo.datei("neu.txt", "x")
+    git_repo.commit("weiter")
+    git_repo.datei("app/versand.py", "# anders\ndef newsletter_freigeben():\n    return 2\n")
+    block = kontextblock(git_repo.wurzel, "newsletter freigeben")
+    assert block is not None and "Index veraltet" in block.splitlines()[0]
+    teile = block.split("Seit Index geändert:")
+    assert len(teile) == 2 and "docs/newsletter.md" in teile[0]
+    assert "newsletter_freigeben (app/versand.py)" in teile[1]
+    assert "app/versand.py:" not in block
+
+
+def test_veraltet_ohne_frisch_treffer_schweigt(git_repo, heim):
+    _aufbauen(git_repo)
+    git_repo.datei("neu.txt", "x")
+    git_repo.commit("weiter")
+    git_repo.datei("app/versand.py", "# anders\n")
+    git_repo.datei("docs/newsletter.md", "# anders\n")
+    assert kontextblock(git_repo.wurzel, "newsletter freigeben") is None
+
+
+def test_geaenderte_doku_nicht_als_treffer(git_repo, heim):
+    _aufbauen(git_repo)
+    git_repo.datei("docs/newsletter.md", "# fremd\n")
+    block = kontextblock(git_repo.wurzel, "newsletter freigeben")
+    assert block is not None and "Doku:" not in block
+    assert "docs/newsletter.md – seit Index geändert" in block
+
+
+def test_grosser_prompt_schnell(git_repo, heim):
+    _aufbauen(git_repo)
+    import time
+    prompt = "lorem ipsum dolor " * 120_000  # > 2 MB
+    t = time.monotonic()
+    kontextblock(git_repo.wurzel, prompt)
+    assert time.monotonic() - t < 0.5
+
+
+def test_grosse_datei_wird_nicht_gelesen(git_repo, heim, monkeypatch):
+    from selbstbild.hooks import einspeisung
+
+    _aufbauen(git_repo)
+    git_repo.datei("app/versand.py", b"x" * (600 * 1024))
+
+    echt = einspeisung.blob_sha
+
+    def nie(datei):
+        assert datei.name != "versand.py", "grosse Datei gelesen"
+        return echt(datei)
+
+    monkeypatch.setattr(einspeisung, "blob_sha", nie)
+    block = kontextblock(git_repo.wurzel, "newsletter freigeben")
+    assert block is not None and "seit Index geändert" in block and "app/versand.py:" not in block
+
+
+def test_fortschrittshandler_bricht_ab(git_repo, heim):
+    from selbstbild.hooks import einspeisung
+    import sqlite3
+    import time
+
+    _aufbauen(git_repo)
+    stand = stand_fuer(git_repo.wurzel)
+    ablauf = time.monotonic() + 0.1
+
+    def pruefen():
+        if time.monotonic() > ablauf:
+            raise einspeisung._Frist
+
+    c = einspeisung._ro(stand.parent / "suche.sqlite", pruefen)
+    t = time.monotonic()
+    with pytest.raises(sqlite3.OperationalError):
+        c.execute("WITH RECURSIVE z(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM z) SELECT count(*) FROM z").fetchone()
+    c.close()
+    assert time.monotonic() - t < 2
+
+
+def test_main_harter_stopp(monkeypatch, capsysbinary):
+    import io
+    import time
+    from selbstbild.hooks import einspeisung
+
+    def langsam(cwd, prompt, *, frist_s):
+        time.sleep(5)
+        return "sollte nie erscheinen"
+
+    monkeypatch.setattr(einspeisung, "kontextblock", langsam)
+    monkeypatch.setattr(einspeisung, "FRIST_S", 0.3)
+
+    class Std:
+        buffer = io.BytesIO(json.dumps({"prompt": "x", "cwd": "."}).encode())
+
+    monkeypatch.setattr(einspeisung.sys, "stdin", Std)
+    t = time.monotonic()
+    assert einspeisung.main() == 0
+    assert time.monotonic() - t < 2
+    assert capsysbinary.readouterr().out == b""
+
+
+SHA = "a" * 40
+SHA2 = "b" * 40
+
+
+def test_git_head_gepackt(tmp_path):
+    from selbstbild.hooks.einspeisung import _git_head
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (tmp_path / ".git" / "packed-refs").write_text(f"# pack-refs\n{SHA} refs/heads/main\n{SHA2} refs/heads/x\n")
+    assert _git_head(tmp_path) == SHA
+
+
+def test_git_head_detached_und_unklar(tmp_path):
+    from selbstbild.hooks.einspeisung import _git_head
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "HEAD").write_text(SHA2 + "\n")
+    assert _git_head(tmp_path) == SHA2
+    (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/fehlt\n")
+    assert _git_head(tmp_path) is None
+    assert _git_head(tmp_path / "ohne") is None
+
+
+def test_git_head_worktree_gitdir_commondir(tmp_path):
+    from selbstbild.hooks.einspeisung import _git_head
+
+    haupt = tmp_path / "haupt" / ".git"
+    (haupt / "refs" / "heads").mkdir(parents=True)
+    (haupt / "refs" / "heads" / "feature").write_text(SHA + "\n")
+    wt_git = haupt / "worktrees" / "wt"
+    wt_git.mkdir(parents=True)
+    (wt_git / "HEAD").write_text("ref: refs/heads/feature\n")
+    (wt_git / "commondir").write_text("../..\n")
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".git").write_text(f"gitdir: {wt_git}\n")
+    assert _git_head(wt) == SHA
