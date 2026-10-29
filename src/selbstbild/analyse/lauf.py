@@ -5,7 +5,8 @@ Hotspots, Doppelungen, optional die Kolonie, dann `speichern` (analyse.sqlite ne
 Nach `tot_finden` stuft der Namensverweis-Waechter (Ruling S8) `sicher_tot` ab, wenn der Name
 anderswo im Code vorkommt.
 
-`statistik` traegt `doppelt_eimer_uebersprungen` sowie die Laufzeiten `laufzeit_laden_ms`,
+`statistik` traegt `doppelt_eimer_uebersprungen`, `tot_generiert_uebersprungen` (Symbole in
+Build-/generierten Dateien, Ruling S9) sowie die Laufzeiten `laufzeit_laden_ms`,
 `laufzeit_mathe_ms` (alles nach dem Laden ausser der Kolonie) und `laufzeit_kolonie_ms`. Laufzeiten
 stehen nicht im Export (byte-gleicher `analyse.json`, siehe `ergebnis`). Nur mit
 `pruefen_reproduzierbar=True` laufen Mathe und Kolonie ein zweites Mal im selben Prozess;
@@ -33,7 +34,8 @@ from .ergebnis import Analyse, digest_von, lesen, speichern
 from .erreichbar import erreichbarkeit
 from .kolonie import KolonieParameter, kolonie_laufen
 from .lader import ANALYSE_VERSION, SEED, GraphDaten, _meta, datei_von, laden
-from .tot import NAME_MIN, TOT_TAGE, TotFund, namensverweis_abstufen, namensverweise, tot_finden
+from .tot import (NAME_MIN, TOT_TAGE, TotFund, generiert_zaehlen, namensverweis_abstufen, namensverweise,
+                  tot_finden)
 from .zentral import BETWEENNESS_CUTOFF, DAEMPFUNG, Hotspot, betweenness, hotspots, pagerank
 
 PAGERANK_TOP = 500
@@ -57,7 +59,7 @@ def parameter(kolonie: bool) -> tuple[tuple[str, str], ...]:
         "betweenness_top": str(BETWEENNESS_TOP), "daempfung": f"{DAEMPFUNG}",
         "doppelt_schwelle": f"{DOPPELT_SCHWELLE}", "hotspots_top": str(HOTSPOTS_TOP),
         "kolonie": "an" if kolonie else "aus", "pagerank_top": str(PAGERANK_TOP),
-        "namensverweis_min": str(NAME_MIN), "seed": str(SEED), "tot_tage": str(TOT_TAGE),
+        "namensverweis_min": str(NAME_MIN), "tot_regeln": "s9", "seed": str(SEED), "tot_tage": str(TOT_TAGE),
     }
     if kolonie:
         k = KolonieParameter()
@@ -76,6 +78,7 @@ class _Mathe:
     hotspots: tuple[Hotspot, ...]
     doppelungen: tuple[Doppelung, ...]
     eimer_uebersprungen: int
+    tot_generiert: int
 
 
 def _top(werte: dict[str, float], n: int) -> tuple[tuple[str, float], ...]:
@@ -97,7 +100,7 @@ def _mathe(wurzel: Path, d: GraphDaten) -> _Mathe:
     bw_top = _top(betweenness(d), BETWEENNESS_TOP)
     dopp = doppelt.doppelungen(wurzel, d, DOPPELT_SCHWELLE)
     eimer = int(doppelt.STATISTIK["eimer_uebersprungen"])  # direkt danach, gleicher Prozess
-    return _Mathe(tot, ber, pr_top, bw_top, hs, dopp, eimer)
+    return _Mathe(tot, ber, pr_top, bw_top, hs, dopp, eimer, generiert_zaehlen(d))
 
 
 def _ms(seit: int) -> int:
@@ -122,6 +125,7 @@ def analysieren(wurzel: Path, *, kolonie: bool = True, pruefen_reproduzierbar: b
     m = _mathe(wurzel, d)
     stat["laufzeit_mathe_ms"] = _ms(t)
     stat["doppelt_eimer_uebersprungen"] = m.eimer_uebersprungen
+    stat["tot_generiert_uebersprungen"] = m.tot_generiert
     if pruefen_reproduzierbar:
         stat["reproduzierbar_mathe"] = int(_mathe(wurzel, d) == m)
     kol = None

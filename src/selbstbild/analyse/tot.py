@@ -11,7 +11,7 @@ from typing import Literal
 
 from ..quelle import Baum, BlobLeser, Eintrag, baum_lesen
 from ..sprachen import SPRACHEN
-from . import ist_testdatei
+from . import ist_generiert, ist_testdatei
 from .erreichbar import Erreichbarkeit
 from .lader import GraphDaten, datei_von
 
@@ -21,6 +21,12 @@ _SEKUNDEN = TOT_TAGE * 86400
 Stufe = Literal["sicher_tot", "wahrscheinlich_tot", "verdaechtig"]
 
 _TS_ENDUNGEN = tuple(sorted(e for s in ("typescript", "tsx", "javascript") for e in SPRACHEN[s]))
+
+# Ruling S9: Namen, die Frameworks per Konvention aufrufen (http.server, ast/docutils-Visitor,
+# unittest/pytest, Ereignis-Handler, Klassen-Hooks). Nie `sicher_tot`, Grund `konvention`.
+_KONVENTION = re.compile(
+    r"^(do_.*|visit_.*|depart_.*|generic_visit|on_.*|handle_.*|setUp|tearDown|setUpClass|tearDownClass"
+    r"|setup_method|teardown_method|__init_subclass__|__class_getitem__)$")
 
 
 @dataclass(frozen=True)
@@ -104,6 +110,8 @@ def _ausnahmen(d: GraphDaten, e: Erreichbarkeit, i: str) -> set[str]:
         erg.add("dunder")
     if ist_testdatei(pfad):
         erg.add("testdatei")
+    if _KONVENTION.match(einfach) or (art == "methode" and einfach.startswith("test")):
+        erg.add("konvention")  # Ruling S9: Aufruf per Namenskonvention (Framework-Dispatch)
     if art == "methode" and "." in qual:
         eltern = f"{i.rpartition('#')[0]}#{qual.rpartition('.')[0]}"
         if eltern in e.irgendwie and _attr(d, eltern).get("symbolart") == "klasse":
@@ -111,13 +119,20 @@ def _ausnahmen(d: GraphDaten, e: Erreichbarkeit, i: str) -> set[str]:
     return erg
 
 
+def generiert_zaehlen(d: GraphDaten) -> int:
+    """Symbole in Build-/generierten Dateien, die `tot_finden` ueberspringt (Ruling S9)."""
+    return sum(1 for i, k in d.knoten.items() if k.art == "symbol" and ist_generiert(_pfad(i)))
+
+
 def tot_finden(d: GraphDaten, e: Erreichbarkeit, doku: Mapping[str, frozenset[str]]) -> tuple[TotFund, ...]:
     """Nur Symbolknoten. Sortiert nach Symbol-Id, ohne Uhr (Stichtag = `d.commit_zeit`)."""
     grenze = d.commit_zeit - _SEKUNDEN
     funde: list[TotFund] = []
     for i in sorted(k for k, n in d.knoten.items() if n.art == "symbol"):
-        zuletzt = _zuletzt(d, i)
         pfad = _pfad(i)
+        if ist_generiert(pfad):
+            continue  # Ruling S9: Build-/generierte Ausgabe ist nie ein Fund (gezaehlt in generiert_zaehlen)
+        zuletzt = _zuletzt(d, i)
         if i in e.nur_test:
             if ist_testdatei(pfad):
                 continue  # Testcode ist per Definition nur von Tests erreicht
