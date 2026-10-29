@@ -11,7 +11,10 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from .dicht import Embedder
 
 from .index import index_pfad, zerlegen
 
@@ -98,16 +101,28 @@ def _struktur(c: sqlite3.Connection, stichwort: list[str]) -> dict[str, float]:
     return wert
 
 
-def _dicht(stand: Path, anfrage: str) -> list[str]:
-    """Dichter Zweig (Task 4 verdrahtet `dicht.aehnlichste`); bis dahin wirkungslos, nie ein Fehler."""
-    try:
-        from . import dicht  # noqa: F401
-    except ImportError:
+def _dicht(stand: Path, anfrage: str, embedder: "Embedder | None") -> list[str]:
+    """Dichter Zweig: Anfrage einmal einbetten, Datei-Vektoren des Modells abfragen.
+
+    Ohne Embedder, ohne Vektoren zu diesem Modell oder bei Embedder-/Lesefehler ist der Zweig leer: kein Fehler,
+    keine Ausgabe. `dicht` wird erst hier importiert (numpy nur bei Bedarf).
+    """
+    if embedder is None:
         return []
-    return []
+    from . import dicht as _modul
+    try:
+        vektor = _modul.einbetten(embedder, [anfrage], timeout=10.0)[0]
+        return [i for i, _ in _modul.aehnlichste(stand, vektor, STICHWORT_TOP, embedder.modell)]
+    except (RuntimeError, OSError, sqlite3.DatabaseError):
+        return []
 
 
-def suchen(stand: Path, anfrage: str, top_k: int = 10, *, dicht: bool = False) -> tuple[Treffer, ...]:
+def suchen(stand: Path, anfrage: str, top_k: int = 10, *, dicht: bool = False,
+           embedder: "Embedder | None" = None) -> tuple[Treffer, ...]:
+    """Fusion aus Stichwort, Struktur und (bei `dicht=True` mit `embedder`) dichtem Zweig.
+
+    Der dichte Zweig braucht Vektoren aus `dicht.vektoren_bauen` zum Modell des Embedders; fehlen sie oder
+    antwortet der Embedder nicht, bleibt er leer und die Fusion ist unveraendert."""
     tokens = anfrage_tokens(anfrage)
     if not tokens:
         return ()
@@ -115,7 +130,7 @@ def suchen(stand: Path, anfrage: str, top_k: int = 10, *, dicht: bool = False) -
     with closing(_offnen(stand)) as c:
         stichwort = _stichwort(c, tokens)
         struktur = _struktur(c, stichwort)
-        dichte = _dicht(stand, anfrage) if dicht else []
+        dichte = _dicht(stand, anfrage, embedder) if dicht else []
         beitrag: dict[str, dict[str, float]] = {}
         for rang, i in enumerate(stichwort, start=1):
             beitrag.setdefault(i, {})["stichwort"] = 1.0 / (RRF_K + rang)
