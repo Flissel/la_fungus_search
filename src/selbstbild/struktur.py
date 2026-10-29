@@ -102,9 +102,21 @@ def _hinweis(r: dict) -> str | None:
     return None if ort_ist_wurzel(r.get("ort", "")) else f"richtiger Ort: {r.get('ort', '?')}"
 
 
+_GIT_BASH = re.compile(r"^[\\/]([A-Za-z])(?:[\\/]|$)")
+
+
+def _git_bash_pfad(roh: str, *, nt: bool | None = None) -> str:
+    """Unter Windows Git-Bash-Form `/c/...` (auch als `\\c\\...`) auf `c:/...` abbilden, sonst unveraendert."""
+    if not (os.name == "nt" if nt is None else nt):
+        return roh
+    m = _GIT_BASH.match(roh)
+    return roh if m is None else f"{m.group(1)}:/{roh[m.end():]}"
+
+
 def _aufloesen(ziel: Path, cwd: Path | None) -> Path:
-    """Absolut, ohne `..`, Symlinks des vorhandenen Anteils aufgeloest; das Ziel selbst muss nicht existieren."""
-    roh = str(ziel)
+    """Absolut, ohne `..`, Symlinks des vorhandenen Anteils aufgeloest; das Ziel selbst muss nicht existieren.
+    Git-Bash-Pfade (`/c/...`) gelten unter Windows als Laufwerkspfade."""
+    roh = _git_bash_pfad(str(ziel))
     if os.name == "nt":
         roh = roh.replace("/", "\\")
     p = Path(os.path.normpath(os.path.join(str(cwd) if cwd else os.getcwd(), roh)))

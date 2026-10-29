@@ -262,3 +262,22 @@ def test_pruefen_verboten_unter_repo(git_repo, tmp_path):
     git_repo.datei("spaces/a/b.py", "x = 1\n")  # aeussere Datei: Regel von sub gilt hier nicht
     git_repo.commit("init")
     assert [(x.pfad, x.hart) for x in pruefen(git_repo.wurzel)] == [("sub/spaces/a/b.py", True)]
+
+
+def test_git_bash_pfad_abbildung():
+    assert struktur._git_bash_pfad("/c/Users/x/a.py", nt=True) == "c:/Users/x/a.py"
+    assert struktur._git_bash_pfad("/D/x", nt=True) == "D:/x"
+    assert struktur._git_bash_pfad("/c", nt=True) == "c:/"
+    assert struktur._git_bash_pfad(str(Path("/c/Users")), nt=True).lower().startswith("c:")  # WindowsPath-Form
+    assert struktur._git_bash_pfad("/c/Users/x", nt=False) == "/c/Users/x"  # nur unter Windows
+    assert struktur._git_bash_pfad("/cc/x", nt=True) == "/cc/x"  # kein Laufwerksbuchstabe
+    assert struktur._git_bash_pfad("C:/x", nt=True) == "C:/x"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Git-Bash-Pfade gibt es nur unter Windows")
+def test_git_bash_pfad_blockiert(root):
+    p = root.resolve()
+    gitbash = "/" + p.drive[0].lower() + p.as_posix()[2:] + "/spaces/neu/x.py"
+    v = pruefe_schreibziel(Path(gitbash))
+    assert len(v) == 1 and v[0].hart and v[0].pfad == "spaces/neu/x.py"
+    assert pruefe_schreibziel(Path(gitbash), cwd=Path("D:/woanders"))  # cwd spielt keine Rolle
