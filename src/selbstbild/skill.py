@@ -13,21 +13,18 @@ Datengetrieben und deterministisch (keine Zeitstempel, alles sortiert):
 """
 from __future__ import annotations
 
-import os
 import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
 from ._glob import glob_regex
-from .hooks import REGELDATEI
 from . import struktur
-from .struktur import _UEBERSPRUNGEN, _flags, _regeln_von
+from .struktur import _flags, _regeln_von
 
 __all__ = ["skill_neuer_space"]
 
 _WURZEL_ORTE = ("", ".")
-_MAX_TIEFE = 4  # so tief unter der Wurzel wird nach weiteren `selbstbild.yaml` gesucht (Submodule)
 _ANZAHL_VORBILDER = 3
 _WERKZEUGE = (
     ("selbstbild_suchen", "Stichwortsuche ueber Code und Doku, um aehnliche Stellen zu finden"),
@@ -48,26 +45,12 @@ def _verbinden(vorn: str, hinten: str) -> str:
     return f"{vorn}/{hinten}" if vorn else hinten
 
 
-def _regeldateien(wurzel: Path) -> list[Path]:
-    """Ordner mit `selbstbild.yaml` (Arbeitsbaum), Wurzel zuerst, dann sortiert."""
-    gefunden: list[Path] = []
-    for pfad, unterordner, dateien in os.walk(wurzel):
-        p = Path(pfad)
-        tiefe = len(p.relative_to(wurzel).parts)
-        unterordner[:] = sorted(d for d in unterordner if d not in _UEBERSPRUNGEN and not d.startswith("."))
-        if tiefe >= _MAX_TIEFE:
-            unterordner[:] = []
-        if REGELDATEI in dateien:
-            gefunden.append(p)
-    return sorted(gefunden, key=lambda p: (len(p.relative_to(wurzel).parts), p.relative_to(wurzel).as_posix()))
-
-
 def _regeln_sammeln(wurzel: Path) -> tuple[list[dict], list[dict], list[str]]:
     """(Space-Regeln mit Wurzel-Ort, Wurzel-Verbote je Regel samt Repo, Hinweise)."""
     space: list[dict] = []
     verbote: list[dict] = []
     hinweise: set[str] = set()
-    for ordner in _regeldateien(wurzel):
+    for ordner in struktur.regel_ordner(wurzel):
         vorn = ordner.relative_to(wurzel).as_posix()
         vorn = "" if vorn == "." else vorn
         for r in _regeln_von(ordner):

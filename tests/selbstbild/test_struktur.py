@@ -199,3 +199,66 @@ def test_regeln_fuer_wurzel_ort(root):
         "struktur:\n  - art: kein_space_im_root\n    ort: \"./\"\n    pflicht: []\n    verboten: ['spaces/*/']\n",
         encoding="utf-8")
     assert [x["art"] for x in regeln_fuer(root, "spaces/x/main.py")] == ["kein_space_im_root"]
+
+
+VERBOT_REGELN = ("struktur:\n  - art: kein_space_im_root\n    ort: \"./\"\n    pflicht: []\n"
+                 "    verboten:\n      - \"spaces/*/\"\n      - \"*/capabilities.yaml\"\n    hinweis: dort\n")
+
+
+def _pruefen_cli(wurzel: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([sys.executable, "-m", "selbstbild", "pruefen", str(wurzel)],
+                          env={**os.environ, "PYTHONPATH": str(SRC)}, capture_output=True, text=True, timeout=60)
+
+
+def test_pruefen_verboten_getrackt(git_repo):
+    """I2: ein committeter Pfad unter `verboten` ist ein harter Verstoss der CI."""
+    git_repo.datei("selbstbild.yaml", VERBOT_REGELN)
+    git_repo.datei("spaces/foo/x.py", "x = 1\n")
+    git_repo.commit("init")
+    v = pruefen(git_repo.wurzel)
+    assert [(x.regel, x.pfad, x.hart) for x in v] == [("kein_space_im_root", "spaces/foo/x.py", True)]
+    assert "spaces/*/" in v[0].grund and v[0].hinweis == "dort"
+    p = _pruefen_cli(git_repo.wurzel)
+    assert p.returncode == 1 and "spaces/foo/x.py" in p.stdout
+
+
+def test_pruefen_verboten_sauber_und_verschachtelt(git_repo):
+    git_repo.datei("selbstbild.yaml", VERBOT_REGELN)
+    git_repo.datei("vibemind-os/spaces/foo/x.py", "x = 1\n")  # tiefer verschachtelt: Wurzelmuster greifen nicht
+    git_repo.datei("vibemind-os/spaces/foo/capabilities.yaml", "a: 1\n")
+    git_repo.datei("spaces/datei.py", "x = 1\n")  # kein Verzeichnis unter spaces/
+    git_repo.commit("init")
+    git_repo.datei("spaces/neu/ungetrackt.py", "x = 1\n")  # nicht getrackt: zaehlt nicht
+    assert pruefen(git_repo.wurzel) == ()
+    p = _pruefen_cli(git_repo.wurzel)
+    assert p.returncode == 0 and p.stdout.strip() == "[]"
+
+
+def test_pruefen_verboten_ohne_git_rueckfall(root, monkeypatch, caplog):
+    """Ohne git: Arbeitsbaum-Durchlauf (ohne .git, node_modules, .venv*, __pycache__) mit Meldung im Log."""
+    (root / "selbstbild.yaml").write_text(VERBOT_REGELN, encoding="utf-8")
+    (root / "spaces" / "foo").mkdir(parents=True)
+    (root / "spaces" / "foo" / "x.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "node_modules" / "a").mkdir(parents=True)
+    (root / "node_modules" / "a" / "capabilities.yaml").write_text("a: 1\n", encoding="utf-8")
+    (root / ".venv-x" / "a").mkdir(parents=True)
+    (root / ".venv-x" / "a" / "capabilities.yaml").write_text("a: 1\n", encoding="utf-8")
+
+    def kein_git(*a, **k):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(struktur.subprocess, "run", kein_git)
+    with caplog.at_level("WARNING", logger="selbstbild.struktur"):
+        v = pruefen(root)
+    assert [(x.pfad, x.hart) for x in v] == [("spaces/foo/x.py", True)]
+    assert any("Arbeitsbaum" in r.getMessage() for r in caplog.records)
+
+
+def test_pruefen_verboten_unter_repo(git_repo, tmp_path):
+    """Regeldatei eines Unter-Ordners: Muster relativ zu dessen Ordner, Pfad im Ergebnis relativ zur Wurzel."""
+    git_repo.datei("selbstbild.yaml", "name: aussen\n")
+    git_repo.datei("sub/selbstbild.yaml", VERBOT_REGELN)
+    git_repo.datei("sub/spaces/a/b.py", "x = 1\n")
+    git_repo.datei("spaces/a/b.py", "x = 1\n")  # aeussere Datei: Regel von sub gilt hier nicht
+    git_repo.commit("init")
+    assert [(x.pfad, x.hart) for x in pruefen(git_repo.wurzel)] == [("sub/spaces/a/b.py", True)]

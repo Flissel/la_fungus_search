@@ -7,22 +7,28 @@ Muster-Semantik (`verboten`, `ort`): relativ zum Ordner der jeweiligen `selbstbi
 - `spaces/*/`   (endet auf `/`): Verzeichnismuster; trifft jeden Pfad, der unter einem solchen Verzeichnis liegt
                 (`spaces/neu/x.py`, `spaces/a/b/c.py`), nicht aber `spaces/x.py`.
 - `*/datei.yaml`: ohne `/` am Ende ein exaktes Muster; `*` bleibt innerhalb eines Segments, `**` ueberspannt Segmente.
-Der Waechter blockiert nur wegen `verboten` (hart); fehlende `pflicht`-Teile sind weiche Verstoesse der CI.
+Der Waechter blockiert nur wegen `verboten` (hart); die CI meldet getrackte Pfade unter `verboten` hart und
+fehlende `pflicht`-Teile weich.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from ._glob import glob_regex
 from .hooks import REGELDATEI, regeln_lesen, repo_wurzeln
 
-__all__ = ["Verstoss", "pruefe_schreibziel", "regel_trifft", "regeln_fuer", "pruefen"]
+__all__ = ["Verstoss", "pruefe_schreibziel", "regel_trifft", "regeln_fuer", "regel_ordner", "pruefen"]
 
 GROSSKLEIN_EGAL = os.name == "nt"
 _UEBERSPRUNGEN = {".git", "node_modules", "__pycache__", ".venv", ".venv-selbstbild"}
+_MAX_TIEFE = 4  # so tief unter der Wurzel wird nach weiteren `selbstbild.yaml` gesucht (Submodule)
+_GIT_FRIST_S = 60
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -164,10 +170,67 @@ def _hat_pflichtteil(ordner: Path, teil: str) -> bool:
     return False
 
 
-def pruefen(wurzel: Path) -> tuple[Verstoss, ...]:
-    """CI: Ordner, die auf `ort` einer Regel mit `pflicht` passen, aber Pflichtteile missen (weich; nur lesend)."""
+def regel_ordner(wurzel: Path) -> list[Path]:
+    """Ordner mit `selbstbild.yaml` im Arbeitsbaum (bis Tiefe 4, ohne Punkt-Ordner), Wurzel zuerst, dann sortiert."""
     wurzel = Path(wurzel)
-    ungelesen = _ungelesen(wurzel)
+    gefunden: list[Path] = []
+    for pfad, unterordner, dateien in os.walk(wurzel):
+        p = Path(pfad)
+        tiefe = len(p.relative_to(wurzel).parts)
+        unterordner[:] = sorted(d for d in unterordner if d not in _UEBERSPRUNGEN and not d.startswith("."))
+        if tiefe >= _MAX_TIEFE:
+            unterordner[:] = []
+        if REGELDATEI in dateien:
+            gefunden.append(p)
+    return sorted(gefunden, key=lambda p: (len(p.relative_to(wurzel).parts), p.relative_to(wurzel).as_posix()))
+
+
+def _walk_ueberspringen(name: str) -> bool:
+    return name in (".git", "node_modules", "__pycache__") or name.startswith(".venv")
+
+
+def _getrackte_pfade(ordner: Path) -> list[str]:
+    """Getrackte Pfade relativ zu `ordner` (`git ls-files -z`); ohne git ersatzweise der Arbeitsbaum (Log-Warnung)."""
+    try:
+        erg = subprocess.run(["git", "-C", str(ordner), "ls-files", "-z"], capture_output=True,
+                             timeout=_GIT_FRIST_S, check=True)
+        return [t for t in erg.stdout.decode("utf-8", "surrogateescape").split("\0") if t]
+    except (OSError, subprocess.SubprocessError) as e:
+        _log.warning("git ls-files fehlgeschlagen in %s (%s): verboten wird gegen den Arbeitsbaum geprueft",
+                     ordner, type(e).__name__)
+    aus: list[str] = []
+    for pfad, unterordner, dateien in os.walk(ordner):
+        unterordner[:] = sorted(d for d in unterordner if not _walk_ueberspringen(d))
+        basis = Path(pfad).relative_to(ordner).as_posix()
+        aus += [n if basis == "." else f"{basis}/{n}" for n in sorted(dateien)]
+    return aus
+
+
+def _verbotene(wurzel: Path) -> list[Verstoss]:
+    """Harte Verstoesse: getrackte Pfade, die ein `verboten`-Muster der Regeldatei ihres Ordners treffen."""
+    aus: list[Verstoss] = []
+    for ordner in regel_ordner(wurzel):
+        regeln = [(r, [(m, _muster(str(m))) for m in r.get("verboten") or []]) for r in _regeln_von(ordner)]
+        regeln = [(r, ms) for r, ms in regeln if ms]
+        if not regeln:
+            continue
+        vorn = ordner.relative_to(wurzel).as_posix()
+        for rel in _getrackte_pfade(ordner):
+            for r, ms in regeln:
+                treffer = next((m for m, rx in ms if rx.match(rel)), None)
+                if treffer is not None:
+                    voll = rel if vorn == "." else f"{vorn}/{rel}"
+                    aus.append(Verstoss(r.get("art", "?"), voll, f"'{rel}' ist laut Regel verboten ({treffer})",
+                                        _hinweis(r), True))
+    return aus
+
+
+def pruefen(wurzel: Path) -> tuple[Verstoss, ...]:
+    """CI (nur lesend): unlesbare Regeldatei (weich), getrackte Pfade unter `verboten` (hart, je Regeldatei im
+    Arbeitsbaum relativ zu deren Ordner) und Ordner, die auf `ort` einer Regel mit `pflicht` passen, aber
+    Pflichtteile missen (weich)."""
+    wurzel = Path(wurzel)
+    ungelesen = (*_ungelesen(wurzel), *_verbotene(wurzel))
     regeln = [r for r in _regeln_von(wurzel) if r.get("pflicht") and r.get("ort")]
     if not regeln:
         return ungelesen
