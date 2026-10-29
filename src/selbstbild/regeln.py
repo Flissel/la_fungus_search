@@ -29,6 +29,7 @@ class Strukturregel(BaseModel):
     ort: str
     pflicht: list[str]
     verboten: list[str] = Field(default_factory=list)
+    hinweis: str | None = None
 
 
 class IssueZiel(BaseModel):

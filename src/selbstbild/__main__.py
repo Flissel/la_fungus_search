@@ -1,4 +1,4 @@
-"""CLI: `python -m selbstbild vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|suche-messen <wurzel> ...`."""
+"""CLI: `python -m selbstbild vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|pruefen|suche-messen <wurzel> ...`."""
 from __future__ import annotations
 
 import argparse
@@ -227,6 +227,14 @@ def _suchen(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pruefen(args: argparse.Namespace) -> int:
+    from selbstbild.struktur import pruefen
+
+    verstoesse = pruefen(args.wurzel)
+    _ausgeben([dataclasses.asdict(v) for v in verstoesse])
+    return 1 if verstoesse else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="selbstbild", description="Vermisst ein Git-Repo als Graph.")
     p.add_argument("-v", "--ausfuehrlich", action="store_true", help="Fortschritt nach stderr")
@@ -262,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
     su.add_argument("wurzel", type=Path)
     su.add_argument("anfrage")
     su.add_argument("--top", type=int, default=10)
+    pr = befehle.add_parser("pruefen", help="CI: fehlende Pflichtteile der Strukturregeln als JSON, Exit 1 bei Verstoessen")
+    pr.add_argument("wurzel", type=Path)
     sm = befehle.add_parser("suche-messen", help="recall@10 und MRR der Suche gegen KETTEN- und Transkript-Gold")
     sm.add_argument("wurzel", type=Path)
     sm.add_argument("--ollama", action="append", default=[], help="Ollama-URL (paarweise mit --modell)")
@@ -297,6 +307,8 @@ def main(argv: list[str] | None = None) -> int:
         return _index(args)
     if args.befehl == "suchen":
         return _suchen(args)
+    if args.befehl == "pruefen":
+        return _pruefen(args)
     if args.befehl == "suche-messen":
         return _suche_messen(args)
     return _status(args.wurzel)
