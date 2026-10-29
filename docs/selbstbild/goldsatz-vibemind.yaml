@@ -9,15 +9,15 @@ bereiche:
 - dateien: 829
   erwartet: []
   id: bereich:2
-  name: apps/desktop/electron
-- dateien: 745
-  erwartet: []
-  id: bereich:3
-  name: src/services
+  name: vibemind/vibemind-os/spaces/captain_cook/hermes-agent/apps/desktop/electron
 - dateien: 552
   erwartet: []
   id: bereich:4
-  name: tests/gateway
+  name: vibemind/vibemind-os/spaces/captain_cook/hermes-agent/tests/gateway
+- dateien: 518
+  erwartet: []
+  id: bereich:5
+  name: vibemind/vibemind-os/spaces/video/laura/services/local-api
 commit: 1e409b445ed8d9793260809c0cc018b6478d1639
 doppelt:
 - aehnlichkeit: '1.0000'
@@ -167,19 +167,13 @@ tot:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:cell_cli/commands/marketplace.py#list_installed
+  symbol: symbol:vibemind/vibemind-os/coding-engine:cell_cli/config.py#get_active_tenant
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/agents/redis_agent.py#RedisDataType
-  urteil: offen
-- gruende:
-  - alt_90
-  - kein_doku_verweis
-  - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/grpc_client.py#EventFixTeamClient.postgres_execute
+  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/autogen_orchestrator.py#call_grpc_worker
   urteil: offen
 - gruende:
   - alt_90
@@ -191,7 +185,13 @@ tot:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/tools/fix_migrate_tool.py#FixMigrateTool.get_fix
+  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/grpc_client.py#EventFixTeamClient.redis_delete
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/tools/fix_migrate_tool.py#FixMigrateTool.list_fixes
   urteil: offen
 - gruende:
   - alt_90
@@ -203,103 +203,97 @@ tot:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:src/colony/k8s/operator.py#cell_health_timer
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/colony/lifecycle_controller.py#LifecycleController.complete_recovery
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:src/colony/k8s/resource_generator.py#CellCRD
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/colony/security_gateway.py#SecurityGateway.generate_cell_policy
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:src/services/agent_memory.py#AgentMemoryStore.update_importance
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/services/cell_import_service.py#CellImportService.remove_imported_cell
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:src/services/agent_memory.py#MemoryCategory
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/services/cell_security_scanner.py#CellSecurityScanner.analyze_behavior
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:src/services/pipeline_event_mesh.py#_MeshHistoryEntry
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/skills/dynamic_skill_generator.py#RedisSkillCache
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:src/services/pipeline_hooks.py#HookPoint
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/teams/agents/debug_agent.py#create_debug_agent
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:src/tools/docker_swarm_tool.py#DockerSwarmTool.get_service_logs
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/tools/microservice_orchestrator.py#MicroserviceOrchestrator.create_service_directories
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/coding-engine:src/tools/docker_swarm_tool.py#DockerSwarmTool.update_service
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/tools/supermemory_tools.py#LocalMemoryFallback
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/la-fungus-search:src/embeddinggemma/llm/langchain.py#build_langchain_chat_ollama
+  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/matrix/src/matrix/accounts.ts#listEnabledMatrixAccounts
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/feishu/src/targets.ts#detectIdType
+  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/nextcloud-talk/src/format.ts#markdownToNextcloudTalk
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/msteams/src/pending-uploads.ts#getPendingUploadCount
+  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/twitch/src/client-manager-registry.ts#removeAllClientManagers
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/nextcloud-talk/src/format.ts#formatNextcloudTalkCodeBlock
+  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/voice-call/src/voice-mapping.ts#isOpenAiVoice
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/nextcloud-talk/src/format.ts#formatNextcloudTalkInlineCode
+  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/zalouser/src/zalo-js.ts#clearProfileRuntimeArtifacts
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/nextcloud-talk/src/format.ts#truncateNextcloudTalkText
+  symbol: symbol:vibemind/vibemind-os/openfang:sdk/python/openfang_client.py#_AgentResource.switch_session
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/openclaw:extensions/tlon/src/monitor/approval.ts#hasDuplicatePending
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:agent/display.py#get_tool_preview_max_len
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/src/app/settings/env-credentials.tsx#filterEnv
-  urteil: offen
-- gruende:
-  - alt_90
-  - kein_doku_verweis
-  - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/src/hermes.ts#getCronJob
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/src/lib/yolo-session.ts#setGlobalYolo
   urteil: offen
 - gruende:
   - alt_90
@@ -311,90 +305,96 @@ tot:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:hermes_cli/captain_planner.py#PlanningDraft.reject_sensitive_payloads
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:gateway/platforms/yuanbao.py#MarkdownProcessor.markdown_hint_system_prompt
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:hermes_cli/tools_config.py#_toolset_configuration_platform
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:hermes_cli/middleware.py#apply_api_request_middleware
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/spaces/coding/clawcode:src/interactiveHelpers.py#bulletize
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:plugins/memory/honcho/cli.py#sync_honcho_profiles_quiet
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine/external/arch_team:arch_team/runtime/logging.py#log_exception
+  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine/external/arch_team:backend/services/manifest_integration.py#start_rewrite_stage
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/dashboard/static/app_backup.js#sortNodesByHierarchy
+  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine/external/arch_team:templates/01-web-app/template/lib/utils.ts#cn
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/dashboard/static/modules/connections.js#toggleDiagramStack
+  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/dashboard/static/modules/state.js#cleanupEventListeners
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/dashboard/static/modules/ui/linkDiscovery.js#handleLinkCreated
+  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/dashboard/static/modules/ui/wizardNotifications.js#getApprovedContents
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/voice:python/publishing/doc_publisher.py#DocPublisher.publish_doc
+  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/testing/mocks/llm_mock.py#get_call_history
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os/voice:python/swarm/analysis/semantic_agent.py#SemanticAgent._analyze_by_language
+  symbol: symbol:vibemind/vibemind-os/voice/electron-app/clawport-ui:lib/utils.ts#cn
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os:brain/brain_seeder.py#BrainSeeder.feed_execution_memory
+  symbol: symbol:vibemind/vibemind-os/voice:python/swarm/routing/keyword_classifier.py#classify_by_keywords
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os:brain/the_brain/core/ctm_model_merger.py#MergeConfig
+  symbol: symbol:vibemind/vibemind-os/voice:python/swarm/voice_bridge_v2.py#VoiceBridgeV2.current_agent_name
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os:brain/the_brain/core/ewc_regularization.py#MemoryAwareConsolidation.add_task
+  symbol: symbol:vibemind/vibemind-os:brain/the_brain/core/mcts_planner.py#LearnedWorldModel
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os:brain/the_brain/production/brain_interpreter_agents.py#BrainInterpreterAgentFactory
+  symbol: symbol:vibemind/vibemind-os:brain/the_brain/core/prioritized_replay.py#HindsightExperienceReplay
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os:spaces/mirofish/mirofish/backend/app/services/simulation_ipc.py#SimulationIPCServer.send_error
+  symbol: symbol:vibemind/vibemind-os:brain/the_brain/core/scaled_ctm.py#create_large_ctm
   urteil: offen
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
-  symbol: symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/x/apps/renderer/src/lib/toast.ts#removeToast
+  symbol: symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/x/apps/renderer/src/lib/toast.ts#getToasts
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os:spaces/shuttles/wizard_handler.py#ShuttleWizardHandler.reject_suggestion
   urteil: offen
 zentral: []

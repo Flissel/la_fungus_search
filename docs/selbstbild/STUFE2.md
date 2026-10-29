@@ -1,8 +1,13 @@
 # Selbstbild Stufe 2: Mathe auf dem Codegraphen (Abnahme)
 
-Stand: 29.10.2026. Paket `src/selbstbild/analyse/`, Lauf in `analyse/lauf.py`, CLI in `selbstbild/__main__.py`.
+Stand: 29.10.2026 (Final-Fix-Welle, gültiger Lauf a7). Paket `src/selbstbild/analyse/`, Lauf in `analyse/lauf.py`, CLI in `selbstbild/__main__.py`.
 Stufe 2 liest nur den Graphen aus Stufe 1 (`graph.sqlite`, nur lesend) und die Blobs am vermessenen
 Commit. Sie schreibt `analyse.sqlite` neben den Stand. Kein LLM, kein Netz.
+
+**Python 3.11 bis 3.12.** Der Selbstbild-Stack braucht `numpy==1.26.4`, und dafür gibt es keine
+Wheels für Python 3.13 und neuer. Erprobt ist er nur auf 3.11, mit den Windows-Wheels von igraph und
+leidenalg. Ein Extra kann kein eigenes `requires-python` haben, deshalb steht die Untergrenze als
+Kommentar beim Extra `selbstbild` in `pyproject.toml`.
 
 ## Befehle (PowerShell, im la_fungus-Arbeitsbaum)
 
@@ -12,6 +17,7 @@ $env:PYTHONPATH="src"
 .\.venv-selbstbild\Scripts\python -m selbstbild analysieren C:\Users\User\Desktop\Vibemind_V1 --export "$env:TEMP\vibemind-analyse.json"
 .\.venv-selbstbild\Scripts\python -m selbstbild analysieren C:\Users\User\Desktop\Vibemind_V1 --ohne-kolonie
 .\.venv-selbstbild\Scripts\python -m selbstbild analysieren C:\Users\User\Desktop\Vibemind_V1 --pruefen-reproduzierbar   # rechnet alles zweimal
+.\.venv-selbstbild\Scripts\python -m selbstbild analysieren C:\Users\User\Desktop\Vibemind_V1 --kolonie-budget   # plus budgetgleiche Kolonie (S11)
 # Ausgefuellten Goldsatz gegen die gespeicherte Analyse messen
 .\.venv-selbstbild\Scripts\python -m selbstbild vergleichen C:\Users\User\Desktop\Vibemind_V1 docs\selbstbild\goldsatz-vibemind.yaml
 ```
@@ -29,7 +35,8 @@ python -m selbstbild goldsatz <wurzel> <ziel.yaml> [--ueberschreiben]
   Graphen, bevorzugt den mit Kolonie. Dabei müssen Commit **und** `gemessen_um` des Graphen
   übereinstimmen (Tabelle `herkunft`), ein neu vermessener Graph verlangt also eine neue Analyse. Fehlt
   der Lauf, enden sie mit Exit 1 und „erst analysieren“.
-- Exit-Codes: 1 heißt nicht vermessen oder nicht analysiert. 3 heißt Stand ohne brauchbaren Graphen
+- Exit-Codes: 1 heißt nicht vermessen, nicht analysiert oder `graph.sqlite` unlesbar
+  (`StandUnlesbar`, z. B. gesperrt oder falsches Schema, mit dem Text des DB-Fehlers). 3 heißt Stand ohne brauchbaren Graphen
   (neu vermessen). 2 heißt ungültiges oder unlesbares Goldsatz-YAML, vorhandenes Goldsatz-Ziel ohne
   `--ueberschreiben` oder nicht schreibbares Ziel (`--export`, `goldsatz`).
 - Der Goldsatz trägt `commit:`. Weicht er vom Commit der Analyse ab, warnt `vergleichen` auf stderr und
@@ -41,11 +48,15 @@ python -m selbstbild goldsatz <wurzel> <ziel.yaml> [--ueberschreiben]
 **Determinismus und Messwerte.** `statistik` enthält `laufzeit_laden_ms`, `laufzeit_mathe_ms` (alles
 nach dem Laden außer der Kolonie) und `laufzeit_kolonie_ms`. Mit `--pruefen-reproduzierbar` kommen
 `reproduzierbar_mathe` und `reproduzierbar_kolonie` dazu (je 1 oder 0). Alle Schlüssel mit dem Präfix
-`laufzeit_` oder `reproduzierbar_` sind Messwerte und stehen **nicht** im Export. Sie liegen in
+`laufzeit_` oder `reproduzierbar_` sind Messwerte und stehen **nicht** im Export (dazu zählen auch
+`laufzeit_kolonie_budget_ms` und `reproduzierbar_kolonie_budget`). Sie liegen in
 `analyse.sqlite` in der Nebentabelle `messung`, und `vergleichen` liest sie von dort. Gleiche Parameter
 ergeben damit immer einen byte-gleichen `analyse.json`, mit oder ohne Prüf-Schalter. Ein Test prüft
-das über zwei Prozesse mit verschiedenem `PYTHONHASHSEED`. Im Export bleiben aus `statistik` nur
-`doppelt_eimer_uebersprungen` und `tot_generiert_uebersprungen`.
+das über zwei Prozesse mit verschiedenem `PYTHONHASHSEED`. Im Export bleiben aus `statistik`
+`doppelt_eimer_uebersprungen`, `tot_generiert_uebersprungen`, `pagerank_quersprache_ausgelassen`
+(S14) und mit `--kolonie-budget` die Kennzahlen `kolonie_budget_*` (S11). `parameter` enthält unter
+`regeln` den Digest der Regelkonstanten (S13). Ändert sich eine Regel, ändert sich der Schlüssel des
+gespeicherten Laufs, und es braucht eine neue Analyse.
 
 ## Abnahme-Läufe
 
@@ -95,7 +106,188 @@ startete mit 5,9 GB freiem Commit.
   Der Schlüssel `symbol_ohne_datei` kommt aus `dateigraph`. Er ist da, weil `luecken` erst nach allen
   Analysen gebaut wird (Ruling S3, abgesichert durch einen Test).
 
-## Ergebnisse VibeMind (`1e409b44`, 20 Repos, 19 608 Dateien, 205 k Symbole)
+## Final-Fix-Welle (Rulings S10 bis S14, Lauf a7, gültiger Stand)
+
+Die Gesamtprüfung von Stufe 2 fand weitere Fehlerquellen. Diese Welle behebt sie, danach wurde
+VibeMind neu vermessen (a6) und neu analysiert (a7). **a7 ersetzt a5.** Die Abschnitte weiter unten
+mit „Lauf a5“ sind die Vorgeschichte und nicht mehr gültig.
+
+Was sich geändert hat:
+
+- **S10 Decorators (Stufe 1 und 2).** Die Parser für Python und TS halten je Symbol die
+  Decorator-Köpfe ohne Argumente fest, sortiert als Attr `dekoriert=kopf.timer,property`.
+  `PARSER_VERSION` steigt dafür von 3 auf 4. Ein dekoriertes Symbol ist nie `sicher_tot` (Grund
+  `dekorator`), außer **alle** seine Decorators sind inert: `property`, `staticmethod`,
+  `classmethod`, `dataclass`, `dataclasses.dataclass`, `functools.*`, `abstractmethod`,
+  `abc.abstractmethod`, `overload`, `typing.overload`, `cached_property`, `contextmanager`,
+  `contextlib.contextmanager`, `wraps`, `total_ordering`, `final`, `typing.final` und `override`.
+  Verschachteltes erbt die Ausnahme, zum Beispiel die Methoden einer per Decorator registrierten
+  Klasse. Das ist die vorsichtige Richtung.
+- **S2, zweite Erweiterung.** `ist_testdatei` erkennt zusätzlich die Ordner `test/`, `spec/`, `e2e/`
+  und `__mocks__/` sowie die Dateinamen `*.test.(jsx|mjs|cjs|mts|cts)` und `*.stories.*`.
+- **S9, Konventionen ergänzt.** Neu dabei sind `pytest_*`, `upgrade`/`downgrade` (alembic),
+  `lambda_handler` und `handle` (Django). Go `init` zählt nur in `.go`-Dateien.
+- **S8, mehr gelesene Dateien.** Der Namensverweis-Scan liest jetzt auch JSON und YAML (ohne
+  Lock-Dateien wie `package-lock.json` oder `pnpm-lock.yaml`), dazu `*.toml`, `*.cfg`, `*.ini`,
+  `Dockerfile*`, `Makefile` und `Procfile`. Bezeichner sind Unicode-fähig (`[^\W\d]\w*`), auch in
+  den Doku-Verweisen.
+- **S11 Kolonie.** Die Agenten starten gestreut über alle Wurzeldateien, gemischt mit
+  `rng.permutation`. Rundlauf gibt es nur, wenn es mehr Agenten als Wurzeln gibt. Wer in eine
+  Sackgasse läuft, startet auf der nächsten Wurzel eines gemeinsamen Rundlauf-Zählers über alle
+  Wurzeln neu, nicht mehr auf seiner eigenen. Neu ist ein budgetgleicher Lauf: Agenten-Schritte
+  ≈ 10 × Dateien, also `ceil(10 × Dateien / 192)` Schritte, höchstens 5000. Er läuft nur mit
+  `--kolonie-budget`, seine Kennzahlen stehen in `statistik` unter `kolonie_budget_*`.
+- **S12 Goldsatz-Metrik.** Gewertet werden nur Gold-Einträge, die im aktuellen Lauf `sicher_tot`
+  sind. Die übrigen zählen als `ignoriert`. Für die Kolonie zählt jetzt die Übereinstimmung über
+  **alle** beurteilten Einträge: ((ja ∧ tote Ecke) + (nein ∧ keine tote Ecke)) / (ja + nein). Die
+  alte Metrik konnte nicht verlieren.
+- **S13.** `parameter()` trägt unter `regeln` einen Digest aller Regelkonstanten: Konventionen,
+  Vorlagen- und Konfig-Endungen, Code-Sprachen, Generiert- und Testmuster, inerte Decorators,
+  Sprachfamilien und Bezeichner-Regex. Das ersetzt das manuelle `tot_regeln=s9`. Ändert sich eine
+  Regel, sind gespeicherte Läufe ungültig, und `vergleichen`/`goldsatz` verlangen „erst analysieren“.
+- **S14 PageRank** (Befund siehe unten). `ruft_auf`-Kanten zwischen verschiedenen Sprachfamilien
+  gehen nicht mehr in PageRank und Hotspots ein. Die Familien sind Python, JS/TS, Rust, Go und Rest.
+  Ihre Zahl steht in `statistik` als `pagerank_quersprache_ausgelassen`. Unsichere Kanten zählen
+  weiter mit 0,5.
+- **Weitere Korrekturen:**
+  - Hotspots schließen Testdateien standardmäßig aus (`mit_tests=False`, auch in den Perzentilen).
+  - „Top-50“ meint überall 50 **Dateien** (`zentral.dateien_top`).
+  - Bereichsnamen tragen immer das Repo (`<repo>/<präfix>`), Submodul-Repos teilen den Pfad ihres
+    Elternrepos.
+  - Die Goldsatz-Bereiche sind die drei größten unter `spaces/`, auch in Submodul-Repos. Gibt es
+    weniger, wird aufgefüllt.
+  - Doppelungen zählen nur Code. `gleiche_datei` und `aehnliche_datei` ignorieren json, yaml,
+    markdown, sql, dotenv und Dateien ohne Sprache.
+  - Ein Ähnlichkeits-Cluster aus nur einer Blob-SHA entfällt. Das ist ein Schutz, nach der
+    Union-Find-Logik kann so ein Cluster gar nicht entstehen.
+  - Die Zeilenregel parst über `_parsen_sicher`.
+  - `laden` meldet nur bei fehlender Tabelle `StandOhneGraph`. Andere DB-Fehler gehen mit ihrem Text
+    als `StandUnlesbar` weiter (CLI Exit 1).
+  - `gemessen_um` kommt aus derselben Lese-Transaktion wie der Graph.
+
+### Abnahme der Welle (`1e409b44`)
+
+| Lauf | Dauer | Peak WS Python (selbst gemessen) | Peak WS Prozessbaum (abgetastet) | Peak privater Commit |
+|---|---|---|---|---|
+| a6) `vermessen` VibeMind, inkrementell nach `PARSER_VERSION` 4 | 227 s | nicht gemessen (Wächter-Fehler, s. u.) | nicht gemessen | – |
+| **a7) `analysieren` VibeMind `--pruefen-reproduzierbar --kolonie-budget`** | **251 s** (Laden 4,0 s, Mathe 122,3 s, Kolonie 0,96 s, budgetgleiche Kolonie 0,76 s, je einmal gerechnet) | **1,10 GB** | 1,47 GB | 1,82 GB |
+| **c5) `goldsatz` VibeMind `--ueberschreiben`** | ~1 s | – | – | – |
+
+- Vor jedem Lauf war der freie Commit über 3 GB, vor a6 4,9 GB und vor a7 4,8 GB. Der Wächter bricht
+  ab bei mehr als 2,5 GB im Prozessbaum oder nach mehr als 30 min. Keiner der Läufe wurde
+  abgebrochen. Das Budget von 2,5 GB hält, die Spitze liegt bei 1,47 GB.
+- **a6 ohne Speichermessung.** Der Wächter hatte einen Fehler im eigenen Skript: Bei
+  `@([double]$ws / 1GB, …)` bindet in PowerShell das Komma stärker als `/`. Jede Abtastung warf deshalb
+  eine Ausnahme, und die wurde verschluckt. Für a6 gibt es also keine Speicherwerte, und der
+  Abbruch-Wächter war während a6 wirkungslos. Vor a7 war der Fehler behoben. Vergleichswert: Der
+  letzte volle Neulauf a0 brauchte 0,85 GB.
+- a6 parste 19 606 Dateien neu, also fast alle. Das ist erwartet, weil `PARSER_VERSION` erhöht wurde.
+  Der Graph ist unverändert groß: 234 882 Knoten, 482 618 Kanten (23 416 unsicher), 89 fehlerhafte
+  Dateien.
+- Reproduzierbar im selben Prozess: `reproduzierbar_mathe`, `reproduzierbar_kolonie` und
+  `reproduzierbar_kolonie_budget` sind alle 1. Export a7: 15,7 MB, sha256 `87cf1d6d…afd51cd`.
+
+### Toter Code (a7)
+
+| Stufe | a5 (vorher) | **a7** | häufigste Gründe (a7) |
+|---|---|---|---|
+| `sicher_tot` | 1 151 (563 Dateien) | **1 109** (546 Dateien) | per Definition alle `unerreichbar` + `alt_90` + `kein_doku_verweis` |
+| `wahrscheinlich_tot` | 29 888 | 29 923 | `unerreichbar` 27 648, `alt_90` 24 345, `kein_doku_verweis` 19 951, `namensverweis` 9 163, `doku_verweis` 8 423, `rust_r22` 4 291, `jsx_komponente` 3 839, `ts_klasse` 3 181, `nur_unsicher` 2 275, `methode_lebender_klasse` 1 448, `dunder` 696, **`dekorator` 479**, `fehlerhaft` 453, **`konvention` 348**, `spezial_fehlt` 179 |
+| `verdaechtig` | 21 911 | 21 900 | `nur_test` |
+
+- **Übergänge von a5 nach a7:** Von den 1 151 alten `sicher_tot` bleiben 1 108. 33 wurden
+  `wahrscheinlich_tot` wegen `dekorator`, 10 wegen `namensverweis` (durch die neu gelesenen
+  Konfig-/Datendateien). Ein Symbol ist neu `sicher_tot`, nämlich coding-engine
+  `redis_tool.py#RedisTool.llen`. In a5 hat es nur ein Tokenizer-Artefakt gerettet: Der ASCII-Regex
+  zerlegte „Füllen“ in `F` und `llen`, belegt in `playwright_agent.py:317`. Mit Unicode-Bezeichnern
+  fällt dieser Scheintreffer weg. Das ist richtig so.
+- 109 Funde haben `dekorator` als einzige Ausnahme. 33 davon waren vorher `sicher_tot`, die übrigen
+  76 hatte schon der Namensverweis gerettet.
+- **Die zwei bekannten Fehlgriffe** sind jetzt `wahrscheinlich_tot` mit `dekorator`. Beide sind
+  weiter `unerreichbar`, `alt_90` und `kein_doku_verweis`:
+  - coding-engine `cell_cli/commands/marketplace.py#list_installed`, ein Click-Kommando
+  - coding-engine `src/colony/k8s/operator.py#cell_health_timer`, ein `kopf.timer`
+- Nach Endung verteilen sich die 1 109 so: 839 `.py`, 180 `.ts`, 75 `.js`, 11 `.tsx` und 4 `.jsx`.
+  Die meisten liegen in coding-engine (372), danach folgen hermes-agent (222), vibemind-os (149),
+  swe_desgine (125), voice (103) und openclaw (50). 14 Namen haben weniger als 3 Zeichen.
+
+### S14: Befund zu den PageRank-Spitzen (a5, nur lesend belegt)
+
+Untersucht wurden die 10 größten PageRank-Symbole aus a5. Für jedes wurden die eingehenden Kanten
+nach Art, Sicherheit und Sprachfamilie der Quelle gezählt, nur lesend aus `graph.sqlite`.
+
+| Rang a5 | Symbol | Eingang | Herkunft |
+|---|---|---|---|
+| 1 (0,0114) | hermes-agent `ui-tui/src/components/branding.tsx#SessionPanel.strip` | 2 172 | **2 169 unsichere `ruft_auf` aus Python-Dateien** (`.strip()` per Namens-Rückfall auf eine TSX-Methode), 2 aus TS |
+| 2 (0,0055) | coding-engine `cell_cli/commands/cells.py#list` | 1 626 | 1 624 unsichere `ruft_auf` aus Python, gleiche Familie (eingebautes `list(...)` per Name auf die Funktion `list`) |
+| 3, 4, 7, 10 | coding-engine `cell_cli/config.py#ensure_config_dir`, `cells.py#get_auth_headers`, `config.py#get_credentials`, `config.py#get_config` | 5 / 4 / 8 / 25 | wenige Kanten, sicher oder unsicher, alle Python |
+| 5, 6, 9 | hermes-agent `get_hermes_home`, `PlatformConfig`, `load_config` | 304 / 943 / 462 | fast alle sicher, Python, echte Zentralität |
+| 8 (0,0018) | hermes-agent `apps/desktop/…/markdown-text.tsx#useOpenMediaFile.open` | 425 | **420 unsichere `ruft_auf` aus Python** (`open(...)` → TSX-Methode `open`) |
+
+**Entscheidung:** Rang 1 und Rang 8 stammen aus sprachübergreifenden, unsicheren Rückfallkanten.
+Deshalb gilt die Regel aus S14. Auf VibeMind fallen damit 5 405 `ruft_auf`-Kanten aus PageRank und
+Hotspots. Danach führen in a7 coding-engine `cells.py#list` (0,0056), `config.py#ensure_config_dir`,
+hermes-agent `get_hermes_home`, `cells.py#get_auth_headers` und `PlatformConfig`.
+
+**Offen:** Rang 1 in a7, `cells.py#list`, ist weiterhin ein Artefakt, diesmal innerhalb derselben
+Sprache. Das eingebaute `list(...)` wird über den Namen der gleichnamigen Funktion zugeordnet. Die
+Kanten sind unsicher und zählen nur mit 0,5, die Regel aus S14 greift aber nicht. Ein Fix gehört in die
+Namensauflösung von Stufe 1, etwa „keine Rückfallkante für Python-Builtins“, und wäre ein eigenes
+Ruling.
+
+### Weitere Zahlen (a7)
+
+- **Hotspots ohne Testdateien:**
+  - Top 10: hermes-agent `run_agent.py` (0,99819), `hermes_cli/config.py`, `agent/auxiliary_client.py`,
+    openfang `crates/openfang-kernel/src/kernel.rs`, hermes-agent `hermes_cli/auth.py`,
+    `plugins/platforms/telegram/adapter.py`, `hermes_state.py`, `plugins/platforms/discord/adapter.py`,
+    `apps/desktop/electron/main.ts` und `gateway/platforms/base.py`.
+  - In a5 waren 5 der Top 10 Testdateien.
+- **Betweenness** ist unverändert, Rang 1 bleibt `run_agent.py`.
+- **Bereiche:**
+  - 428 Bereiche, `(isoliert)` mit 8 387 Dateien. Leiden ist unverändert, nur die Namen tragen jetzt
+    das Repo.
+  - Die größten sind `…/hermes-agent/apps/desktop/electron` (829), `…/coding-engine/src/services`
+    (745), `…/hermes-agent/tests/gateway` (552) und `…/spaces/video/laura/services/local-api` (518).
+  - Der Goldsatz wählt `bereich:2`, `bereich:4` und `bereich:5`, alle drei unter `spaces/`.
+- **Doppelungen** (nur noch Code):
+  - `gleiche_datei` 188, vorher 261. Größtes Beispiel ist `llm_client.py` fünfmal.
+  - `gleiches_symbol` 1 329, unverändert. Größtes Beispiel ist `on_change` in 114 coding-engine-Services.
+  - `aehnliche_datei` 142 Cluster, vorher 201. Größtes Beispiel sind 28 `tests/test_agent_task_*.py`
+    (0,9046).
+  - 36 LSH-Eimer wurden übersprungen.
+- `luecken` ist 0/0. 709 generierte Symbole wurden übersprungen.
+
+### Kolonie gegen Mathe (a7)
+
+| | Mathe | Kolonie Standard (192 × 400) | Kolonie budgetgleich (192 × 1 022 ≈ 10 × 19 608) |
+|---|---|---|---|
+| Laufzeit | 122,3 s | 0,96 s | 0,76 s |
+| Reproduzierbar | ja | ja | ja |
+| Abdeckung | alle 19 608 Dateien | **2 893 besucht (14,8 %)**, 16 715 tote Ecken (a5: 486 besucht) | 2 897 besucht (14,8 %), 16 711 tote Ecken |
+| Zentrum ∩ PageRank-Top-50-Dateien | – | **13 von 50** (a5: 7) | 13 von 50 |
+| Dateien mit `sicher_tot` in toten Ecken | – | 371 von 546 | 370 von 546 |
+| Dateien mit Totfund in toten Ecken | – | 4 324 von 5 334 | 4 321 von 5 334 |
+| Bereiche | 428 | 1 (2 Dateien) | 1 |
+
+**Fazit (ehrlich):**
+
+- Der gestreute Start mit rundlaufendem Neustart behebt den Startfehler. Die Kolonie besucht
+  sechsmal so viele Dateien wie in a5, und die Überlappung mit dem Zentrum steigt von 7 auf 13.
+- Mehr Schritte bringen fast nichts. Der budgetgleiche Lauf mit 2,6-mal so vielen Schritten besucht
+  nur 4 Dateien mehr. Die Abdeckung ist also durch das begrenzt, was von den Wurzeln über Kanten
+  erreichbar ist, nicht durch das Budget. 85 % der Dateien bleiben tote Ecken.
+- Dass die toten Ecken viele Totfunde enthalten (371 von 546 Dateien mit `sicher_tot`), ist darum kein
+  eigenes Signal. Nicht besucht wird ohnehin fast alles.
+- Ins Kolonie-Zentrum geraten auch 3 generierte Bundles (`dist-embedded/*.js`). Die Kolonie kennt die
+  Regel aus S9 nicht.
+- Als Herausforderer bleibt die Kolonie bei Bereichen (1 gegen 428) und Zentrum klar hinter der
+  Mathe. Endgültig misst das `vergleichen` am Goldsatz. Seit S12 kann die Kolonie dort auch verlieren.
+
+## Vorgeschichte: Ergebnisse VibeMind vor der Final-Fix-Welle (Lauf a5, ersetzt; `1e409b44`, 20 Repos, 19 608 Dateien, 205 k Symbole)
+
+Alles in diesem Abschnitt beschreibt den Stand **vor** S10 bis S14. Die gültigen Zahlen stehen oben im
+Abschnitt zur Final-Fix-Welle.
 
 ### Toter Code je Stufe (nach S8, S9 und Fix-Runde 3, Lauf a5)
 
@@ -252,7 +444,7 @@ alle aus hermes-agent. PageRank: Rang 1 ist hermes-agent `ui-tui/src/components/
 | tote Ecken gegen toten Code (Lauf a5) | 5 090 von 5 341 Dateien mit Totfund liegen in toten Ecken, bei `sicher_tot` 486 von 563 Dateien | |
 | Bereiche | 428 | 2 (4 und 2 Dateien, coding-engine `cell_cli`/`mind` und ein `dist-embedded`-Bundle) |
 
-Fazit: Die Kolonie ist schnell und deterministisch. Mit den MCMP-Standardwerten (192 Agenten, 400
+Fazit (a5, überholt; Startfehler seit S11 behoben, siehe Final-Fix-Welle): Die Kolonie ist schnell und deterministisch. Mit den MCMP-Standardwerten (192 Agenten, 400
 Schritte) bleibt sie auf dem VibeMind-Graphen aber in wenigen Einstiegsnachbarschaften der
 coding-engine hängen. Dass sie fast alle toten Dateien „findet“, liegt nur daran, dass sie 97,5 % aller
 Dateien nie besucht. Ein Signal ist das nicht. Als Herausforderer verliert sie nach diesen Zahlen bei
@@ -292,19 +484,28 @@ Bereichen und Zentrum klar. Gemessen wird das endgültig mit `vergleichen` am Go
 - **E4:** Methoden folgen ihrer Klasse. Tote Methoden in lebenden Klassen bleiben unentdeckt (vorsichtige
   Richtung). Umgekehrt würde eine fälschlich tote Klasse alle ihre Methoden mitziehen. Seit S8 rettet
   der Namensverweis Methoden, deren Name anderswo vorkommt (`obj.methode()`).
-- **S1:** Hotspot-Größe = Anzahl Symbole, nicht Zeilen. **S2:** Testdateien nur nach Namensmuster
-  (plus `conftest.py`). **S3:** `luecken` nach allen Analysen. **S4:** Go-Methoden, TS-Klassen und
+- **S1:** Hotspot-Größe = Anzahl Symbole, nicht Zeilen. Testdateien zählen in den Hotspots
+  standardmäßig nicht. **S2:** Testdateien nur nach Namens- und Ordnermuster (plus `conftest.py`,
+  seit der Final-Fix-Welle auch `test/`, `spec/`, `e2e/`, `__mocks__/`, `*.stories.*`). **S3:** `luecken` nach allen Analysen. **S4:** Go-Methoden, TS-Klassen und
   JSX-Komponenten nie `sicher_tot`. Seit S8 erben verschachtelte Symbole diese Ausnahmen. **S5:** Ein
   Doku-Verweis zählt auch aus der Doku von Vorfahren-Repos. **S6:** Zeilenregel für `gleiches_symbol`
   über erneutes Parsen der Kandidaten. **S7:** Ähnlichkeits-Cluster per Union-Find, Eimer über 50 Blobs
   übersprungen (36 bei VibeMind). **S8:** Namensverweis-Wächter und vererbte S4/R22-Ausnahmen (s. o.).
   Er ist absichtlich grob: Ein gleichnamiger Bezeichner irgendwo im Code genügt zum Abstufen, auch ein
   zufällig gleicher Name. Das ist die sichere Richtung. Namen unter 3 Zeichen werden nicht geprüft.
-  Seit Fix-Runde 3 zählen auch HTML und Vorlagen (Beispiel `handsPage`, s. o.). Doku- und Datendateien
-  (Markdown, YAML, JSON, SQL) zählen nicht, dort registrierte Namen retten also nicht. Generierte Dateien
+  Seit Fix-Runde 3 zählen auch HTML und Vorlagen (Beispiel `handsPage`, s. o.). Seit der
+  Final-Fix-Welle kommen JSON und YAML (ohne Lock-Dateien) sowie `*.toml`, `*.cfg`, `*.ini`,
+  `Dockerfile*`, `Makefile` und `Procfile` dazu. Markdown und SQL zählen weiter nicht. Generierte Dateien
   verweisen nie. **S9:** generierte Dateien ohne Fund (`tot_generiert_uebersprungen`),
   Konventionsnamen nie `sicher_tot` (Grund `konvention`). Die Muster sind feste Listen. Andere
   Konventionen (z. B. camelCase-`onClick`) deckt erst der Namensverweis ab.
+- **S10:** Dekorierte Symbole sind nie `sicher_tot`, außer alle Decorators sind inert. Auch tote
+  dekorierte Funktionen erscheinen deshalb nur als `wahrscheinlich_tot`. Erkannt wird nur der
+  Ausdruckskopf: `@register(...)` und `@app.register(...)` gelten als verschiedene Namen, beide als
+  nicht inert. **S11:** Mehr Schritte erhöhen die Abdeckung der Kolonie kaum (s. o.). **S12:** Der
+  Goldsatz wertet nur Einträge, die aktuell `sicher_tot` sind. **S13:** Jede Regeländerung erzwingt
+  eine Neuanalyse. **S14:** Echte sprachübergreifende Aufrufe (selten) zählen nicht in PageRank und
+  Hotspots. Gleichsprachige Builtin-Artefakte wie `cells.py#list` bleiben bestehen.
 - **R15:** TS-Namensimporte sind unsicher. TS gilt als erreichbar, sobald irgendeine Kante trifft.
 - **R22:** Rust ist nie `sicher_tot` (4 291 Rust-Symbole stehen in `wahrscheinlich_tot`).
 - **Dynamische Aufrufe:** Registries, Plugins, String-Dispatch, Routen-Registrierung, Callbacks und
@@ -314,8 +515,8 @@ Bereichen und Zentrum klar. Gemessen wird das endgültig mit `vergleichen` am Go
   Build-Ausgabe abgedeckt, seit Fix-Runde 3 auch Verweise aus HTML und Vorlagen. Übrig bleiben Namen,
   die nur in YAML oder JSON registriert sind, aus Strings zusammengesetzt werden (`getattr(x, "do_" + m)`
   mit unbekanntem Präfix) oder kürzer als 3 Zeichen sind (14 `sicher_tot`).
-- Bereichsnamen tragen bei Bereichen aus einem Repo kein Repo-Präfix (`src/services` kann in jedem Repo
-  liegen).
+- Bereichsnamen tragen seit der Final-Fix-Welle immer das Repo (`<repo>/<präfix>`). Die Tabelle im
+  Abschnitt „Vorgeschichte“ zeigt noch die alten Namen ohne Präfix.
 - Laufzeit: `laufzeit_mathe_ms` ist nicht nach Teilschritten aufgeschlüsselt. Mit
   `--pruefen-reproduzierbar` verdoppelt sich die Laufzeit.
 
@@ -323,9 +524,9 @@ Bereichen und Zentrum klar. Gemessen wird das endgültig mit `vergleichen` am Go
 
 Die Spec-Abnahme „27 von 30 bestätigt“ ist **noch nicht gemessen**. Sie entsteht erst mit deinen Urteilen.
 
-1. `docs/selbstbild/goldsatz-vibemind.yaml` öffnen. Er wurde nach Fix-Runde 3 aus Lauf a5 neu erzeugt
-   und trägt `commit: 1e409b44…`. Er enthält 40 `sicher_tot`-Kandidaten, 15 Doppelungen und die 3
-   größten Bereiche. Alle Urteile stehen auf `offen`. **Nicht** erneut `goldsatz` darauf laufen
+1. `docs/selbstbild/goldsatz-vibemind.yaml` öffnen. Er wurde nach der Final-Fix-Welle aus Lauf a7
+   neu erzeugt und trägt `commit: 1e409b44…`. Er enthält 40 `sicher_tot`-Kandidaten, 15 Doppelungen
+   und die 3 größten Bereiche unter `spaces/` (`bereich:2`, `bereich:4` und `bereich:5`). Alle Urteile stehen auf `offen`. **Nicht** erneut `goldsatz` darauf laufen
    lassen: Ohne `--ueberschreiben` lehnt der Befehl ab, mit dem Schalter wären deine Urteile weg.
    - Bei `tot` und `doppelt` je Eintrag `urteil: ja` (stimmt) oder `urteil: nein` (stimmt nicht)
      setzen. Unsichere Einträge auf `offen` lassen, sie zählen nicht.
@@ -345,7 +546,7 @@ mehr. Ist der Graph inzwischen neu vermessen, vorher `analysieren` laufen lassen
 `vergleichen` „erst analysieren“:
 
 ```powershell
-$env:PYTHONPATH="src"; .\.venv-selbstbild\Scripts\python -m selbstbild analysieren C:\Users\User\Desktop\Vibemind_V1 --pruefen-reproduzierbar
+$env:PYTHONPATH="src"; .\.venv-selbstbild\Scripts\python -m selbstbild analysieren C:\Users\User\Desktop\Vibemind_V1 --pruefen-reproduzierbar --kolonie-budget
 ```
 
 Achtung: Der Goldsatz gilt für den Commit `1e409b44`. Bei einem anderen Commit warnt `vergleichen` auf
