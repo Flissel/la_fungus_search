@@ -167,3 +167,109 @@ def test_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     s.write_text("{kaputt", encoding="utf-8")
     assert main(["hooks", "einspielen", str(s)]) == 2
     assert "settings" in capsys.readouterr().err
+
+
+def test_cli_ausgabe_nicht_cp1252(tmp_path: Path, capsysbinary: pytest.CaptureFixture[bytes]) -> None:
+    s = tmp_path / "settings.local.json"
+    _schreibe(s, {"permissions": {"allow": ["Bash(echo \u2192)"]}})
+    assert main(["hooks", "einspielen", str(s)]) == 0
+    assert EIN.encode() in capsysbinary.readouterr().out
+    assert EIN in s.read_text(encoding="utf-8")
+    assert main(["hooks", "entfernen", str(s)]) == 0
+    assert "\u2192".encode("utf-8") in capsysbinary.readouterr().out
+
+
+def test_cli_ausgabe_ohne_buffer_und_cp1252(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import sys
+
+    class Ohne(io.TextIOBase):
+        def __init__(self) -> None:
+            self.teile: list[str] = []
+
+        encoding = "cp1252"
+
+        def write(self, t: str) -> int:
+            t.encode("cp1252")  # wirft wie echtes cp1252-stdout
+            self.teile.append(t)
+            return len(t)
+
+    s = tmp_path / "settings.local.json"
+    _schreibe(s, {"permissions": {"allow": ["Bash(echo \u2192)"]}})
+    aus = Ohne()
+    monkeypatch.setattr(sys, "stdout", aus)
+    assert main(["hooks", "einspielen", str(s)]) == 0
+    assert EIN in "".join(aus.teile) and EIN in s.read_text(encoding="utf-8")
+
+
+def test_bom_bleibt(tmp_path: Path) -> None:
+    s = tmp_path / "settings.local.json"
+    s.write_bytes(b"\xef\xbb\xbf" + json.dumps(FREMD, indent=2).encode("utf-8") + b"\n")
+    einspielen(s, PY)
+    roh = s.read_bytes()
+    assert roh.startswith(b"\xef\xbb\xbf") and not roh.startswith(b"\xef\xbb\xbf\xef\xbb\xbf")
+    assert EIN in json.loads(roh.decode("utf-8-sig"))["hooks"]["UserPromptSubmit"][-1]["hooks"][0]["command"]
+    sich = (tmp_path / "settings.local.json.selbstbild-sicherung").read_bytes()
+    assert sich.startswith(b"\xef\xbb\xbf")
+    entfernen(s)
+    assert s.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_crlf_diff_nur_hookzeilen_und_rundlauf(tmp_path: Path) -> None:
+    s = tmp_path / "settings.local.json"
+    original = (json.dumps(FREMD, indent=2) + "\n").replace("\n", "\r\n").encode("utf-8")
+    s.write_bytes(original)
+    diff = einspielen(s, PY)
+    zeilen = diff.splitlines()
+    assert not [z for z in zeilen if z.startswith("-") and not z.startswith("---")]
+    assert any(EIN in z for z in zeilen if z.startswith("+"))
+    roh = s.read_bytes()
+    assert b"\r\n" in roh and b"\n" not in roh.replace(b"\r\n", b"")
+    entfernen(s)
+    assert s.read_bytes() == original
+
+
+def test_relativer_python_wird_absolut(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    s = tmp_path / "settings.local.json"
+    einspielen(s, Path("venv/python.exe"))
+    cmd = json.loads(s.read_text(encoding="utf-8"))["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+    assert cmd == f'"{(tmp_path / "venv" / "python.exe").resolve().as_posix()}" {EIN}'
+
+
+@pytest.mark.parametrize("vorher", ["fremd", "neu", "weg"])
+def test_wettlauf_wirft_und_laesst_fremdes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, vorher: str) -> None:
+    from selbstbild.hooks import installieren
+
+    s = tmp_path / "settings.local.json"
+    if vorher != "neu":
+        _schreibe(s, FREMD)
+    echt = installieren._text
+
+    def dazwischen(daten: dict) -> str:
+        if vorher == "weg":
+            s.unlink()
+        else:
+            s.write_text('{"fremd": true}\n', encoding="utf-8")
+        return echt(daten)
+
+    monkeypatch.setattr(installieren, "_text", dazwischen)
+    with pytest.raises(RuntimeError, match="waehrend des Einspielens"):
+        einspielen(s, PY)
+    if vorher == "weg":
+        assert not s.exists()
+    else:
+        assert s.read_text(encoding="utf-8") == '{"fremd": true}\n'
+    assert not list(tmp_path.glob("*.tmp")) and not list(tmp_path.glob("*.selbstbild-sicherung"))
+
+
+def test_cli_wettlauf_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                             capsys: pytest.CaptureFixture[str]) -> None:
+    from selbstbild.hooks import installieren
+
+    def boese(*_a: object, **_k: object) -> str:
+        raise RuntimeError("settings waehrend des Einspielens geaendert")
+
+    monkeypatch.setattr(installieren, "einspielen", boese)
+    assert main(["hooks", "einspielen", str(tmp_path / "x.json")]) == 2
+    assert "waehrend" in capsys.readouterr().err

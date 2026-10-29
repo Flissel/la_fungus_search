@@ -11,7 +11,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-SICHERUNG = ".selbstbild-sicherung"
+BOM = b"\xef\xbb\xbf"
+SICHERUNG =".selbstbild-sicherung"
 PTH_NAME = "selbstbild-src.pth"
 SCHREIB_MATCHER = "Write|Edit|MultiEdit|NotebookEdit"
 # (Ereignis, Modul, matcher)
@@ -31,17 +32,29 @@ def _eigen(hook: dict[str, Any]) -> bool:
     return isinstance(cmd, str) and any(m in cmd for m in _MARKER)
 
 
-def _lesen(settings: Path) -> tuple[str, dict[str, Any]]:
+class _Stand:
+    """Gelesener Ausgangszustand: Rohbytes (None = Datei fehlt), Text, Objekt, BOM, Zeilenende."""
+
+    def __init__(self, roh: bytes | None, text: str, daten: dict[str, Any]) -> None:
+        self.roh = roh
+        self.text = text
+        self.daten = daten
+        self.bom = roh is not None and roh.startswith(BOM)
+        self.crlf = "\r\n" in text
+
+
+def _lesen(settings: Path) -> _Stand:
     if not settings.exists():
-        return "", {}
-    text = settings.read_bytes().decode("utf-8")
+        return _Stand(None, "", {})
+    roh = settings.read_bytes()
+    text = roh.decode("utf-8-sig")
     try:
         daten = json.loads(text)
     except json.JSONDecodeError as e:
         raise ValueError(f"settings kein gueltiges JSON: {settings} ({e.msg})") from e
     if not isinstance(daten, dict):
         raise ValueError(f"settings ist kein JSON-Objekt: {settings}")
-    return text, daten
+    return _Stand(roh, text, daten)
 
 
 def _ereignis(daten: dict[str, Any], name: str, anlegen: bool) -> list[Any] | None:
@@ -101,15 +114,28 @@ def _diff(alt: str, neu: str, name: str) -> str:
                                         fromfile=f"{name} (alt)", tofile=f"{name} (neu)"))
 
 
-def _schreiben(settings: Path, alt: str, neu: str, vorhanden: bool) -> None:
+def _atomar(ziel: Path, inhalt: bytes) -> None:
+    tmp = ziel.with_name(f"{ziel.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_bytes(inhalt)
+        os.replace(tmp, ziel)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _schreiben(settings: Path, stand: _Stand, neu_roh: bytes) -> None:
+    """Atomar ersetzen, Sicherung einmalig; wurde die Datei inzwischen veraendert: RuntimeError."""
     settings.parent.mkdir(parents=True, exist_ok=True)
-    if vorhanden:
-        sich = settings.with_name(settings.name + SICHERUNG)
-        if not sich.exists():
-            sich.write_bytes(alt.encode("utf-8"))
     tmp = settings.with_name(f"{settings.name}.{os.getpid()}.tmp")
     try:
-        tmp.write_bytes(neu.encode("utf-8"))
+        tmp.write_bytes(neu_roh)
+        aktuell = settings.read_bytes() if settings.exists() else None
+        if aktuell != stand.roh:
+            raise RuntimeError("settings waehrend des Einspielens geaendert – bitte erneut")
+        if stand.roh is not None:
+            sich = settings.with_name(settings.name + SICHERUNG)
+            if not sich.exists():
+                _atomar(sich, stand.roh)
         os.replace(tmp, settings)
     finally:
         tmp.unlink(missing_ok=True)
@@ -119,9 +145,18 @@ def _text(daten: dict[str, Any]) -> str:
     return json.dumps(daten, indent=2, ensure_ascii=False) + "\n"
 
 
+def _ergebnis(stand: _Stand, daten: dict[str, Any], name: str) -> tuple[str, bytes]:
+    """Diff auf dem tatsaechlich geschriebenen Text; Bytes mit BOM und Zeilenende des Originals."""
+    neu = _text(daten)
+    if stand.crlf:
+        neu = neu.replace("\n", "\r\n")
+    return _diff(stand.text, neu, name), (BOM if stand.bom else b"") + neu.encode("utf-8")
+
+
 def einspielen(settings: Path, python: Path, *, trocken: bool = False) -> str:
-    alt, daten = _lesen(settings)
-    vorhanden = settings.exists()
+    python = Path(python).resolve()
+    stand = _lesen(settings)
+    daten = stand.daten
     geaendert = False
     for ereignis, modul, matcher in _HOOKS:
         soll = _gewollt(python, modul)
@@ -138,14 +173,15 @@ def einspielen(settings: Path, python: Path, *, trocken: bool = False) -> str:
         geaendert = True
     if not geaendert:
         return ""
-    neu = _text(daten)
+    diff, neu_roh = _ergebnis(stand, daten, settings.name)
     if not trocken:
-        _schreiben(settings, alt, neu, vorhanden)
-    return _diff(alt, neu, settings.name)
+        _schreiben(settings, stand, neu_roh)
+    return diff
 
 
 def entfernen(settings: Path) -> str:
-    alt, daten = _lesen(settings)
+    stand = _lesen(settings)
+    daten = stand.daten
     geaendert = False
     for ereignis, _, _ in _HOOKS:
         liste = _ereignis(daten, ereignis, anlegen=False)
@@ -158,9 +194,9 @@ def entfernen(settings: Path) -> str:
         return ""
     if not daten["hooks"]:
         del daten["hooks"]
-    neu = _text(daten)
-    _schreiben(settings, alt, neu, True)
-    return _diff(alt, neu, settings.name)
+    diff, neu_roh = _ergebnis(stand, daten, settings.name)
+    _schreiben(settings, stand, neu_roh)
+    return diff
 
 
 def pth_anlegen(venv: Path, src: Path) -> Path:

@@ -235,6 +235,18 @@ def _pruefen(args: argparse.Namespace) -> int:
     return 1 if verstoesse else 0
 
 
+def _text_ausgeben(text: str) -> None:
+    """UTF-8 ueber stdout.buffer; ohne buffer ersatzweise backslashreplace (nie ein UnicodeEncodeError)."""
+    puffer = getattr(sys.stdout, "buffer", None)
+    if puffer is not None:
+        sys.stdout.flush()
+        puffer.write(text.encode("utf-8"))
+        puffer.flush()
+        return
+    kodierung = getattr(sys.stdout, "encoding", None) or "utf-8"
+    sys.stdout.write(text.encode(kodierung, errors="backslashreplace").decode(kodierung))
+
+
 def _hooks(args: argparse.Namespace) -> int:
     from selbstbild.hooks.installieren import einspielen, entfernen, pth_anlegen
 
@@ -246,9 +258,9 @@ def _hooks(args: argparse.Namespace) -> int:
         else:
             _ausgeben({"pth": str(pth_anlegen(args.venv, args.src))})
             return 0
-    except (ValueError, OSError) as e:
+        _text_ausgeben(diff if diff else "keine Aenderung\n")
+    except (ValueError, OSError, RuntimeError) as e:
         return _fehler(f"hooks {args.aktion}: {e}", 2)
-    sys.stdout.write(diff if diff else "keine Aenderung\n")
     return 0
 
 
