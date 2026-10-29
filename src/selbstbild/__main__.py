@@ -235,6 +235,23 @@ def _pruefen(args: argparse.Namespace) -> int:
     return 1 if verstoesse else 0
 
 
+def _hooks(args: argparse.Namespace) -> int:
+    from selbstbild.hooks.installieren import einspielen, entfernen, pth_anlegen
+
+    try:
+        if args.aktion == "einspielen":
+            diff = einspielen(args.settings, args.python or Path(sys.executable), trocken=args.trocken)
+        elif args.aktion == "entfernen":
+            diff = entfernen(args.settings)
+        else:
+            _ausgeben({"pth": str(pth_anlegen(args.venv, args.src))})
+            return 0
+    except (ValueError, OSError) as e:
+        return _fehler(f"hooks {args.aktion}: {e}", 2)
+    sys.stdout.write(diff if diff else "keine Aenderung\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="selbstbild", description="Vermisst ein Git-Repo als Graph.")
     p.add_argument("-v", "--ausfuehrlich", action="store_true", help="Fortschritt nach stderr")
@@ -278,6 +295,17 @@ def main(argv: list[str] | None = None) -> int:
     sm.add_argument("--modell", action="append", default=[], help="Embedding-Modell (paarweise mit --ollama)")
     sm.add_argument("--transkripte", type=Path, default=None, help="Ordner mit Claude-Code-JSONL-Transkripten")
     sm.add_argument("-n", type=int, default=20, help="Stichprobengroesse der Transkript-Prompts")
+    hk = befehle.add_parser("hooks", help="Claude-Code-Hooks in eine settings.local.json ein- oder austragen")
+    aktionen = hk.add_subparsers(dest="aktion", required=True)
+    hk_ein = aktionen.add_parser("einspielen", help="Hooks eintragen, Unified-Diff ausgeben")
+    hk_ein.add_argument("settings", type=Path)
+    hk_ein.add_argument("--trocken", action="store_true", help="nur Diff, nichts schreiben")
+    hk_ein.add_argument("--python", type=Path, default=None, help="Interpreter der Hooks (Standard: dieser)")
+    hk_weg = aktionen.add_parser("entfernen", help="nur die eigenen Hooks austragen")
+    hk_weg.add_argument("settings", type=Path)
+    hk_pth = aktionen.add_parser("pth", help="selbstbild-src.pth in site-packages des venv anlegen")
+    hk_pth.add_argument("venv", type=Path)
+    hk_pth.add_argument("src", type=Path)
     args = p.parse_args(argv)
 
     if args.ausfuehrlich:
@@ -309,6 +337,8 @@ def main(argv: list[str] | None = None) -> int:
         return _suchen(args)
     if args.befehl == "pruefen":
         return _pruefen(args)
+    if args.befehl == "hooks":
+        return _hooks(args)
     if args.befehl == "suche-messen":
         return _suche_messen(args)
     return _status(args.wurzel)
