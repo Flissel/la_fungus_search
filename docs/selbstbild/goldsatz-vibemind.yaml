@@ -1,0 +1,398 @@
+# Goldsatz-Kandidaten (Selbstbild). So fuellst du ihn aus:
+#  - tot / doppelt: setze je Eintrag `urteil` auf ja (stimmt: wirklich tot bzw. wirklich doppelt),
+#    nein (stimmt nicht) oder lass `offen` (zaehlt nicht).
+#  - bereiche: trage unter `erwartet` Pfad-Praefixe ein, die deiner Meinung nach zu diesem
+#    Bereich gehoeren (z. B. `src/selbstbild/`).
+#  - zentral: optional, Datei-Ids (datei:<repo>:<pfad>), die du fuer zentral haeltst.
+bereiche:
+- dateien: 829
+  erwartet: []
+  id: bereich:2
+  name: apps/desktop/electron
+- dateien: 745
+  erwartet: []
+  id: bereich:3
+  name: src/services
+- dateien: 552
+  erwartet: []
+  id: bereich:4
+  name: tests/gateway
+doppelt:
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/fetch/event_task.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/n8n/event_task.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/taskmanager/event_task.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/tavily/event_task.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/time/event_task.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/fetch/event_task.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/n8n/event_task.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/taskmanager/event_task.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/tavily/event_task.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/time/event_task.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/fetch/fetch_constants.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/n8n/n8n_constants.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/npm/constants.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/postgres/constants.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/prisma/constants.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/qdrant/constants.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/taskmanager/taskmanager_constants.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/tavily/tavily_constants.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/time/time_constants.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/fetch/fetch_constants.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/n8n/n8n_constants.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/postgres/constants.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/qdrant/constants.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/taskmanager/taskmanager_constants.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/tavily/tavily_constants.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/time/time_constants.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/fetch/user_interaction_utils.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/n8n/user_interaction_utils.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/taskmanager/user_interaction_utils.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/tavily/user_interaction_utils.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/time/user_interaction_utils.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/fetch/user_interaction_utils.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/n8n/user_interaction_utils.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/taskmanager/user_interaction_utils.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/tavily/user_interaction_utils.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/time/user_interaction_utils.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/agents/deploy_agent.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/agents/migrate_agent.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/agents/monitor_agent.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/grpc_host_pb2.py
+  - datei:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/grpc_worker/proto/propagation_pb2.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/grpc_host_pb2_grpc.py
+  - datei:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/grpc_worker/proto/propagation_pb2_grpc.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/postgres/simulate.py
+  - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/supermemory/simulate.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/postgres/simulate.py
+  - datei:vibemind/vibemind-os:examples/mcp-agents/supermemory/simulate.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/api_gen.py
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/architect.py
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/auth_gen.py
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/backend_gen.py
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/database_gen.py
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/fixer.py
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/frontend_gen.py
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/infra_gen.py
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/reviewer.py
+  - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/tester.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:src/services/agent_task_demoter.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/agent_task_deprioritizer.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/agent_workflow_demotioner.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/agent_workflow_deprioritizer.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_data_classifier.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_data_scorer.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_step_reorchestrator.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:src/services/agent_task_failover.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/agent_task_reassigner.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_data_compactor.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_data_decryptor.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_data_embedder.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_data_prefetcher.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_step_conditioner.py
+  - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_step_retirer.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:tests/test_agent_task_forker.py
+  - datei:vibemind/vibemind-os/coding-engine:tests/test_agent_task_splitter.py
+  urteil: offen
+- aehnlichkeit: '1.0000'
+  art: aehnliche_datei
+  mitglieder:
+  - datei:vibemind/vibemind-os/coding-engine:tests/test_agent_workflow_stopper.py
+  - datei:vibemind/vibemind-os/coding-engine:tests/test_agent_workflow_terminator.py
+  urteil: offen
+tot:
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/brain/the_brain/tribe:tribev2/pl_module.py#BrainModule._run_step
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/brain/the_brain/tribe:tribev2/utils.py#get_subject_weights
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/error_classifier.py#ErrorSeverity
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/tools/file_write_tool.py#FileWriteTool.create_coding_task
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/tools/fix_migrate_tool.py#FixMigrateTool._create_backup
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/time/user_interaction_utils.py#create_ask_user_tool.AskUserArgs
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/mind/clarification_gate.py#ClarificationGate.stop_queue
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/coding-engine:src/mind/event_bus.py#agent_started_event
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/coding-engine:web-app/backend-app/core/security.py#decode_access_token
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/openfang:sdk/python/openfang_client.py#_AgentResource.patch_config
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:agent/lsp/servers.py#_root_clangd
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/electron/bootstrap-runner.ts#resolveWindowsPowerShell
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/scripts/notarize.mjs#resolveApiKeyPath
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/scripts/run-electron-builder.mjs#distBinary
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/src/app/chat/composer/focus.ts#requestComposerFocus
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/src/app/chat/composer/hooks/use-composer-queue.ts#useComposerQueue
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/src/app/pet-overlay/pet-overlay-app.tsx#PetOverlayApp.onPetPointerDown
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/src/components/pane-shell/tree/grid-model.ts#initRows
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:hermes_cli/gateway_enroll.py#_resolve_connector_url
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:plugins/observability/langfuse/__init__.py#on_pre_llm_request
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:ui-tui/src/components/billingOverlay.tsx#OverviewScreen.choose
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:ui-tui/src/components/branding.tsx#SessionPanel.mcpBody
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:ui-tui/src/gatewayClient.ts#asGatewayEvent
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/captain_cook:agenten/delivery/gateway_client.py#_ReviewResponse
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine/external/arch_team:arch_team/agents/criterion_specialists.py#CriterionSpecialistAgent._get_suggestion_prompt
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/dashboard/static/modules/connections.js#scheduleConnectionUpdateDebounced
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/gates/quality_gate.py#GateStatus
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/training/collector.py#TrainingDataCollector.create_sample_manually
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/spaces/video/laura:services/local-api/src/laura/timebase/ranges.py#MediaRange.expected_seq_length
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/voice/electron-app/clawport-ui:app/kanban/page.tsx#KanbanPage.handleCreateTicket
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/voice/electron-app/clawport-ui:app/kanban/page.tsx#KanbanPage.handleRetryWork
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/voice:electron-app/agentfarm/src/hooks/useIPC.ts#useIPCQuery
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/voice:electron-app/renderer/shuttle-wizard.js#updatePackageSummary
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os/voice:python/publishing/n8n_publisher.py#N8nPublisher.publish_all_workflows
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os:brain/the_brain/core/stability_analyzer.py#ConflictType
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os:brain/the_brain/learning_engine/klotski/neurosymbolic/modules/abstract_state_classifier.py#AbstractStateClassifier.detect_blocking
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/rowboat/app/lib/billing.ts#updateSubscriptionPlan
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/rowboat/app/projects/[projectId]/config/components/voice.tsx#VoiceSection.handleDeleteConfig
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/rowboat/app/projects/[projectId]/copilot/components/actions.tsx#Action.getMainDiffField
+  urteil: offen
+- gruende:
+  - alt_90
+  - kein_doku_verweis
+  - unerreichbar
+  symbol: symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/rowboat/app/projects/[projectId]/manage-triggers/components/triggers-tab.tsx#TriggersTab.handleBackToList
+  urteil: offen
+zentral: []
