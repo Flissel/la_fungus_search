@@ -82,6 +82,25 @@ def _regeln_von(ordner: Path) -> list[dict]:
         return []
 
 
+def _struktur_mit_inhalt(text: str) -> bool:
+    """Steht unter `struktur:` etwas? `struktur: []` und ein leeres `struktur:` (danach nur Leerzeilen, Kommentare
+    oder der naechste Schluessel ohne Einzug) sind eine leere Regelliste, kein Lesefehler (P-T8a)."""
+    zeilen = text.splitlines()
+    for i, zeile in enumerate(zeilen):
+        m = re.match(r"struktur:(.*)$", zeile)
+        if m is None:
+            continue
+        wert = re.split(r"\s+#", " " + m.group(1), maxsplit=1)[0].strip()
+        if wert:
+            return re.fullmatch(r"\[\s*\]", wert) is None
+        for folge in zeilen[i + 1:]:
+            if not folge.strip() or folge.lstrip().startswith("#"):
+                continue
+            return folge.startswith((" ", "\t", "-"))
+        return False
+    return False
+
+
 def _ungelesen(wurzel: Path) -> tuple[Verstoss, ...]:
     """CI faellt geschlossen: `struktur:` steht in der Regeldatei, der kleine Leser liefert aber keine Regeln."""
     datei = wurzel / REGELDATEI
@@ -89,7 +108,7 @@ def _ungelesen(wurzel: Path) -> tuple[Verstoss, ...]:
         text = datei.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return ()
-    if re.search(r"^struktur:", text, re.MULTILINE) and not regeln_lesen(text).get("struktur"):
+    if _struktur_mit_inhalt(text) and not regeln_lesen(text).get("struktur"):
         return (Verstoss("regeldatei", REGELDATEI, f"Regeldatei nicht lesbar: {datei} – Strukturregeln werden nicht geprueft",
                          None, False),)
     return ()

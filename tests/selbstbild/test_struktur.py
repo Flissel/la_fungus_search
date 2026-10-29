@@ -281,3 +281,26 @@ def test_git_bash_pfad_blockiert(root):
     v = pruefe_schreibziel(Path(gitbash))
     assert len(v) == 1 and v[0].hart and v[0].pfad == "spaces/neu/x.py"
     assert pruefe_schreibziel(Path(gitbash), cwd=Path("D:/woanders"))  # cwd spielt keine Rolle
+
+
+@pytest.mark.parametrize("text", [
+    "name: x\nstruktur: []\n",
+    "name: x\nstruktur: [ ]  # leer\n",
+    "name: x\nstruktur:\n",
+    "name: x\nstruktur:\n# nur Kommentar\n\nname2: y\n",
+])
+def test_pruefen_leere_struktur_kein_verstoss(root, text):
+    """P-T8a: eine leere Regelliste ist lesbar, nicht 'Regeldatei nicht lesbar'."""
+    (root / "selbstbild.yaml").write_text(text, encoding="utf-8")
+    assert pruefen(root) == ()
+
+
+@pytest.mark.parametrize("text", [
+    "struktur:\n  - art: a\n    ort: x/\n    pflicht: [y]\n    hinweis: >\n      lang\n",
+    "struktur:\n- art: a\n  ort: x/\n  pflicht: [y]\n",  # Liste ohne Einzug: der kleine Leser kann sie nicht
+    "struktur: [{art: a, ort: x/, pflicht: []}]\n",
+])
+def test_pruefen_unparsbare_struktur_meldet(root, text):
+    (root / "selbstbild.yaml").write_text(text, encoding="utf-8")
+    v = pruefen(root)
+    assert [x.regel for x in v] == ["regeldatei"] and "nicht lesbar" in v[0].grund
