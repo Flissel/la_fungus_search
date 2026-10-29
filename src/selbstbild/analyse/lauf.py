@@ -2,6 +2,8 @@
 
 Ablauf: `laden`, Erreichbarkeit, Doku-Bezeichner, toter Code, Bereiche, PageRank, Betweenness,
 Hotspots, Doppelungen, optional die Kolonie, dann `speichern` (analyse.sqlite neben graph.sqlite).
+Nach `tot_finden` stuft der Namensverweis-Waechter (Ruling S8) `sicher_tot` ab, wenn der Name
+anderswo im Code vorkommt.
 
 `statistik` traegt `doppelt_eimer_uebersprungen` sowie die Laufzeiten `laufzeit_laden_ms`,
 `laufzeit_mathe_ms` (alles nach dem Laden ausser der Kolonie) und `laufzeit_kolonie_ms`. Laufzeiten
@@ -31,7 +33,7 @@ from .ergebnis import Analyse, digest_von, lesen, speichern
 from .erreichbar import erreichbarkeit
 from .kolonie import KolonieParameter, kolonie_laufen
 from .lader import ANALYSE_VERSION, SEED, GraphDaten, _meta, datei_von, laden
-from .tot import TOT_TAGE, TotFund, tot_finden
+from .tot import NAME_MIN, TOT_TAGE, TotFund, namensverweis_abstufen, namensverweise, tot_finden
 from .zentral import BETWEENNESS_CUTOFF, DAEMPFUNG, Hotspot, betweenness, hotspots, pagerank
 
 PAGERANK_TOP = 500
@@ -55,7 +57,7 @@ def parameter(kolonie: bool) -> tuple[tuple[str, str], ...]:
         "betweenness_top": str(BETWEENNESS_TOP), "daempfung": f"{DAEMPFUNG}",
         "doppelt_schwelle": f"{DOPPELT_SCHWELLE}", "hotspots_top": str(HOTSPOTS_TOP),
         "kolonie": "an" if kolonie else "aus", "pagerank_top": str(PAGERANK_TOP),
-        "seed": str(SEED), "tot_tage": str(TOT_TAGE),
+        "namensverweis_min": str(NAME_MIN), "seed": str(SEED), "tot_tage": str(TOT_TAGE),
     }
     if kolonie:
         k = KolonieParameter()
@@ -84,6 +86,8 @@ def _mathe(wurzel: Path, d: GraphDaten) -> _Mathe:
     e = erreichbarkeit(d)
     doku = doku_bezeichner(wurzel, d.commit, d)
     tot = tot_finden(d, e, doku)
+    kandidaten = [t.symbol for t in tot if t.stufe == "sicher_tot"]
+    tot = namensverweis_abstufen(tot, namensverweise(wurzel, d.commit, kandidaten))  # Ruling S8
     del e, doku  # grosse Mengen vor den naechsten Schritten freigeben
     ber = bereiche_finden(d, AUFLOESUNG)
     pr = pagerank(d)
