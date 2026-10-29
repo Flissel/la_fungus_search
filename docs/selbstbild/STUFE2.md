@@ -45,47 +45,72 @@ Wächter: Abbruch, wenn der Working Set des Prozessbaums 2,5 GB übersteigt oder
 | a1) `analysieren` VibeMind | `1e409b44` | **98 s** (Laden 4,0 s, Mathe 92,3 s, Kolonie 0,76 s) | **1,15 GB** | 1,44 GB | 1,87 GB |
 | a2) `analysieren` VibeMind `--pruefen-reproduzierbar` | `1e409b44` | 193 s | 1,16 GB | 1,44 GB | 1,88 GB |
 | b) `analysieren` sales-claw (Stand aktuell) | `c8679622` | 4,2 s (Mathe 3,5 s, Kolonie 0,04 s) | 0,13 GB | 0,14 GB | 0,85 GB |
-| c) `goldsatz` VibeMind | `1e409b44` | 1,1 s | – | 0,05 GB | – |
+| c) `goldsatz` VibeMind (vor S8, ersetzt) | `1e409b44` | 1,1 s | – | 0,05 GB | – |
+| **a3) `analysieren` VibeMind mit Ruling S8, `--pruefen-reproduzierbar` (gültiger Stand)** | `1e409b44` | 326 s (Laden 65,7 s, Mathe 130,4 s, Kolonie 0,75 s, je einmal gerechnet) | 1,16 GB | 1,54 GB | 1,88 GB |
+| **c2) `goldsatz` VibeMind nach S8 (gültig)** | `1e409b44` | 1,1 s | – | 0,05 GB | – |
 
 - Das Speicherbudget von 2,5 GB Spitze hält. Der VibeMind-Lauf braucht 1,15 GB im Python-Prozess. Die
   1,44 GB im Prozessbaum zählen die `git cat-file`-Kindprozesse der Doppelungssuche mit.
 - Der private Commit liegt höher als der Working Set (auch bei sales-claw 0,85 GB). Vermutlich
   reservieren numpy, BLAS und igraph Puffer, ohne sie zu belegen. Bei knappem Commit-Limit des Hosts
   zählt dieser Wert.
-- a0 war nur fast ein Neulauf: 19 606 von 19 608 Dateien wurden neu geparst, nur 2 kamen aus dem Cache.
-  Der Parse-Cache des Stands von `6f8e4e0f` passte also nicht mehr. Das gehört zu Stufe 1 und wurde
-  hier nicht untersucht. Graph danach: 234 882 Knoten, 482 618 Kanten (23 416 unsicher), 89 fehlerhafte Dateien.
+- a0 war fast ein Neulauf: 19 606 von 19 608 Dateien wurden neu geparst, nur 2 kamen aus dem Cache.
+  Das ist **erwartet**. Task 1 von Stufe 2 hat `PARSER_VERSION` von 2 auf 3 erhöht
+  (`selbstbild/sprachen.py`), und der Cache-Schlüssel enthält die Version. Geprüft in
+  `Speicher._cache_schluessel` (`speicher.py`): `[PARSER_VERSION, GRAMMATIK_VERSION, Python-Version,
+  blob, sprache, pfad]`. Damit verfällt der ganze Parse-Cache. Graph danach: 234 882 Knoten,
+  482 618 Kanten (23 416 unsicher), 89 fehlerhafte Dateien.
+- a3 enthält den S8-Durchlauf über alle Code-Blobs (Namensverweise). Die Mathe-Zeit steigt deshalb von
+  92 auf 130 s. Das Laden dauerte diesmal 65,7 s statt 4 s, bei gleichem Graphen. Der freie Commit lag
+  vor dem Lauf bei 4,7 GB statt über 5 GB. Vermutlich hat der Host ausgelagert, gemessen ist das nicht.
+  Der Speicher bleibt bei 1,16 GB im Python-Prozess.
 - **Determinismus:** Der Export von a1 (16,1 MB, sha256 `c17d3ecf…a91645`) und der von a2 stammen aus
   zwei Prozessen. Sie unterscheiden sich nur in den zwei erwarteten `reproduzierbar_*`-Zeilen. Im
   selben Prozess ergab die zweite Rechnung `reproduzierbar_mathe = 1` und `reproduzierbar_kolonie = 1`.
+  a3 (mit S8) ergab ebenfalls `reproduzierbar_mathe = 1` und `reproduzierbar_kolonie = 1`. S8 ändert
+  nur die Funde zu totem Code. Bereiche, Zentralität, Hotspots, Doppelungen und Kolonie sind in a1 und
+  a3 gleich.
 - `luecken` auf VibeMind: `kante_ohne_knoten = 0` und `symbol_ohne_datei = 0`, auf sales-claw ebenso.
   Der Schlüssel `symbol_ohne_datei` kommt aus `dateigraph`. Er ist da, weil `luecken` erst nach allen
   Analysen gebaut wird (Ruling S3, abgesichert durch einen Test).
 
 ## Ergebnisse VibeMind (`1e409b44`, 20 Repos, 19 608 Dateien, 205 k Symbole)
 
-### Toter Code je Stufe
+### Toter Code je Stufe (nach Ruling S8, Lauf a3)
 
-| Stufe | Anzahl | häufigste Gründe | Repos mit den meisten Funden |
-|---|---|---|---|
-| `sicher_tot` | **11 788** (in 2 361 Dateien) | per Definition alle `unerreichbar` + `alt_90` + `kein_doku_verweis` | hermes-agent 4 638, coding-engine 2 473, vibemind-os 1 323, swe_desgine 1 034, voice 768, openclaw 529 |
-| `wahrscheinlich_tot` | 19 720 | `unerreichbar` 17 445, `alt_90` 14 138, `kein_doku_verweis` 9 581, `doku_verweis` 8 590, `rust_r22` 4 291, `ts_klasse` 3 145, `jsx_komponente` 2 364, `nur_unsicher` 2 275 | openfang 4 349, vibemind-os 3 762, hermes-agent 2 892, coding-engine 2 819 |
-| `verdaechtig` | 21 912 | `nur_test` (einziger Grund dieser Stufe) | hermes-agent 9 731, openfang 3 863, coding-engine 2 479, openclaw 1 715 |
+Ruling S8 bringt zwei Änderungen in `analyse/tot.py`. Erstens den **Namensverweis-Wächter**: Ein
+`sicher_tot`-Kandidat, dessen einfacher Name (mindestens 3 Zeichen) als Bezeichner in einer anderen
+committeten Code-Datei desselben oder eines Vorfahren-Repos steht, wird `wahrscheinlich_tot` mit Grund
+`namensverweis`. In der eigenen Datei zählt nur ein Vorkommen außerhalb der eigenen Definitionszeilen.
+Geprüft werden nur Code-Dateien. Doku, YAML, JSON und SQL zählen nicht. Zweitens erbt Verschachteltes
+die S4- und R22-Ausnahmen seiner Vorfahren (Qualname-Präfix in derselben Datei). Damit fallen auch
+Handler in JSX-Komponenten unter `jsx_komponente`.
 
-Je 5 Beispiele zum schnellen Gegenprüfen (gezogen mit festem Seed):
+| Stufe | vor S8 (a1) | **nach S8 (a3)** | häufigste Gründe (a3) | Repos mit den meisten Funden (a3) |
+|---|---|---|---|---|
+| `sicher_tot` | 11 788 (2 361 Dateien) | **1 267** (590 Dateien) | per Definition alle `unerreichbar` + `alt_90` + `kein_doku_verweis` | coding-engine 448, hermes-agent 229, vibemind-os 170, swe_desgine 125, voice 108, arch_team 52 |
+| `wahrscheinlich_tot` | 19 720 | 30 241 | `unerreichbar` 27 966, `alt_90` 24 659, `kein_doku_verweis` 20 102, **`namensverweis` 9 284**, `doku_verweis` 8 590, `rust_r22` 4 291, `jsx_komponente` 4 053, `ts_klasse` 3 233 | hermes-agent 7 301, vibemind-os 4 915, coding-engine 4 844, openfang 4 401 |
+| `verdaechtig` | 21 912 | 21 912 | `nur_test` (einziger Grund) | hermes-agent 9 731, openfang 3 863, coding-engine 2 479, openclaw 1 715 |
+
+Von den 10 521 abgestuften Funden gehen 9 284 auf den Namensverweis zurück. Der Rest kommt aus den
+vererbten Ausnahmen: `jsx_komponente` stieg von 2 364 auf 4 053. Die 1 267 `sicher_tot` verteilen sich
+so: 900 `.py` (91 großgeschriebene oberste Namen, 417 darunter verschachtelt, 381 oberste Funktionen),
+180 `.ts`, 171 `.js`, 11 `.tsx`, 4 `.jsx`, 1 `.mjs`.
+
+Je 5 Beispiele zum schnellen Gegenprüfen (fester Seed):
 
 - `sicher_tot`
-  - `symbol:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/time/user_interaction_utils.py#create_ask_user_tool.AskUserArgs`
-  - `symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/gates/quality_gate.py#GateStatus`
-  - `symbol:vibemind/vibemind-os/spaces/video/laura:services/local-api/src/laura/timebase/ranges.py#MediaRange.expected_seq_length`
-  - `symbol:vibemind/vibemind-os/voice:python/publishing/n8n_publisher.py#N8nPublisher.publish_all_workflows`
-  - `symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/rowboat/app/projects/[projectId]/manage-triggers/components/triggers-tab.tsx#TriggersTab.handleBackToList`
+  - `symbol:vibemind/vibemind-os/coding-engine:dashboard-app/src/renderer/api/clarificationAPI.ts#getClarificationStatistics`
+  - `symbol:vibemind/vibemind-os:brain/the_brain/core/plan_critic.py#format_for_ui`
+  - `symbol:vibemind/vibemind-os:brain/the_brain/learning_engine/klotski/neurosymbolic/modules/trajectory_predictor.py#TrajectoryPredictor.compute_trajectory_loss`
+  - `symbol:vibemind/vibemind-os:brain/the_brain/learning_engine/klotski/neurosymbolic/utils/quantum_rng.py#quantum_random`
+  - `symbol:vibemind/vibemind-os:spaces/video/media_server.py#MediaHandler.do_OPTIONS`
 - `wahrscheinlich_tot`
-  - `symbol:vibemind/vibemind-os/coding-engine:src/agents/redis_pubsub_agent.py#RedisPubSubAgent._create_claude_code_tools.generate_redis_code` (`alt_90`, `nur_unsicher`)
-  - `symbol:vibemind/vibemind-os/openfang:crates/openfang-skills/src/config_injection.rs#SkillConfigVar` (`rust_r22`)
-  - `symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/rowboat/src/infrastructure/repositories/mongodb.conversations.repository.ts#MongoDBConversationsRepository` (`ts_klasse`)
-  - `symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/x/apps/renderer/src/components/settings-dialog.tsx#SettingsDialog.handleTabChange` (jung: kein `alt_90`)
-  - `symbol:vibemind/vibemind-os:spaces/rowboat/rowboat/apps/x/apps/renderer/src/extensions/chart-block.tsx#addNodeView` (`ts_klasse`)
+  - `symbol:vibemind/vibemind-os/spaces/captain_cook:agenten/evaluation/release_cli.py#_unused_enrich` (`namensverweis`)
+  - `symbol:vibemind/vibemind-os/voice:electron-app/dashboard/src/hooks/useIPC.ts#updateModelRole` (`namensverweis`)
+  - `symbol:vibemind/vibemind-os/spaces/coding/clawcode:rust/crates/runtime/src/prompt.rs#read_git_status` (`rust_r22`, `nur_unsicher`)
+  - `symbol:vibemind/vibemind-os/spaces/sales-claw:sales-mcp/inbox.py#selbst_chat_grund` (jung: kein `alt_90`)
+  - `symbol:vibemind/vibemind-os/spaces/video/laura:apps/desktop/src/components/chat/ChatStage.tsx#narrowActionContent` (jung)
 - `verdaechtig` (`nur_test`)
   - `symbol:vibemind/vibemind-os/coding-engine:src/services/pipeline_data_coalescer.py#PipelineDataCoalescer.__init__`
   - `symbol:vibemind/vibemind-os/spaces/captain_cook:agenten/execution/codex_supervisor.py#CodexSupervisor.run`
@@ -93,35 +118,36 @@ Je 5 Beispiele zum schnellen Gegenprüfen (gezogen mit festem Seed):
   - `symbol:vibemind/vibemind-os/spaces/video/laura:services/local-api/src/laura/interchange/fcp7_xml.py#timeline_to_fcp7_xml`
   - `symbol:vibemind/vibemind-os:spaces/marketing/claw/logo_bearbeiten.py#LogoFehler`
 
-**Stichprobe vor dem Goldsatz (eigene Prüfung per `git grep` am Commit, 4 der 5 `sicher_tot`-Beispiele):**
+**Stichprobe vor S8** (4 Beispiele von a1, `git grep`): 2 waren falsch. Die Enum `GateStatus` wird nur
+per Attribut und Annotation benutzt. `MediaRange.expected_seq_length` wird nur aus Tests aufgerufen,
+der Testimport aus dem src-Layout wird aber nicht aufgelöst. Beide sind nach S8 `wahrscheinlich_tot`.
 
-- `GateStatus` ist **falsch**. Die Enum wird nur per Attribut benutzt (`GateStatus.PASS`), als
-  Annotation und als Re-Export in `gates/__init__.py`. Nichts davon erzeugt eine `ruft_auf`-Kante.
-- `MediaRange.expected_seq_length` ist **falsch**. Die Methode wird von `tests/test_ranges.py` aufgerufen
-  und hätte damit `verdaechtig` sein müssen. Der Testimport `laura.…` aus dem src-Layout
-  (`services/local-api/src`) wird nicht aufgelöst, deshalb fehlt auch die Testkante.
-- `N8nPublisher.publish_all_workflows` ist plausibel richtig: kein Aufrufer im Repo.
-- `create_ask_user_tool.AskUserArgs` (Kopie im `time`-Server) ist plausibel richtig. Die Server
-  importieren jeweils ihre eigene Kopie, und `time` nutzt sie nicht.
+**Stichprobe nach S8:** 10 `sicher_tot` aus a3, gezogen mit `random.Random(20261028).sample`. Gesucht
+wurde mit `git grep -w` über **alle** Dateiarten am gepinnten Commit des jeweiligen Repos.
+**8 von 10 sehen wirklich tot aus**: Der Name kommt im ganzen Repo nur an der eigenen Definition vor.
 
-Daraus ergeben sich zwei systematische Fehlerquellen für falsches `sicher_tot`, die der Goldsatz messen wird:
+| Symbol | Urteil |
+|---|---|
+| coding-engine `clarificationAPI.ts#getClarificationStatistics` | tot (nur Definition) |
+| coding-engine `src/engine/tech_stack.py#TechStackDatabase` | tot |
+| coding-engine `microservice_orchestrator.py#MicroserviceOrchestrator.get_output_path_for_requirement` | tot |
+| voice `conversation_router.py#ConversationRouter.get_user_intent_patterns` | tot |
+| vibemind-os `ctm_async_reasoner.py#get_global_ctm_async` | tot |
+| vibemind-os `plan_critic.py#format_for_ui` | tot |
+| vibemind-os `trajectory_predictor.py#TrajectoryPredictor.compute_trajectory_loss` | tot |
+| vibemind-os `quantum_rng.py#quantum_random` | tot |
+| vibemind-os `spaces/video/media_server.py#MediaHandler.do_OPTIONS` | **falsch**: `http.server` ruft `do_<METHODE>` per String auf, und `MediaHandler` wird per `partial(...)` an den Server übergeben |
+| coding-engine `dashboard-app/dist-embedded/assets/vendor-CQAN8hwX.js#pa` | **falsch bzw. sinnlos**: minifiziertes Build-Artefakt, Name mit 2 Zeichen (unter `NAME_MIN`) |
 
-1. **Python-Klassen ohne Aufruf:** Enums, Dataclasses nur als Typ, Basisklassen, `isinstance` und
-   Konstanten-Klassen. Unter den 6 270 `sicher_tot` in `.py` haben 1 241 einen großgeschriebenen
-   obersten Namen (vermutlich Klassen). Weitere 2 579 sind darunter verschachtelt (Methoden toter
-   Klassen, E4). Bis zu ein Drittel aller `sicher_tot` hängt also an „Klasse hat keine eingehende
-   Aufrufkante“.
-2. **Verschachteltes in JSX-Komponenten und TS-Klassen:** Ruling S4 nimmt die Komponente oder Klasse
-   selbst von `sicher_tot` aus, nicht aber ihre verschachtelten Handler (`TriggersTab.handleBackToList`).
-   Ist die Komponente unerreichbar, weil `<Foo/>` keine Kante erzeugt, gelten ihre Handler als
-   unerreichbar. Das betrifft 1 229 `sicher_tot` in TS/JS mit großgeschriebenem Elternsymbol. Weitere
-   4 031 sind oberste TS/JS-Funktionen. Viele davon werden vermutlich als Wert übergeben (Callbacks,
-   Exporte), ohne dass eine Kante entsteht.
+Verbleibende Fehlerquellen, gezählt unter den 1 267:
 
-Beides ist **nicht behoben** (Task 11 verdrahtet und misst, die Regeln stammen aus Task 4). Es ist der
-naheliegende nächste Fix, falls der Goldsatz die Präzision unter 27/30 drückt. Für einen Fix spricht:
-Verschachteltes erbt die Ausnahmen `jsx_komponente` und `ts_klasse` seines Elternsymbols, und
-Python-Klassen werden nie `sicher_tot`, solange es nur Attribut- oder Typverweise geben kann.
+- **Build-Artefakte** (`dist/`, `dist-embedded/`, `out/`, `build/`, `assets/`, `*.min.js`): 64, davon
+  63 mit Namen unter 3 Zeichen. Insgesamt haben 77 einen Namen unter 3 Zeichen.
+- **Framework-Dispatch über Namenspräfix** (`do_`, `visit_`, `on_`, `handle_`, `test_`): 21.
+
+Ob die 27 von 30 halten, misst erst der Goldsatz. Die Stichprobe (8 von 10) liegt knapp darunter.
+Behebt man die beiden Fehlerquellen, also Build-Artefakte über die Regeldatei ausnehmen und
+Dispatch-Präfixe nicht als `sicher_tot` werten, gingen beide falschen Funde der Stichprobe weg.
 
 ### Bereiche (Leiden auf dem Dateigraphen)
 
@@ -179,12 +205,12 @@ alle aus hermes-agent. PageRank: Rang 1 ist hermes-agent `ui-tui/src/components/
 
 | | Mathe | Kolonie |
 |---|---|---|
-| Laufzeit | 92,3 s (Teilzeiten nicht einzeln gemessen. Vermutlich dominiert das Blob-Lesen für Doku und Doppelungen) | **0,76 s** |
+| Laufzeit | 92,3 s vor S8, 130,4 s mit S8 (Teilzeiten nicht einzeln gemessen. Vermutlich dominiert das Blob-Lesen für Doku, Namensverweise und Doppelungen) | **0,76 s** |
 | Reproduzierbar (zweiter Lauf im Prozess) | ja | ja |
 | Zentrum | PageRank-Top-50 (auf Dateien abgebildet) | 50 meistbesuchte Dateien |
 | Überlappung Zentrum | **7 von 50** gemeinsam | |
 | Abdeckung | alle 19 608 Dateien | **486 besucht (2,5 %)**, 19 122 „tote Ecken“ |
-| tote Ecken gegen toten Code | 5 093 von 5 347 Dateien mit Totfund liegen in toten Ecken, bei `sicher_tot` 2 179 von 2 361 | |
+| tote Ecken gegen toten Code | 5 093 von 5 347 Dateien mit Totfund liegen in toten Ecken, bei `sicher_tot` (a3) 509 von 590 Dateien | |
 | Bereiche | 428 | 2 (4 und 2 Dateien, coding-engine `cell_cli`/`mind` und ein `dist-embedded`-Bundle) |
 
 Fazit: Die Kolonie ist schnell und deterministisch. Mit den MCMP-Standardwerten (192 Agenten, 400
@@ -225,19 +251,25 @@ Bereichen und Zentrum klar. Gemessen wird das endgültig mit `vergleichen` am Go
   Embedding-Raum. Mit den Standardwerten deckt sie große Graphen kaum ab (s. o.).
 - **E3:** Betweenness nur auf dem Dateigraphen mit cutoff 4, also lokal begrenzt.
 - **E4:** Methoden folgen ihrer Klasse. Tote Methoden in lebenden Klassen bleiben unentdeckt (vorsichtige
-  Richtung). Umgekehrt werden alle Methoden einer fälschlich toten Klasse mit `sicher_tot` (s. o.).
+  Richtung). Umgekehrt würde eine fälschlich tote Klasse alle ihre Methoden mitziehen. Seit S8 rettet
+  der Namensverweis Methoden, deren Name anderswo vorkommt (`obj.methode()`).
 - **S1:** Hotspot-Größe = Anzahl Symbole, nicht Zeilen. **S2:** Testdateien nur nach Namensmuster
   (plus `conftest.py`). **S3:** `luecken` nach allen Analysen. **S4:** Go-Methoden, TS-Klassen und
-  JSX-Komponenten nie `sicher_tot`, deren verschachtelte Symbole aber schon (Lücke, s. o.). **S5:** Ein
+  JSX-Komponenten nie `sicher_tot`. Seit S8 erben verschachtelte Symbole diese Ausnahmen. **S5:** Ein
   Doku-Verweis zählt auch aus der Doku von Vorfahren-Repos. **S6:** Zeilenregel für `gleiches_symbol`
   über erneutes Parsen der Kandidaten. **S7:** Ähnlichkeits-Cluster per Union-Find, Eimer über 50 Blobs
-  übersprungen (36 bei VibeMind).
+  übersprungen (36 bei VibeMind). **S8:** Namensverweis-Wächter und vererbte S4/R22-Ausnahmen (s. o.).
+  Er ist absichtlich grob: Ein gleichnamiger Bezeichner irgendwo im Code genügt zum Abstufen, auch ein
+  zufällig gleicher Name. Das ist die sichere Richtung. Namen unter 3 Zeichen werden nicht geprüft.
+  Doku- und Datendateien (YAML, JSON, SQL) zählen nicht, dort registrierte Namen retten also nicht.
 - **R15:** TS-Namensimporte sind unsicher. TS gilt als erreichbar, sobald irgendeine Kante trifft.
 - **R22:** Rust ist nie `sicher_tot` (4 291 Rust-Symbole stehen in `wahrscheinlich_tot`).
 - **Dynamische Aufrufe:** Registries, Plugins, String-Dispatch, Routen-Registrierung, Callbacks und
   JSX lassen lebenden Code tot aussehen. Die drei Stufen dämpfen das, die Regeldatei kann Einstiegspunkte
-  nachtragen. Neu gemessen: Python-Klassen, die nur per Attribut oder Typ benutzt werden, und
-  Testimporte aus src-Layouts, die nicht aufgelöst werden.
+  nachtragen. Seit S8 fängt der Namensverweis die meisten dieser Fälle ab, darunter Python-Klassen nur
+  per Attribut oder Typ und Testimporte aus src-Layouts. Übrig bleiben Dispatch über Namenspräfixe
+  (`do_OPTIONS` in `http.server`, 21 Funde mit `do_`/`visit_`/`on_`/`handle_`/`test_`) und
+  minifizierte Build-Artefakte (64).
 - Bereichsnamen tragen bei Bereichen aus einem Repo kein Repo-Präfix (`src/services` kann in jedem Repo
   liegen).
 - Laufzeit: `laufzeit_mathe_ms` ist nicht nach Teilschritten aufgeschlüsselt. Mit
@@ -247,7 +279,7 @@ Bereichen und Zentrum klar. Gemessen wird das endgültig mit `vergleichen` am Go
 
 Die Spec-Abnahme „27 von 30 bestätigt“ ist **noch nicht gemessen**. Sie entsteht erst mit deinen Urteilen.
 
-1. `docs/selbstbild/goldsatz-vibemind.yaml` öffnen. Er enthält 40 `sicher_tot`-Kandidaten, 15
+1. `docs/selbstbild/goldsatz-vibemind.yaml` öffnen. Er ist neu erzeugt nach S8 aus Lauf a3. Er enthält 40 `sicher_tot`-Kandidaten, 15
    Doppelungen und die 3 größten Bereiche. Alle Urteile stehen auf `offen`.
    - Bei `tot` und `doppelt` je Eintrag `urteil: ja` (stimmt) oder `urteil: nein` (stimmt nicht)
      setzen. Unsichere Einträge auf `offen` lassen, sie zählen nicht.
