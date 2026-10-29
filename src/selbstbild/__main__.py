@@ -1,4 +1,4 @@
-"""CLI: `python -m selbstbild vermessen|export|status|analysieren|goldsatz|vergleichen <wurzel> ...`."""
+"""CLI: `python -m selbstbild vermessen|export|status|analysieren|goldsatz|vergleichen|suche-messen <wurzel> ...`."""
 from __future__ import annotations
 
 import argparse
@@ -148,6 +148,37 @@ def _vergleichen(args: argparse.Namespace) -> int:
     return 0
 
 
+def _suche_messen(args: argparse.Namespace) -> int:
+    from selbstbild.suche.dicht import Embedder
+    from selbstbild.suche.messung import gold_aus_ketten, gold_aus_transkripten, messen, repos_im_index
+
+    if len(args.ollama) != len(args.modell):
+        return _fehler("--ollama und --modell muessen paarweise angegeben werden", 2)
+    pfad = stand_finden(args.wurzel)
+    if pfad is None:
+        return _nicht_vermessen(args.wurzel)
+    try:
+        repos = repos_im_index(pfad.parent)
+    except FileNotFoundError as e:
+        return _fehler(str(e), 1)
+    wurzel_repo = min(repos, key=lambda r: (len(r), r)) if repos else args.wurzel.name
+    gold: dict[str, tuple[tuple[str, frozenset[str]], ...]] = {}
+    ketten = args.wurzel / "docs" / "spaces" / "KETTEN.md"
+    if ketten.is_file():
+        gold["ketten"] = gold_aus_ketten(ketten.read_text(encoding="utf-8"), wurzel_repo, repos=repos)
+    if args.transkripte is not None:
+        gold["transkripte"] = gold_aus_transkripten(args.transkripte, args.wurzel, args.n,
+                                                    wurzel_repo=wurzel_repo, repos=repos)
+    embedder = {m: Embedder("ollama", u, m) for u, m in zip(args.ollama, args.modell)}
+    varianten = ["stichwort", "struktur"] + [f"{a}:{m}" for m in embedder for a in ("dicht", "fusion")]
+    try:
+        ergebnis = {q: messen(pfad.parent, g, varianten=varianten, embedder=embedder) for q, g in gold.items()}
+    except RuntimeError as e:  # Embedder-Fehler tragen nur Typ und Status
+        return _fehler(str(e), 2)
+    _ausgeben({"paare": {q: len(g) for q, g in gold.items()}, "ergebnis": ergebnis})  # nie Prompt-Texte
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="selbstbild", description="Vermisst ein Git-Repo als Graph.")
     p.add_argument("-v", "--ausfuehrlich", action="store_true", help="Fortschritt nach stderr")
@@ -177,6 +208,12 @@ def main(argv: list[str] | None = None) -> int:
     vg = befehle.add_parser("vergleichen", help="ausgefuellten Goldsatz gegen Mathe und Kolonie messen")
     vg.add_argument("wurzel", type=Path)
     vg.add_argument("gold", type=Path)
+    sm = befehle.add_parser("suche-messen", help="recall@10 und MRR der Suche gegen KETTEN- und Transkript-Gold")
+    sm.add_argument("wurzel", type=Path)
+    sm.add_argument("--ollama", action="append", default=[], help="Ollama-URL (paarweise mit --modell)")
+    sm.add_argument("--modell", action="append", default=[], help="Embedding-Modell (paarweise mit --ollama)")
+    sm.add_argument("--transkripte", type=Path, default=None, help="Ordner mit Claude-Code-JSONL-Transkripten")
+    sm.add_argument("-n", type=int, default=20, help="Stichprobengroesse der Transkript-Prompts")
     args = p.parse_args(argv)
 
     if args.ausfuehrlich:
@@ -202,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
         return _goldsatz(args)
     if args.befehl == "vergleichen":
         return _vergleichen(args)
+    if args.befehl == "suche-messen":
+        return _suche_messen(args)
     return _status(args.wurzel)
 
 

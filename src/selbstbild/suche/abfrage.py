@@ -118,23 +118,24 @@ def _dicht(stand: Path, anfrage: str, embedder: "Embedder | None") -> list[str]:
 
 
 def suchen(stand: Path, anfrage: str, top_k: int = 10, *, dicht: bool = False,
-           embedder: "Embedder | None" = None) -> tuple[Treffer, ...]:
+           embedder: "Embedder | None" = None, struktur: bool = True) -> tuple[Treffer, ...]:
     """Fusion aus Stichwort, Struktur und (bei `dicht=True` mit `embedder`) dichtem Zweig.
 
     Der dichte Zweig braucht Vektoren aus `dicht.vektoren_bauen` zum Modell des Embedders; fehlen sie oder
-    antwortet der Embedder nicht, bleibt er leer und die Fusion ist unveraendert."""
+    antwortet der Embedder nicht, bleibt er leer und die Fusion ist unveraendert.
+    `struktur=False` laesst die Struktur-Erweiterung weg (reine Stichwortsuche, fuer die Messung)."""
     tokens = anfrage_tokens(anfrage)
     if not tokens:
         return ()
     stand = Path(stand)
     with closing(_offnen(stand)) as c:
         stichwort = _stichwort(c, tokens)
-        struktur = _struktur(c, stichwort)
+        nachbar = _struktur(c, stichwort) if struktur else {}
         dichte = _dicht(stand, anfrage, embedder) if dicht else []
         beitrag: dict[str, dict[str, float]] = {}
         for rang, i in enumerate(stichwort, start=1):
             beitrag.setdefault(i, {})["stichwort"] = 1.0 / (RRF_K + rang)
-        for i, w in struktur.items():
+        for i, w in nachbar.items():
             beitrag.setdefault(i, {})["struktur"] = w
         for rang, i in enumerate(dichte, start=1):
             beitrag.setdefault(i, {})["dicht"] = 1.0 / (RRF_K + rang)
