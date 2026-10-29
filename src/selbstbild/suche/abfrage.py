@@ -109,11 +109,11 @@ def _dicht(stand: Path, anfrage: str, embedder: "Embedder | None") -> list[str]:
     """
     if embedder is None:
         return []
-    from . import dicht as _modul
     try:
+        from . import dicht as _modul  # ImportError (z. B. numpy fehlt) = leerer Zweig
         vektor = _modul.einbetten(embedder, [anfrage], timeout=10.0)[0]
         return [i for i, _ in _modul.aehnlichste(stand, vektor, STICHWORT_TOP, embedder.modell)]
-    except (RuntimeError, OSError, sqlite3.DatabaseError):
+    except (ImportError, RuntimeError, OSError, sqlite3.DatabaseError):
         return []
 
 

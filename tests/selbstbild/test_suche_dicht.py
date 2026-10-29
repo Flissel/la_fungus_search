@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -11,7 +12,9 @@ from typing import Iterator
 import pytest
 
 from selbstbild.suche.abfrage import suchen
-from selbstbild.suche.dicht import Embedder, aehnlichste, datei_text, einbetten, vektoren_bauen
+from selbstbild.suche import dicht
+from selbstbild.suche.dicht import (Embedder, aehnlichste, datei_text, einbetten, einbetten_stapelweise,
+                                    vektoren_bauen)
 from selbstbild.suche.index import index_bauen
 from selbstbild.typen import Beleg, Knoten
 
@@ -161,3 +164,84 @@ def test_suchen_mit_dicht(git_repo, graph_stand):
         assert suchen(stand, "Zustellung Mail", dicht=True) == ()
         assert suchen(stand, "Zustellung Mail", dicht=True, embedder=Embedder("ollama", url, "x")) == ()
     assert suchen(stand, "Zustellung Mail", dicht=True, embedder=e_aus) == ()
+
+
+def test_stapelweise_normiert_und_je_batch(monkeypatch):
+    ereignisse: list[str] = []
+    echt_post, echt_norm = dicht._post, dicht._normiert
+
+    def post(url, nutzlast, timeout):
+        ereignisse.append(f"post{len(nutzlast['input'])}")
+        return echt_post(url, nutzlast, timeout)
+
+    def norm(v):
+        ereignisse.append("norm")
+        return echt_norm(v)
+
+    monkeypatch.setattr(dicht, "_post", post)
+    monkeypatch.setattr(dicht, "_normiert", norm)
+    with _server() as url:
+        batches = list(einbetten_stapelweise(Embedder("ollama", url, "m"), ["versand", "rechnung", "x"], batch=2))
+    assert [len(b) for b in batches] == [2, 1]
+    assert batches[0][0].dtype.name == "float32" and float(batches[0][0] @ batches[0][0]) == pytest.approx(1.0)
+    # Umwandlung jedes Batches vor dem naechsten Abruf: nie mehr als ein Batch Float-Listen lebendig
+    assert ereignisse == ["post2", "norm", "norm", "post1", "norm"]
+
+
+def test_vektoren_bauen_streamt_stapelweise(git_repo, graph_stand, monkeypatch):
+    stand = _stand(git_repo, graph_stand)
+    ereignisse: list[str] = []
+    echt_post, echt_norm = dicht._post, dicht._normiert
+    monkeypatch.setattr(dicht, "BATCH", 2)
+    monkeypatch.setattr(dicht, "_post", lambda u, n, t: (ereignisse.append("post"), echt_post(u, n, t))[1])
+    monkeypatch.setattr(dicht, "_normiert", lambda v: (ereignisse.append("norm"), echt_norm(v))[1])
+    with _server() as url:
+        assert vektoren_bauen(stand, Embedder("ollama", url, "m")) == 3
+    assert ereignisse == ["post", "norm", "norm", "post", "norm"]
+
+
+def test_vektoren_bauen_index_ersetzt_schreibt_nichts(git_repo, graph_stand, monkeypatch):
+    stand = _stand(git_repo, graph_stand)
+    echt_post = dicht._post
+
+    def post_und_ersetzen(url, nutzlast, timeout):
+        antwort = echt_post(url, nutzlast, timeout)
+        with sqlite3.connect(str(dicht.index_pfad(stand))) as c:  # simuliert index_bauen mit neuem Stand
+            c.execute("UPDATE meta SET v='anderer-commit' WHERE k='commit'")
+        return antwort
+
+    monkeypatch.setattr(dicht, "_post", post_und_ersetzen)
+    with _server() as url:
+        with pytest.raises(RuntimeError, match="Index waehrend der Einbettung ersetzt"):
+            vektoren_bauen(stand, Embedder("ollama", url, "m"))
+    with sqlite3.connect(str(dicht.index_pfad(stand))) as c:
+        assert c.execute("SELECT count(*) FROM vektor").fetchone() == (0,)
+
+
+def test_vektoren_bauen_nur_noch_vorhandene_ids(git_repo, graph_stand, monkeypatch):
+    stand = _stand(git_repo, graph_stand)
+    echt_post = dicht._post
+
+    def post_und_loeschen(url, nutzlast, timeout):
+        antwort = echt_post(url, nutzlast, timeout)
+        with sqlite3.connect(str(dicht.index_pfad(stand))) as c:  # Eintrag verschwindet, Fingerabdruck gleich
+            c.execute("DELETE FROM eintrag WHERE id=?", (CRON,))
+        return antwort
+
+    monkeypatch.setattr(dicht, "_post", post_und_loeschen)
+    with _server() as url:
+        assert vektoren_bauen(stand, Embedder("ollama", url, "m")) == 2
+
+
+def test_suchen_dicht_ohne_numpy_ist_leer(git_repo, graph_stand, monkeypatch):
+    import builtins
+    stand = _stand(git_repo, graph_stand)
+    echt = builtins.__import__
+
+    def kein_dicht(name, glob=None, lokal=None, liste=(), stufe=0):
+        if stufe == 1 and "dicht" in (liste or ()):
+            raise ImportError("numpy fehlt")
+        return echt(name, glob, lokal, liste, stufe)
+
+    monkeypatch.setattr(builtins, "__import__", kein_dicht)
+    assert suchen(stand, "Zustellung Mail", dicht=True, embedder=Embedder("ollama", "http://127.0.0.1:9", "m")) == ()

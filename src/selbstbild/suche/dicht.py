@@ -15,7 +15,7 @@ import urllib.request
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Iterator, Literal, Sequence
 
 import numpy as np
 
@@ -53,34 +53,51 @@ def _vektor(roh: object) -> list[float]:
     return [float(x) for x in roh]
 
 
-def einbetten(e: Embedder, texte: Sequence[str], *, timeout: float = 30.0) -> list[list[float]]:
-    """Vektoren zu `texte` in Eingabereihenfolge, in Batches zu 32.
-
-    ollama: `POST {url}/api/embed` mit `{"model","input":[...]}` -> `{"embeddings":[[...]]}`.
-    dienst: `POST {url}/embed` mit `{"text"}` -> `{"vector":[...]}` (Protokoll von `HttpQueryEmbedder`,
-    je Text eine Anfrage). Fehler -> `RuntimeError` nur mit Typ und Status.
-    """
+def _holen(e: Embedder, stapel: list[str], timeout: float) -> list[list[float]]:
+    """Ein Batch (hoechstens `BATCH` Texte) -> Vektoren; Fehler nur mit Typ und Status."""
     basis = e.url.rstrip("/")
-    aus: list[list[float]] = []
     try:
-        for start in range(0, len(texte), BATCH):
-            stapel = list(texte[start:start + BATCH])
-            if e.art == "ollama":
-                antwort = _post(f"{basis}/api/embed", {"model": e.modell, "input": stapel}, timeout)
-                roh = antwort.get("embeddings") if isinstance(antwort, dict) else None
-                if not isinstance(roh, list) or len(roh) != len(stapel):
-                    raise ValueError("falsche Anzahl Vektoren")
-                aus.extend(_vektor(v) for v in roh)
-            else:
-                for text in stapel:
-                    antwort = _post(f"{basis}/embed", {"text": text}, timeout)
-                    aus.append(_vektor(antwort.get("vector") if isinstance(antwort, dict) else None))
+        if e.art == "ollama":
+            antwort = _post(f"{basis}/api/embed", {"model": e.modell, "input": stapel}, timeout)
+            roh = antwort.get("embeddings") if isinstance(antwort, dict) else None
+            if not isinstance(roh, list) or len(roh) != len(stapel):
+                raise ValueError("falsche Anzahl Vektoren")
+            return [_vektor(v) for v in roh]
+        aus: list[list[float]] = []
+        for text in stapel:
+            antwort = _post(f"{basis}/embed", {"text": text}, timeout)
+            aus.append(_vektor(antwort.get("vector") if isinstance(antwort, dict) else None))
+        return aus
     except Exception as ursache:  # noqa: BLE001 - bewusst breit: Meldung traegt nur Typ und Status
         fehler = _fehler(e, ursache)
         if isinstance(ursache, urllib.error.HTTPError):
             ursache.close()  # Antwort-Socket freigeben
         raise fehler from None
+
+
+def einbetten(e: Embedder, texte: Sequence[str], *, timeout: float = 30.0) -> list[list[float]]:
+    """Vektoren zu `texte` in Eingabereihenfolge, in Batches zu 32 (Liste fuer kleine Eingaben).
+
+    ollama: `POST {url}/api/embed` mit `{"model","input":[...]}` -> `{"embeddings":[[...]]}`.
+    dienst: `POST {url}/embed` mit `{"text"}` -> `{"vector":[...]}` (Protokoll von `HttpQueryEmbedder`,
+    je Text eine Anfrage). Fehler -> `RuntimeError` nur mit Typ und Status.
+    Grosse Eingaben ueber `einbetten_stapelweise`, damit nie alle Float-Listen zugleich leben.
+    """
+    aus: list[list[float]] = []
+    for start in range(0, len(texte), BATCH):
+        aus.extend(_holen(e, list(texte[start:start + BATCH]), timeout))
     return aus
+
+
+def einbetten_stapelweise(e: Embedder, texte: Sequence[str], *, timeout: float = 30.0,
+                          batch: int | None = None) -> Iterator[list[np.ndarray | None]]:
+    """Je Batch eine Liste normierter float32-Arrays (`None` bei Nullvektor); die Float-Listen des Batches
+    sind nach dem Umwandeln wieder frei, es lebt hoechstens ein Batch zugleich."""
+    n = batch or BATCH
+    for start in range(0, len(texte), n):
+        roh = _holen(e, list(texte[start:start + n]), timeout)
+        yield [_normiert(v) for v in roh]
+        del roh
 
 
 def _ro(stand: Path) -> sqlite3.Connection:
@@ -130,26 +147,48 @@ def _normiert(v: Sequence[float]) -> np.ndarray | None:
     return None if not np.isfinite(n) or n == 0.0 else (a / n).astype(np.float32)
 
 
+_FINGERABDRUCK = ("commit", "gemessen_um", "index_version")
+
+
+def _fingerabdruck(c: sqlite3.Connection) -> tuple[str | None, ...]:
+    meta = dict(c.execute("SELECT k, v FROM meta"))
+    return tuple(meta.get(k) for k in _FINGERABDRUCK)
+
+
 def vektoren_bauen(stand: Path, e: Embedder) -> int:
-    """Bettet alle Datei- und Doku-Eintraege ein und ersetzt `vektor` vollstaendig. Liefert die Anzahl."""
+    """Bettet alle Datei- und Doku-Eintraege stapelweise ein und ersetzt `vektor` vollstaendig. Liefert die Anzahl.
+
+    Nur Bytes (nicht Float-Listen) werden gesammelt. Wurde der Index waehrend der Einbettung ersetzt
+    (anderer Fingerabdruck aus `meta`), wird nichts geschrieben (`RuntimeError`); eingefuegt werden nur
+    Ids, die noch in `eintrag` stehen."""
     stand = Path(stand)
     with closing(_ro(stand)) as c:
+        fingerabdruck = _fingerabdruck(c)
         ids = [i for (i,) in c.execute(
             f"SELECT id FROM eintrag WHERE art IN ({','.join('?' * len(_ARTEN_MIT_VEKTOR))}) ORDER BY id",
             _ARTEN_MIT_VEKTOR)]
         texte = [_text_aus(c, i) for i in ids]
-    vektoren = einbetten(e, texte)
-    zeilen: list[tuple[str, str, bytes]] = []
-    for i, v in zip(ids, vektoren):
-        n = _normiert(v)
-        if n is not None:
-            zeilen.append((i, e.modell, n.tobytes()))
+    zeilen: list[tuple[str, str, bytes, str]] = []
+    nr = 0
+    for stapel in einbetten_stapelweise(e, texte):
+        for n in stapel:
+            if n is not None:
+                zeilen.append((ids[nr], e.modell, n.tobytes(), ids[nr]))
+            nr += 1
+    del texte
     with closing(sqlite3.connect(str(index_pfad(stand)), isolation_level=None)) as c:
-        c.execute("BEGIN")
-        c.execute("DELETE FROM vektor")
-        c.executemany("INSERT INTO vektor VALUES (?,?,?)", zeilen)
-        c.execute("COMMIT")
-    return len(zeilen)
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            if _fingerabdruck(c) != fingerabdruck:
+                raise RuntimeError("Index waehrend der Einbettung ersetzt – neu starten")
+            c.execute("DELETE FROM vektor")
+            c.executemany("INSERT INTO vektor SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM eintrag WHERE id=?)", zeilen)
+            (anzahl,) = c.execute("SELECT count(*) FROM vektor").fetchone()
+            c.execute("COMMIT")
+        except BaseException:
+            c.execute("ROLLBACK")
+            raise
+    return int(anzahl)
 
 
 def aehnlichste(stand: Path, anfrage_vektor: Sequence[float], top_k: int,
