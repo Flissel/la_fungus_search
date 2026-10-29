@@ -400,3 +400,41 @@ Reihenfolge nach OK: `hooks pth` → `hooks einspielen` (ohne `--trocken`) → `
   (Peak der Re-Messung 0,08 GB).
 - **Prognose dichter Läufe** unterschätzt die Dauer um den Textaufbau (s. Schritt 3).
 - Die Messung ist einmalig. Wiederholt habe ich nur die Messung m1 (gleiche Zahlen, kürzere Latenzen).
+
+## Final-Fix-Welle (nach dem Final-Review „With fixes“)
+
+**Entscheidung des Users für Schritt 7:** eingespielt werden nur der **Wächter-Hook** (PreToolUse), der
+**MCP-Server** und der **Skill**. Der **Einspeisungs-Hook bleibt aus**, bis eine faire Messung ihn trägt
+(s. Schritt 4b). Diese Welle behebt deshalb, was ausgeliefert wird. Tests: 587 → 628, alle grün.
+
+| Punkt | Änderung |
+|---|---|
+| I1 | `selbstbild_regeln` und `struktur.regeln_fuer` nutzen denselben Trefferbegriff `struktur.regel_trifft`: Eine Regel gilt, wenn `ort/**` den Pfad umfasst (ein Wurzel-`ort` `""`, `.` oder `./` umfasst das ganze Repo) oder eines ihrer `verboten`-Muster ihn trifft. Der MCP-Server liest weiter die committete Regeldatei (R21), der Wächter den Arbeitsbaum (F5). Mit der VibeMind-Regel nennt `selbstbild_regeln` für `spaces/x/main.py` jetzt `kein_space_im_root`, so wie der Wächter blockiert. |
+| I2 | `pruefen` meldet getrackte Pfade unter `verboten` als **harte** Verstöße. Je Regeldatei im Arbeitsbaum (`struktur.regel_ordner`, Tiefe 4) kommen die Pfade aus `git ls-files -z`, relativ zum Ordner der Regeldatei, mit der Muster-Semantik des Wächters. Ohne git läuft ersatzweise ein Arbeitsbaum-Durchlauf (ohne `.git`, `node_modules`, `.venv*`, `__pycache__`), mit Warnung im Log. Auf VibeMind (1 184 getrackte Pfade): `[]`, Exit 0. |
+| I3 | `hooks einspielen --nur waechter\|einspeisung` (wiederholbar, Standard beide). Nicht gewählte eigene Einträge bleiben stehen. Vor dem Schreiben, auch mit `--trocken`, muss der Hook-Interpreter die gewählten Module **ohne geerbtes PYTHONPATH** importieren (20 s Frist). Sonst kommt `RuntimeError` mit Verweis auf `hooks pth`, die CLI endet mit Exit 2, und nichts wird geschrieben. |
+| I5 | Skill-Vorbilder: Ordner, die selbst ein Unter-Repo des Index sind oder eines enthalten, fallen weg. Neue Spitze: `marketing/` (435,23, 366 Dateien), `rowboat/` (117,92, 819), `plugin-setup/` (51,01, 32). `captain_cook` und `sales-claw` sind eigene Submodule und fallen deshalb weg. Äußerer Commit `c2d4494b`. |
+| Minor 6 | Der Wächter bildet unter Windows Git-Bash-Pfade (`/c/...`) vor dem Normalisieren auf `c:/...` ab. Vorher landeten sie relativ zum cwd-Laufwerk und umgingen die Regel. |
+| Minor 7 | Kopf des Einspeisungsblocks: „Index von `<sha7>`, HEAD weiter“ statt „Index veraltet“, denn gezeigte Zeilen haben die Frische-Prüfung je Datei bestanden. |
+| Minor 12 | `suche-messen --transkripte` erlaubt nur Loopback-Embedder (`localhost`, `127.0.0.1`, `::1`). Sonst Exit 2, und die URL wird nicht ausgegeben. |
+| Minor 13 | MCP: Ist `SELBSTBILD_WURZELN` gesetzt, wird eine ausdrückliche `wurzel` außerhalb mit `{"fehler": ...}` abgelehnt. |
+| Minor 14 | `PY_BUILTINS` = `dir(builtins)` ohne die von `site` eingesetzten Namen (`exit`, `quit`, `help`, `copyright`, `credits`, `license`). Aufrufe dieser Namen bekommen wieder den unsicheren Namens-Rückfall. Das ändert die Auflösung minimal und wirkt erst bei der nächsten Vermessung. Eine Neumessung war nicht nötig, weil der Parse-Cache die Auflösung nicht zwischenspeichert. |
+| Minor 15 (P-T8a) | `struktur: []` und ein leeres `struktur:` melden in `pruefen` nicht mehr „Regeldatei nicht lesbar“. Ein unlesbarer Rumpf meldet weiterhin. |
+| Minor 16 | `(isoliert)` fällt aus der Zeile `Bereiche:` des Blocks. Am einzelnen Eintrag bleibt der Wert stehen, er ist dort ein echter Einzelwert. `selbstbild_bereich` liefert ihn roh, mit `hinweis` „ohne Kanten, kein eigener Bereich“. |
+
+Nebenbei: Der Docstring von `mcp_server.relativ_zur_wurzel` enthielt eine ungültige Escape-Sequenz. Sie fiel nur
+deshalb nicht auf, weil eine alte `.pyc` vorlag; mit `-W error` brach der Import nach jeder Änderung ab.
+
+**Geparkt** (betreffen nur den abgeschalteten Einspeisungs-Hook): Important 4 (Tokenwahl positionell, Gate für
+eine Neuauflage der Einspeisung), Minor 8, 9, 10, 11, 17. Die Tokenwahl und die Schweigeschwelle des Hooks sind
+unverändert.
+
+**Einsatz-Fragilität:** Der Hook-Befehl (`"…/wt-fungus-gate1/.venv-selbstbild/Scripts/python.exe" -m
+selbstbild.hooks.waechter`) und die `selbstbild-src.pth` zeigen in den Worktree `wt-fungus-gate1`. Wird dieser
+Worktree entfernt (`git worktree prune` oder Löschen des Ordners), endet **jeder Write/Edit in VibeMind mit einem
+Hook-Fehler** (nicht blockierend, aber bei jedem Schreibzugriff). Rückweg: `python -m selbstbild hooks entfernen
+<VibeMind>\.claude\settings.local.json` (entfernt nur die eigenen Einträge), danach den MCP-Server mit
+`claude mcp remove selbstbild` austragen. Der Wächter-Hook selbst ist fail-open, bricht also bei eigenen Fehlern nie
+mit einem Deny ab, aber den Import kann er nicht absichern.
+
+Ablauf für Schritt 7 nach dieser Welle: `hooks pth <venv> <src>` → `hooks einspielen <settings> --nur waechter
+--python <venv-python>` (die Import-Vorprüfung schlägt ohne `.pth` jetzt vorher fehl) → `claude mcp add …`.
