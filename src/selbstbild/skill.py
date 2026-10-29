@@ -6,7 +6,9 @@ Datengetrieben und deterministisch (keine Zeitstempel, alles sortiert):
   Unter-Repos bekommen deren Ordner vorangestellt).
 - "Nie hier anlegen": `verboten` der Regeln mit Wurzel-`ort`.
 - Vorbilder: Ordner im Suchindex des Stands, die auf `ort` passen, ohne Namen mit `_` am Anfang und ohne
-  `__pycache__`, mit allen Pflichtteilen. Rang = SUMME der `lebendigkeit` aller Dateien darunter. `lebendigkeit` ist nach
+  `__pycache__`, mit allen Pflichtteilen. Ordner, die selbst ein Unter-Repo des Index sind oder eines enthalten
+  (ein Repo-Praefix liegt an oder unter dem Ordner, etwa ein eingebettetes Submodul), fallen weg: Ihre Dateizahl
+  und Lebendigkeit stammen aus fremdem Code. Rang = SUMME der `lebendigkeit` aller Dateien darunter. `lebendigkeit` ist nach
   oben nicht begrenzt (zerfallsgewichtete Summe der Aenderungen). Die Summe misst, wie stark der Space als Ganzes
   veraendert wird; sie bevorzugt dadurch grosse Spaces, ein Maximum je Datei wuerde das nicht abbilden. Die ersten
   drei, Gleichstand nach Name. Ohne Stand oder ohne Treffer entfaellt der Abschnitt.
@@ -109,8 +111,9 @@ def _stand_ordner(wurzel: Path, stand_unter: Path | None) -> Path | None:
     return None
 
 
-def _dateien_im_stand(stand: Path) -> list[tuple[str, float]]:
-    """(Wurzel-relativer Pfad, Lebendigkeit) aller Dateien im Index; `[]` bei unlesbarem Index."""
+def _dateien_im_stand(stand: Path) -> tuple[list[tuple[str, float]], set[str]]:
+    """((Wurzel-relativer Pfad, Lebendigkeit) aller Dateien im Index, Wurzel-relative Ordner der Unter-Repos);
+    `([], set())` bei unlesbarem Index."""
     from .suche.index import index_pfad
     from .suche.messung import wurzel_name
 
@@ -119,11 +122,12 @@ def _dateien_im_stand(stand: Path) -> list[tuple[str, float]]:
             zeilen = c.execute("SELECT repo, pfad, lebendigkeit FROM eintrag"
                                " WHERE art='datei' AND repo IS NOT NULL AND pfad IS NOT NULL").fetchall()
     except sqlite3.DatabaseError:
-        return []
+        return [], set()
     repos = sorted({r for r, _, _ in zeilen}, key=lambda r: (len(r), r))
     if not repos:
-        return []
+        return [], set()
     kopf = wurzel_name(stand) or repos[0]
+    unter = {r[len(kopf) + 1:] for r in repos if r.startswith(kopf + "/")}
     aus: list[tuple[str, float]] = []
     for repo, pfad, leb in zeilen:
         if repo == kopf:
@@ -133,7 +137,17 @@ def _dateien_im_stand(stand: Path) -> list[tuple[str, float]]:
         else:
             continue
         aus.append((_verbinden(vorn, str(pfad)), float(leb or 0.0)))
-    return aus
+    return aus, unter
+
+
+def _mit_repo(ordner: str, unter: set[str]) -> bool:
+    """Ist `ordner` selbst ein Unter-Repo oder liegt eines darin (z. B. ein eingebettetes Submodul)?"""
+    o = ordner.lower() if struktur.GROSSKLEIN_EGAL else ordner
+    for r in unter:
+        r = r.lower() if struktur.GROSSKLEIN_EGAL else r
+        if r == o or r.startswith(o + "/"):
+            return True
+    return False
 
 
 def _hat_teil(dateien: list[str], teil: str) -> bool:
@@ -153,7 +167,7 @@ def _hat_teil(dateien: list[str], teil: str) -> bool:
 
 def _vorbilder(stand: Path, space: list[dict]) -> list[tuple[str, float, int]]:
     """(Ordner, Lebendigkeits-Summe, Dateien) der besten Ordner, die auf einen Space-`ort` passen und alle Teile haben."""
-    dateien = _dateien_im_stand(stand)
+    dateien, unter = _dateien_im_stand(stand)
     if not dateien:
         return []
     ergebnis: dict[str, tuple[float, int]] = {}
@@ -168,7 +182,7 @@ def _vorbilder(stand: Path, space: list[dict]) -> list[tuple[str, float, int]]:
                     ordner.setdefault(kopf, []).append(("/".join(teile[i:]), leb))
         for kopf, inhalt in ordner.items():
             name = kopf.rsplit("/", 1)[-1]
-            if name.startswith("_") or name == "__pycache__":
+            if name.startswith("_") or name == "__pycache__" or _mit_repo(kopf, unter):
                 continue
             rel = [p for p, _ in inhalt]
             if all(_hat_teil(rel, t) for t in regel["pflicht"]):

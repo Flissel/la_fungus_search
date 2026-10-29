@@ -188,3 +188,19 @@ def test_skill_pflichtteil_gross_klein_egal_auf_windows(wurzel: Path, tmp_path: 
     assert "## Vorbilder" not in skill_neuer_space(wurzel, stand)
     monkeypatch.setattr(struktur, "GROSSKLEIN_EGAL", True)
     assert "`sub/spaces/x/`" in skill_neuer_space(wurzel, stand)
+
+
+def test_skill_vorbilder_ohne_ordner_mit_verschachteltem_repo(wurzel: Path, tmp_path: Path):
+    """I5: ein Ordner, der selbst ein Repo ist oder eines enthaelt (eingebettetes Submodul), ist kein Vorbild."""
+    stand = _stand(tmp_path / "stand")
+    with closing(sqlite3.connect(stand / "suche.sqlite")) as c:
+        # beta bettet ein Repo ein (wie captain_cook mit hermes-agent); alpha ist selbst ein Repo
+        c.execute("INSERT INTO eintrag VALUES ('v', 'datei', 'aussen/sub/spaces/beta/vendor', 'big.py',"
+                  " NULL, NULL, 50.0, NULL, NULL, NULL)")
+        c.execute("INSERT INTO eintrag VALUES ('w', 'datei', 'aussen/sub/spaces/alpha', 'extra.py',"
+                  " NULL, NULL, 50.0, NULL, NULL, NULL)")
+        c.commit()
+    text = skill_neuer_space(wurzel, stand)
+    abschnitt = text.split("## Vorbilder")[1].split("\n## ")[0]
+    pfade = [z.split("`")[1] for z in abschnitt.splitlines() if z.startswith("- `")]
+    assert pfade == ["sub/spaces/zeta/", "sub/spaces/gamma/", "sub/spaces/delta/"]
