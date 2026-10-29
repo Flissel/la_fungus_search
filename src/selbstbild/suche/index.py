@@ -1,7 +1,7 @@
 """Suchindex `suche.sqlite` (SQLite FTS5), gebaut nur lesend aus Graph (Stufe 1) und Analyse (Stufe 2).
 
 `graph.sqlite` und `analyse.sqlite` werden nur mit `mode=ro` geoeffnet; `suche.sqlite` gehoert allein
-diesem Modul. Der Index wird in `suche.sqlite.tmp` gebaut und per `os.replace` ersetzt (nie halbfertig
+diesem Modul. Der Index wird in `suche.sqlite.<pid>.tmp` gebaut und per `os.replace` ersetzt (nie halbfertig
 sichtbar). Zeilen gehen sortiert nach id hinein (deterministisch). Es werden nur Namen, Pfade, Symbolnamen
 und committeter Doku-Text indiziert, nie Env-Werte (Env-Knoten tragen nur Namen) und nie Beleg-Anker.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import time
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Iterator
@@ -202,15 +203,27 @@ def _bauen(d: GraphDaten, wurzel: Path, stand: Path, ziel: Path) -> dict[str, in
     return zaehler
 
 
+def _ersetzen(tmp: Path, ziel: Path) -> None:
+    """`os.replace` mit bis zu 5 Versuchen: Windows sperrt die Zieldatei, solange ein Leser sie offen hat."""
+    for versuch in range(1, 6):
+        try:
+            os.replace(tmp, ziel)
+            return
+        except PermissionError:
+            if versuch == 5:
+                raise
+            time.sleep(0.1 * versuch)
+
+
 def index_bauen(wurzel: Path, stand: Path) -> dict[str, int]:
     """Baut `<stand>/suche.sqlite` neu und ersetzt die alte Datei atomar. Liefert Zaehler."""
     stand = Path(stand)
     ziel = index_pfad(stand)
-    tmp = ziel.with_name(ziel.name + ".tmp")
+    tmp = ziel.with_name(f"{ziel.name}.{os.getpid()}.tmp")  # eindeutig je Prozess (parallele Bauten)
     d = laden(stand)
     try:
         zaehler = _bauen(d, Path(wurzel), stand, tmp)
-        os.replace(tmp, ziel)
+        _ersetzen(tmp, ziel)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

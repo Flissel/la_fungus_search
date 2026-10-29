@@ -157,3 +157,32 @@ def test_keine_env_werte(git_repo, tmp_path, monkeypatch):
     assert any(i.startswith("env:") for (i,) in _zeilen(stand, "SELECT id FROM eintrag"))
     assert b"geheim-123" not in index_pfad(stand).read_bytes()
     assert _treffer(stand, "geheim") == set()
+
+
+def test_index_bauen_wiederholt_replace_bei_permissionerror(git_repo, graph_stand, monkeypatch):
+    """U4: Windows sperrt geoeffnete Dateien; os.replace wird bis zu 5x wiederholt, tmp-Name traegt die pid."""
+    import os
+
+    from selbstbild.suche import index as idx
+    git_repo.datei("a.py", "def f():\n    return 1\n")
+    sha = git_repo.commit("init")
+    stand = graph_stand([Knoten("datei:repo:a.py", "datei", "a.py", None)], [], commit=sha)
+    echt, versuche, tmps = os.replace, [], []
+
+    def sperre(quelle, ziel):
+        versuche.append(1)
+        tmps.append(str(quelle))
+        if len(versuche) < 3:
+            raise PermissionError("gesperrt")
+        return echt(quelle, ziel)
+
+    monkeypatch.setattr(idx.os, "replace", sperre)
+    monkeypatch.setattr(idx.time, "sleep", lambda s: None)
+    idx.index_bauen(git_repo.wurzel, stand)
+    assert len(versuche) == 3 and idx.index_pfad(stand).is_file()
+    assert str(os.getpid()) in tmps[0]
+
+    monkeypatch.setattr(idx.os, "replace", lambda q, z: (_ for _ in ()).throw(PermissionError("dauerhaft")))
+    with pytest.raises(PermissionError):
+        idx.index_bauen(git_repo.wurzel, stand)
+    assert not list(stand.glob("suche.sqlite.*tmp"))
