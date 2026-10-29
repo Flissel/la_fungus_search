@@ -9,12 +9,12 @@ import json
 import sys
 from pathlib import Path
 
-from selbstbild import struktur
-
 SCHREIBER = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 
 
 def _entscheiden(eingabe: object) -> str | None:
+    from selbstbild import struktur
+
     if not isinstance(eingabe, dict):
         return None
     schluessel = SCHREIBER.get(str(eingabe.get("tool_name")))

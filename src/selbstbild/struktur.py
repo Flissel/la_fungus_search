@@ -53,8 +53,25 @@ def _regeln_von(ordner: Path) -> list[dict]:
         return []
 
 
-def _hinweis(r: dict) -> str:
-    return r.get("hinweis") or f"richtiger Ort: {r.get('ort', '?')}"
+def _ungelesen(wurzel: Path) -> tuple[Verstoss, ...]:
+    """CI faellt geschlossen: `struktur:` steht in der Regeldatei, der kleine Leser liefert aber keine Regeln."""
+    datei = wurzel / REGELDATEI
+    try:
+        text = datei.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ()
+    if re.search(r"^struktur:", text, re.MULTILINE) and not regeln_lesen(text).get("struktur"):
+        return (Verstoss("regeldatei", REGELDATEI, f"Regeldatei nicht lesbar: {datei} – Strukturregeln werden nicht geprueft",
+                         None, False),)
+    return ()
+
+
+def _hinweis(r: dict) -> str | None:
+    """`hinweis` der Regel, sonst der richtige Ort; ein `ort` der Repo-Wurzel ist nur der Geltungsbereich."""
+    if r.get("hinweis"):
+        return r["hinweis"]
+    ort = str(r.get("ort", "")).replace("\\", "/").strip().rstrip("/")
+    return None if ort in ("", ".") else f"richtiger Ort: {r.get('ort', '?')}"
 
 
 def _aufloesen(ziel: Path, cwd: Path | None) -> Path:
@@ -134,9 +151,10 @@ def _hat_pflichtteil(ordner: Path, teil: str) -> bool:
 def pruefen(wurzel: Path) -> tuple[Verstoss, ...]:
     """CI: Ordner, die auf `ort` einer Regel mit `pflicht` passen, aber Pflichtteile missen (weich; nur lesend)."""
     wurzel = Path(wurzel)
+    ungelesen = _ungelesen(wurzel)
     regeln = [r for r in _regeln_von(wurzel) if r.get("pflicht") and r.get("ort")]
     if not regeln:
-        return ()
+        return ungelesen
     muster = [(r, re.compile(glob_regex(str(r["ort"]).replace("\\", "/").rstrip("/")).pattern, _flags()),
                None if "**" in r["ort"] else r["ort"].rstrip("/").count("/") + 1) for r in regeln]
     tiefe_max = None if any(t is None for _, _, t in muster) else max(t for _, _, t in muster)  # type: ignore[type-var]
@@ -155,4 +173,4 @@ def pruefen(wurzel: Path) -> tuple[Verstoss, ...]:
                     if not _hat_pflichtteil(Path(pfad), teil):
                         verstoesse.append(Verstoss(r.get("art", "?"), basis, f"Pflichtteil fehlt: {teil}",
                                                    r.get("hinweis"), False))
-    return tuple(verstoesse)
+    return (*ungelesen, *verstoesse)

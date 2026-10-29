@@ -149,3 +149,30 @@ def test_waechter_importiert_nichts_schweres():
     p = subprocess.run([sys.executable, "-c", code], env={**os.environ, "PYTHONPATH": str(SRC)},
                        capture_output=True, text=True, timeout=60)
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_wurzel_ort_ohne_richtigen_ort(root):
+    basis = "struktur:" + chr(10) + '  - art: wurzel' + chr(10) + '    ort: "./"' + chr(10) + "    pflicht: []" + chr(10)
+    (root / "selbstbild.yaml").write_text(basis + "    verboten: ['spaces/*/']" + chr(10), encoding="utf-8")
+    v = pruefe_schreibziel(root / "spaces" / "neu" / "x.py")
+    assert v[0].hinweis is None
+    assert "spaces/*/" in v[0].grund and "richtiger Ort" not in v[0].grund
+    (root / "selbstbild.yaml").write_text(basis + "    verboten: ['spaces/*/']" + chr(10) + "    hinweis: dort" + chr(10),
+                                          encoding="utf-8")
+    assert pruefe_schreibziel(root / "spaces" / "neu" / "x.py")[0].hinweis == "dort"
+
+
+def test_pruefen_unlesbare_regeldatei_faellt_geschlossen(root):
+    zeilen = ["struktur:", "  - art: a", "    ort: x/", "    pflicht: [y]", "    hinweis: >", "      lang", "      text", ""]
+    (root / "selbstbild.yaml").write_text(chr(10).join(zeilen), encoding="utf-8")
+    v = pruefen(root)
+    assert len(v) == 1 and v[0].regel == "regeldatei" and "nicht lesbar" in v[0].grund and not v[0].hart
+    assert pruefe_schreibziel(root / "x" / "a.py") == ()  # Hook bleibt offen
+    p = subprocess.run([sys.executable, "-m", "selbstbild", "pruefen", str(root)],
+                       env={**os.environ, "PYTHONPATH": str(SRC)}, capture_output=True, text=True, timeout=60)
+    assert p.returncode == 1
+
+
+def test_pruefen_ohne_struktur_kein_verstoss(root):
+    (root / "selbstbild.yaml").write_text("name: x" + chr(10), encoding="utf-8")
+    assert pruefen(root) == ()

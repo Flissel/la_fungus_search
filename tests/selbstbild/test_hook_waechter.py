@@ -69,7 +69,7 @@ def test_waechter_fehler_blockiert_nicht(eingabe):
     assert p.returncode == 0 and p.stdout == b""
 
 
-def test_waechter_interner_fehler_blockiert_nicht(root, monkeypatch):
+def test_waechter_interner_fehler_blockiert_nicht(root, monkeypatch, capsys):
     from selbstbild.hooks import waechter
 
     def boese(*_a: object, **_k: object) -> None:
@@ -79,3 +79,16 @@ def test_waechter_interner_fehler_blockiert_nicht(root, monkeypatch):
     import io
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(_json("Write", root / "spaces" / "a" / "b").encode())))
     assert waechter.main() == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_waechter_importfehler_blockiert_nicht(root, monkeypatch, capsys):
+    import io
+
+    from selbstbild.hooks import waechter
+
+    monkeypatch.setitem(sys.modules, "selbstbild.struktur", None)
+    monkeypatch.delattr("selbstbild.struktur")  # Paketattribut weg, sonst fand `from selbstbild import struktur` es dort
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(_json("Write", root / "spaces" / "a" / "b").encode())))
+    assert waechter.main() == 0
+    assert capsys.readouterr().out == ""
