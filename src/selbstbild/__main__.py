@@ -55,19 +55,44 @@ def _status(wurzel: Path) -> int:
     return 0
 
 
+def _fehler(meldung: str, code: int) -> int:
+    sys.stderr.write(meldung + "\n")
+    return code
+
+
+def _analyse_holen(wurzel: Path) -> Any:
+    """Gespeicherte Analyse oder ein Exit-Code (int) samt Meldung auf stderr."""
+    from selbstbild.analyse.lader import StandOhneGraph
+    from selbstbild.analyse.lauf import NichtAnalysiert, NichtVermessen, gespeicherte_analyse
+
+    try:
+        return gespeicherte_analyse(wurzel)
+    except NichtVermessen as e:
+        return _fehler(str(e), 1)
+    except StandOhneGraph as e:
+        return _fehler(str(e), 3)
+    except NichtAnalysiert as e:
+        return _fehler(str(e), 1)
+
+
 def _analysieren(args: argparse.Namespace) -> int:
     from selbstbild.analyse.ergebnis import export_json
-    from selbstbild.analyse.lauf import analysieren, speicher_spitze_mb, zusammenfassung
+    from selbstbild.analyse.lader import StandOhneGraph
+    from selbstbild.analyse.lauf import NichtVermessen, analysieren, speicher_spitze_mb, zusammenfassung
 
     start = time.perf_counter_ns()
     try:
         a = analysieren(args.wurzel, kolonie=not args.ohne_kolonie,
                         pruefen_reproduzierbar=args.pruefen_reproduzierbar)
-    except RuntimeError as e:  # nicht vermessen, Stand ohne Graph
-        sys.stderr.write(f"{e}\n")
-        return 1
+    except NichtVermessen as e:
+        return _fehler(str(e), 1)
+    except StandOhneGraph as e:
+        return _fehler(str(e), 3)
     if args.export is not None:
-        export_json(a, args.export)
+        try:
+            export_json(a, args.export)
+        except OSError as e:
+            return _fehler(f"Export nicht schreibbar: {args.export} ({type(e).__name__}: {e.strerror})", 2)
     z = zusammenfassung(a)
     ws, privat = speicher_spitze_mb()
     z.update({"dauer_ms": (time.perf_counter_ns() - start) // 1_000_000,
@@ -77,19 +102,22 @@ def _analysieren(args: argparse.Namespace) -> int:
 
 
 def _goldsatz(args: argparse.Namespace) -> int:
-    from selbstbild.analyse.goldsatz import kandidaten
-    from selbstbild.analyse.lauf import gespeicherte_analyse
-
-    try:
-        a = gespeicherte_analyse(args.wurzel)
-    except RuntimeError as e:
-        sys.stderr.write(f"{e}\n")
-        return 1
-    text = kandidaten(a)
-    args.ziel.parent.mkdir(parents=True, exist_ok=True)
-    args.ziel.write_bytes(text.encode("utf-8"))  # LF auch unter Windows
     import yaml
 
+    from selbstbild.analyse.goldsatz import kandidaten
+
+    if args.ziel.exists() and not args.ueberschreiben:
+        return _fehler(f"Goldsatz existiert schon: {args.ziel}. Nicht ueberschrieben, damit eingetragene Urteile"
+                       " erhalten bleiben. Zum Neu-Erzeugen --ueberschreiben angeben.", 2)
+    a = _analyse_holen(args.wurzel)
+    if isinstance(a, int):
+        return a
+    text = kandidaten(a)
+    try:
+        args.ziel.parent.mkdir(parents=True, exist_ok=True)
+        args.ziel.write_bytes(text.encode("utf-8"))  # LF auch unter Windows
+    except OSError as e:
+        return _fehler(f"Goldsatz nicht schreibbar: {args.ziel} ({type(e).__name__}: {e.strerror})", 2)
     doc = yaml.safe_load(text)
     _ausgeben({"ziel": str(args.ziel), "commit": a.commit,
                **{k: len(doc[k]) for k in ("tot", "doppelt", "bereiche")}})
@@ -97,24 +125,24 @@ def _goldsatz(args: argparse.Namespace) -> int:
 
 
 def _vergleichen(args: argparse.Namespace) -> int:
-    from selbstbild.analyse.goldsatz import vergleichen
-    from selbstbild.analyse.lauf import gespeicherte_analyse
+    from selbstbild.analyse.goldsatz import gold_commit_und_fehlend, vergleichen
 
-    try:
-        a = gespeicherte_analyse(args.wurzel)
-    except RuntimeError as e:
-        sys.stderr.write(f"{e}\n")
-        return 1
+    a = _analyse_holen(args.wurzel)
+    if isinstance(a, int):
+        return a
     try:
         text = args.gold.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        sys.stderr.write(f"Goldsatz nicht lesbar: {args.gold} ({type(e).__name__})\n")
-        return 2
+        return _fehler(f"Goldsatz nicht lesbar: {args.gold} ({type(e).__name__})", 2)
     try:
         v = vergleichen(text, a)
     except ValueError as e:
-        sys.stderr.write(f"{e}\n")
-        return 2
+        return _fehler(str(e), 2)
+    commit, fehlend = gold_commit_und_fehlend(text, a)
+    if commit is not None and commit != a.commit:
+        sys.stderr.write(f"Warnung: Goldsatz stammt von Commit {commit[:12]}, die Analyse von {a.commit[:12]}."
+                         f" {fehlend} tot-Eintraege haben kein Symbol mehr in der Analyse"
+                         " (in `ignoriert` enthalten).\n")
     _ausgeben(dataclasses.asdict(v))
     return 0
 
@@ -141,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     g = befehle.add_parser("goldsatz", help="Goldsatz-Kandidaten (YAML) aus der gespeicherten Analyse")
     g.add_argument("wurzel", type=Path)
     g.add_argument("ziel", type=Path)
+    g.add_argument("--ueberschreiben", action="store_true",
+                   help="vorhandene Zieldatei ersetzen (eingetragene Urteile gehen verloren)")
     vg = befehle.add_parser("vergleichen", help="ausgefuellten Goldsatz gegen Mathe und Kolonie messen")
     vg.add_argument("wurzel", type=Path)
     vg.add_argument("gold", type=Path)

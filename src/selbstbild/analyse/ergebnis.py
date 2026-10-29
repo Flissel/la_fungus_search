@@ -7,9 +7,12 @@ JSON der Analyse (dieselben Bytes wie `export_json`). Gleicher Schluessel ersetz
 Zahlen im Export stehen als Strings mit fester Nachkommazahl: kohaesion/aehnlichkeit 4,
 Hotspot-wert und -teile 6, pagerank 8, betweenness 6, Kolonie-Werte 6.
 
-Laufzeiten (`statistik`-Schluessel mit Praefix `laufzeit_`) stehen NICHT im Export: sie aendern sich
-von Lauf zu Lauf und wuerden den byte-gleichen Export brechen. `speichern` legt sie in der Nebentabelle
-`messung` ab, `lesen` gibt sie in `statistik` zurueck (goldsatz.vergleichen braucht sie).
+Messwerte (`statistik`-Schluessel mit Praefix `laufzeit_` oder `reproduzierbar_`) stehen NICHT im
+Export: Laufzeiten aendern sich von Lauf zu Lauf, und `reproduzierbar_*` gibt es nur mit dem Pruef-Schalter.
+So ergeben gleiche Parameter immer einen byte-gleichen Export. `speichern` legt sie in der Nebentabelle
+`messung` ab, `lesen` gibt sie in `statistik` zurueck (goldsatz.vergleichen braucht sie). Die Tabelle
+`herkunft` haelt `gemessen_um` des Graphen, aus dem der Lauf stammt; `lesen` mit `graph_gemessen_um`
+liefert nur einen Lauf zum selben Graphen (neu vermessen => neu analysieren).
 """
 from __future__ import annotations
 
@@ -45,11 +48,11 @@ class Analyse:
     statistik: tuple[tuple[str, int], ...] = ()
 
 
-LAUFZEIT_PRAEFIX = "laufzeit_"
+MESSUNG_PRAEFIXE: tuple[str, ...] = ("laufzeit_", "reproduzierbar_")
 
 
-def _ist_laufzeit(schluessel: str) -> bool:
-    return schluessel.startswith(LAUFZEIT_PRAEFIX)
+def _ist_messung(schluessel: str) -> bool:
+    return schluessel.startswith(MESSUNG_PRAEFIXE)
 
 
 def _z(wert: float, stellen: int) -> str:
@@ -87,7 +90,7 @@ def _teile(a: Analyse) -> Iterator[tuple[str, Any]]:
     yield "luecken", [list(x) for x in sorted(a.luecken)]
     yield "pagerank_top", _paare(a.pagerank_top, 8)
     yield "parameter", [list(x) for x in a.parameter]
-    yield "statistik", [list(x) for x in sorted(a.statistik) if not _ist_laufzeit(x[0])]
+    yield "statistik", [list(x) for x in sorted(a.statistik) if not _ist_messung(x[0])]
     yield "tot", ({"gruende": list(t.gruende), "stufe": t.stufe, "symbol": t.symbol,
                    "zuletzt": t.zuletzt} for t in a.tot)
     yield "version", a.version
@@ -132,7 +135,7 @@ def parameter_digest(a: Analyse) -> str:
     return digest_von(a.parameter)
 
 
-def speichern(stand: Path, a: Analyse) -> None:
+def speichern(stand: Path, a: Analyse, graph_gemessen_um: str | None = None) -> None:
     """Schreibt (ersetzt) den Lauf in `<stand>/analyse.sqlite`. `stand` ist der Ordner mit graph.sqlite.
 
     `lauf.daten` = Export-Bytes; die Laufzeiten des Laufs ersetzen die Zeilen in `messung`."""
@@ -152,8 +155,12 @@ def speichern(stand: Path, a: Analyse) -> None:
                       " PRIMARY KEY (commit_id, version, parameter_digest, schluessel))")
             c.execute("INSERT OR REPLACE INTO lauf VALUES (?, ?, ?, ?)", (*schluessel, puffer.getvalue()))
             c.execute("DELETE FROM messung WHERE commit_id=? AND version=? AND parameter_digest=?", schluessel)
+            c.execute("CREATE TABLE IF NOT EXISTS herkunft (commit_id TEXT NOT NULL, version INTEGER NOT NULL,"
+                      " parameter_digest TEXT NOT NULL, graph_gemessen_um TEXT,"
+                      " PRIMARY KEY (commit_id, version, parameter_digest))")
+            c.execute("INSERT OR REPLACE INTO herkunft VALUES (?, ?, ?, ?)", (*schluessel, graph_gemessen_um))
             c.executemany("INSERT INTO messung VALUES (?, ?, ?, ?, ?)",
-                          [(*schluessel, k, int(w)) for k, w in sorted(a.statistik) if _ist_laufzeit(k)])
+                          [(*schluessel, k, int(w)) for k, w in sorted(a.statistik) if _ist_messung(k)])
     finally:
         c.close()
 
@@ -191,9 +198,11 @@ def _aus_json(d: dict[str, Any], laufzeiten: list[tuple[str, int]]) -> Analyse:
         statistik=tuple(sorted([(str(a), int(b)) for a, b in d["statistik"]] + laufzeiten)))
 
 
-def lesen(stand: Path, commit: str, version: int, digest: str) -> Analyse | None:
+def lesen(stand: Path, commit: str, version: int, digest: str,
+          graph_gemessen_um: str | None = None) -> Analyse | None:
     """Gespeicherten Lauf zurueckholen (Zahlen gerundet wie im Export; erneuter Export = gleiche Bytes).
-    None, wenn es `analyse.sqlite` oder den Lauf nicht gibt. Oeffnet nur lesend."""
+    None, wenn es `analyse.sqlite` oder den Lauf nicht gibt oder (mit `graph_gemessen_um`) der Lauf
+    von einem anderen Graph-Stand stammt. Oeffnet nur lesend."""
     db = Path(stand) / "analyse.sqlite"
     if not db.is_file():
         return None
@@ -204,6 +213,14 @@ def lesen(stand: Path, commit: str, version: int, digest: str) -> Analyse | None
                       schluessel).fetchone()
         if z is None:
             return None
+        if graph_gemessen_um is not None:
+            try:
+                h = c.execute("SELECT graph_gemessen_um FROM herkunft WHERE commit_id=? AND version=?"
+                              " AND parameter_digest=?", schluessel).fetchone()
+            except sqlite3.OperationalError:  # Stand von vor der Herkunftstabelle
+                h = None
+            if h is None or h[0] != graph_gemessen_um:
+                return None  # Graph seit dem Lauf neu vermessen
         try:
             laufzeiten = [(str(k), int(w)) for k, w in c.execute(
                 "SELECT schluessel, wert FROM messung WHERE commit_id=? AND version=? AND parameter_digest=?"

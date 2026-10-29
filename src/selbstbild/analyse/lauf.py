@@ -11,7 +11,8 @@ Build-/generierten Dateien, Ruling S9) sowie die Laufzeiten `laufzeit_laden_ms`,
 stehen nicht im Export (byte-gleicher `analyse.json`, siehe `ergebnis`). Nur mit
 `pruefen_reproduzierbar=True` laufen Mathe und Kolonie ein zweites Mal im selben Prozess;
 `reproduzierbar_mathe` / `reproduzierbar_kolonie` sind dann 1 bei identischem Ergebnis, sonst 0.
-Ohne die Pruefung fehlen beide Schluessel (goldsatz meldet dann None).
+Ohne die Pruefung fehlen beide Schluessel (goldsatz meldet dann None). Auch sie sind Messwerte und
+stehen nur in `messung`, nicht im Export.
 
 `luecken` wird erst nach allen Analysen aus `GraphDaten.luecken` gebaut (Ruling S3): `dateigraph`
 traegt dort `symbol_ohne_datei` nach, und `bereiche_finden` ruft `dateigraph` immer auf.
@@ -33,7 +34,7 @@ from .doppelt import Doppelung
 from .ergebnis import Analyse, digest_von, lesen, speichern
 from .erreichbar import erreichbarkeit
 from .kolonie import KolonieParameter, kolonie_laufen
-from .lader import ANALYSE_VERSION, SEED, GraphDaten, _meta, datei_von, laden
+from .lader import ANALYSE_VERSION, SEED, GraphDaten, StandOhneGraph, _meta, datei_von, laden
 from .tot import (NAME_MIN, TOT_TAGE, TotFund, generiert_zaehlen, namensverweis_abstufen, namensverweise,
                   tot_finden)
 from .zentral import BETWEENNESS_CUTOFF, DAEMPFUNG, Hotspot, betweenness, hotspots, pagerank
@@ -118,6 +119,7 @@ def _stand(wurzel: Path) -> Path:
 def analysieren(wurzel: Path, *, kolonie: bool = True, pruefen_reproduzierbar: bool = False) -> Analyse:
     wurzel = Path(wurzel)
     stand = _stand(wurzel)
+    _, gemessen_um = _stand_meta(stand)
     t = time.perf_counter_ns()
     d = laden(stand)
     stat: dict[str, int] = {"laufzeit_laden_ms": _ms(t)}
@@ -142,32 +144,36 @@ def analysieren(wurzel: Path, *, kolonie: bool = True, pruefen_reproduzierbar: b
                 bereiche=m.bereiche, pagerank_top=m.pagerank_top, betweenness_top=m.betweenness_top,
                 hotspots=m.hotspots, tot=m.tot, doppelungen=m.doppelungen, kolonie=kol,
                 luecken=luecken, statistik=tuple(sorted(stat.items())))
-    speichern(stand, a)
+    speichern(stand, a, graph_gemessen_um=gemessen_um or "")
     return a
 
 
-def _stand_commit(stand: Path) -> str | None:
+def _stand_meta(stand: Path) -> tuple[str | None, str | None]:
+    """(commit, gemessen_um) des Graphen, nur lesend; (None, None) ohne meta-Tabelle."""
     db = Path(stand) / "graph.sqlite"
     c = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
     try:
-        return _meta(c, "commit")
+        return _meta(c, "commit"), _meta(c, "gemessen_um")
     except sqlite3.OperationalError:
-        return None
+        return None, None
     finally:
         c.close()
 
 
 def gespeicherte_analyse(wurzel: Path) -> Analyse:
-    """Der gespeicherte Lauf zum aktuellen Graph-Commit (mit Kolonie bevorzugt, sonst ohne)."""
+    """Der gespeicherte Lauf zum aktuellen Graphen (gleicher Commit UND gleiches `gemessen_um`;
+    mit Kolonie bevorzugt, sonst ohne). Ein neu vermessener Graph verlangt eine neue Analyse."""
     wurzel = Path(wurzel)
     stand = _stand(wurzel)
-    commit = _stand_commit(stand)
-    if commit is not None:
-        for mit_kolonie in (True, False):
-            a = lesen(stand, commit, ANALYSE_VERSION, digest_von(parameter(mit_kolonie)))
-            if a is not None:
-                return a
-    raise NichtAnalysiert(f"noch nicht analysiert: {wurzel} "
+    commit, gemessen_um = _stand_meta(stand)
+    if commit is None:
+        raise StandOhneGraph(f"Stand {stand} ohne Graph: neu vermessen (`python -m selbstbild vermessen`)")
+    for mit_kolonie in (True, False):
+        a = lesen(stand, commit, ANALYSE_VERSION, digest_von(parameter(mit_kolonie)),
+                  graph_gemessen_um=gemessen_um or "")
+        if a is not None:
+            return a
+    raise NichtAnalysiert(f"noch nicht analysiert (oder Graph seit der Analyse neu vermessen): {wurzel} "
                           f"(erst analysieren: python -m selbstbild analysieren {wurzel})")
 
 

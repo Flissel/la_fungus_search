@@ -34,6 +34,7 @@ KOPF = """\
 #  - bereiche: trage unter `erwartet` Pfad-Praefixe ein, die deiner Meinung nach zu diesem
 #    Bereich gehoeren (z. B. `src/selbstbild/`).
 #  - zentral: optional, Datei-Ids (datei:<repo>:<pfad>), die du fuer zentral haeltst.
+#  - commit: Stand, aus dem die Kandidaten stammen (nicht aendern).
 """
 
 
@@ -45,6 +46,7 @@ def kandidaten(a: Analyse, n_tot: int = 40, n_doppelt: int = 15) -> str:
     gross = sorted((b for b in a.bereiche if b.name != "(isoliert)"),
                    key=lambda b: (-len(b.dateien), b.id))[:3]
     doc: dict[str, Any] = {
+        "commit": a.commit,  # Commit des Graphen/Laufs; vergleichen warnt bei Abweichung
         "tot": [{"symbol": t.symbol, "gruende": list(t.gruende), "urteil": "offen"} for t in tot],
         "doppelt": [{"art": d.art, "mitglieder": list(d.mitglieder),
                      "aehnlichkeit": f"{d.aehnlichkeit:.4f}", "urteil": "offen"} for d in dopp],
@@ -216,3 +218,14 @@ def vergleichen(gold_yaml: str, mathe: Analyse) -> Vergleich:
         laufzeit_kolonie_ms=_stat(mathe, "laufzeit_kolonie_ms"),
         reproduzierbar_mathe=None if rm is None else bool(rm),
         reproduzierbar_kolonie=None if rk is None else bool(rk))
+
+
+def gold_commit_und_fehlend(gold_yaml: str, a: Analyse) -> tuple[str | None, int]:
+    """(`commit` aus dem Goldsatz oder None, Anzahl tot-Eintraege, deren Symbol nicht in der Analyse steht).
+    Nur fuer Hinweise; setzt ein von `vergleichen` schon gepruefte YAML voraus."""
+    gold = yaml.safe_load(gold_yaml) or {}
+    commit = gold.get("commit") if isinstance(gold, dict) else None
+    bekannt = {t.symbol for t in a.tot}
+    eintraege, _ = _eintraege(gold if isinstance(gold, dict) else {}, "tot")
+    fehlend = sum(1 for e in eintraege if isinstance(e.get("symbol"), str) and e["symbol"] not in bekannt)
+    return (None if commit is None else str(commit)), fehlend

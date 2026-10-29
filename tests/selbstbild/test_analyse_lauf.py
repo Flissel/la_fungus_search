@@ -131,6 +131,54 @@ def test_cli_analysieren(git_repo, heim, tmp_path):
     assert json.loads(erg.stdout)["kolonie"] is None
 
 
+def v_commit(git_repo) -> str:
+    return git_repo.git("rev-parse", "HEAD")
+
+
+def test_export_prozessuebergreifend_bytegleich(git_repo, heim, tmp_path):
+    """Zwei Prozesse mit verschiedenem PYTHONHASHSEED, einer davon mit Pruef-Schalter: gleiche Bytes."""
+    _klein(git_repo)
+    vermessen(git_repo.wurzel)
+    ziele = []
+    for n, (seed, extra) in enumerate((("1", ()), ("2", ("--pruefen-reproduzierbar",)))):
+        ziel = tmp_path / f"p{n}.json"
+        env = dict(os.environ, PYTHONPATH=str(SRC), SELBSTBILD_HOME=str(heim), PYTHONHASHSEED=seed)
+        erg = subprocess.run([sys.executable, "-m", "selbstbild", "analysieren", str(git_repo.wurzel),
+                              "--export", str(ziel), *extra], capture_output=True, env=env, timeout=300)
+        assert erg.returncode == 0, erg.stderr.decode("utf-8", "replace")
+        ziele.append(ziel.read_bytes())
+    assert ziele[0] == ziele[1]
+
+
+def test_neu_vermessener_graph_verlangt_neue_analyse(git_repo, heim):
+    from selbstbild.speicher import Speicher
+
+    _klein(git_repo)
+    vermessen(git_repo.wurzel)
+    analysieren(git_repo.wurzel, kolonie=False)
+    assert gespeicherte_analyse(git_repo.wurzel) is not None
+    with Speicher(stand_finden(git_repo.wurzel)) as s:  # wie ein neuer Vermessungslauf am selben Commit
+        s.meta_setzen("gemessen_um", "1")
+    with pytest.raises(NichtAnalysiert, match="neu vermessen"):
+        gespeicherte_analyse(git_repo.wurzel)
+
+
+def test_cli_stand_ohne_graph(git_repo, tmp_path):
+    import sqlite3
+
+    from selbstbild.speicher import pfad_kennung
+
+    _klein(git_repo)
+    home = tmp_path / "home"
+    ordner = home / f"{git_repo.wurzel.name}-{pfad_kennung(git_repo.wurzel)}"
+    ordner.mkdir(parents=True)
+    sqlite3.connect(ordner / "graph.sqlite").close()  # leere Datei ohne Tabellen
+    erg = _cli(home, "analysieren", str(git_repo.wurzel))
+    assert erg.returncode == 3 and b"ohne Graph" in erg.stderr
+    erg = _cli(home, "goldsatz", str(git_repo.wurzel), str(tmp_path / "g.yaml"))
+    assert erg.returncode == 3 and b"ohne Graph" in erg.stderr
+
+
 def test_nicht_vermessen(git_repo, tmp_path):
     _klein(git_repo)
     home = tmp_path / "leer"
@@ -158,6 +206,20 @@ def test_cli_goldsatz_und_vergleichen(git_repo, heim, tmp_path):
     v = json.loads(erg.stdout)
     assert v["tot"]["mathe"] == 1.0 and v["tot"]["n_mathe"] == 1
     assert v["laufzeit_mathe_ms"] is not None
+
+    # Ein zweiter goldsatz-Aufruf ueberschreibt eingetragene Urteile nicht
+    erg = _cli(heim, "goldsatz", str(git_repo.wurzel), str(gold))
+    assert erg.returncode == 2 and "existiert schon".encode() in erg.stderr
+    assert yaml.safe_load(gold.read_text(encoding="utf-8"))["tot"][0]["urteil"] == "ja"
+    # Goldsatz von einem anderen Commit: Warnung auf stderr, Ergebnis trotzdem
+    doc["commit"] = "f" * 40
+    gold.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    erg = _cli(heim, "vergleichen", str(git_repo.wurzel), str(gold))
+    assert erg.returncode == 0 and b"Warnung" in erg.stderr and b"0 tot-Eintraege" in erg.stderr
+    erg = _cli(heim, "goldsatz", str(git_repo.wurzel), str(gold), "--ueberschreiben")
+    assert erg.returncode == 0, erg.stderr.decode("utf-8", "replace")
+    neu = yaml.safe_load(gold.read_text(encoding="utf-8"))
+    assert neu["tot"][0]["urteil"] == "offen" and neu["commit"] == v_commit(git_repo)
 
     kaputt = tmp_path / "kaputt.yaml"
     kaputt.write_text("- nur\n- eine liste\n", encoding="utf-8")

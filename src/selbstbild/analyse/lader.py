@@ -40,8 +40,13 @@ def _meta(c: sqlite3.Connection, k: str) -> str | None:
     return None if z is None else str(json.loads(z[0]))
 
 
-def _nicht_vermessen(stand: Path) -> RuntimeError:
-    return RuntimeError(f"Stand {stand} ist nicht vermessen: erst `python -m selbstbild vermessen` ausfuehren")
+class StandOhneGraph(RuntimeError):
+    """Stand ohne brauchbaren Graphen (fehlt, altes Format, ohne commit/commit_zeit): neu vermessen."""
+
+
+def _nicht_vermessen(stand: Path) -> StandOhneGraph:
+    return StandOhneGraph(f"Stand {stand} ohne Graph: erst vermessen bzw. neu vermessen"
+                          " (`python -m selbstbild vermessen`)")
 
 
 def laden(stand: Path) -> GraphDaten:
@@ -61,7 +66,7 @@ def laden(stand: Path) -> GraphDaten:
                 bericht = _meta(c, "bericht")
                 zeit = None if bericht is None else json.loads(bericht).get("commit_zeit")
             if zeit is None:
-                raise RuntimeError(f"Stand {stand}: commit_zeit fehlt in meta und bericht (neu vermessen)")
+                raise StandOhneGraph(f"Stand {stand}: commit_zeit fehlt in meta und bericht (neu vermessen)")
             knoten = {k.id: k for k in (_knoten_von(json.loads(w))
                                         for (w,) in c.execute(Speicher._KNOTEN_SQL))}
             kanten = tuple(_kante_von(json.loads(w)) for (w,) in c.execute(Speicher._KANTEN_SQL))

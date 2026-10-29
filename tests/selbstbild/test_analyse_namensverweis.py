@@ -20,7 +20,10 @@ NUTZER = "from typen import NurTyp\n\n\ndef nutze_typ(a: NurTyp) -> None:\n    r
 KLASSE = "class Dienst:\n    def methode(self):\n        return 1\n"
 RUFER = "def rufe_auf(o):\n    return o.methode()\n"
 EINSAM = "def einsam_fn():\n    x = 1\n    return x\n"
-BUNDLE = "function verpackt() {\n  return 1;\n}\n"
+BUNDLE = "function verpackt() {\n  return einsam_fn();\n}\n"  # generiert: rettet einsam_fn nicht
+SEITE_JS = "function alpine_seite() {\n  return { offen: false };\n}\n"
+SEITE_HTML = '<div x-data="alpine_seite"><button onclick="klick_html()">x</button></div>\n'
+KLICK_JS = "function klick_html() {\n  return 1;\n}\n"
 SELBST = 'def helfer_x():\n    return 1\n\n\nTABELLE = {"h": helfer_x}\n'
 
 
@@ -34,7 +37,8 @@ def heim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _repo(git_repo) -> None:
     for pfad, text in (("typen.py", TYPEN), ("nutzer.py", NUTZER), ("klasse.py", KLASSE),
                        ("rufer.py", RUFER), ("einsam.py", EINSAM), ("selbst.py", SELBST),
-                       ("pkg/dist-embedded/x.js", BUNDLE)):
+                       ("pkg/dist-embedded/x.js", BUNDLE), ("web/seite.js", SEITE_JS),
+                       ("web/seite.html", SEITE_HTML), ("web/klick.js", KLICK_JS)):
         git_repo.datei(pfad, text)
     git_repo.commit("alt", datum="2025-01-01T00:00:00Z")
     git_repo.datei("README.md", "Ein Repo.\n")
@@ -80,6 +84,10 @@ def test_waechter_im_lauf(git_repo, heim):
     assert tot[_s("einsam.py", "einsam_fn")].stufe == "sicher_tot"
     assert tot[_s("rufer.py", "rufe_auf")].stufe == "sicher_tot"
     assert tot[_s("klasse.py", "Dienst")].stufe == "sicher_tot"
+    # HTML-Vorlagen verweisen per Name (Alpine x-data, onclick): S8-Erweiterung
+    for q in (("web/seite.js", "alpine_seite"), ("web/klick.js", "klick_html")):
+        f = tot[_s(*q)]
+        assert f.stufe == "wahrscheinlich_tot" and "namensverweis" in f.gruende, q
 
 
 def _d(pfad: str) -> Knoten:

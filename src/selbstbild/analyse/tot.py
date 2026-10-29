@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ..quelle import Baum, BlobLeser, Eintrag, baum_lesen
+from ..quelle import Baum, BlobLeser, Eintrag, baum_lesen, blobs_mit_endung
 from ..sprachen import SPRACHEN
 from . import ist_generiert, ist_testdatei
 from .erreichbar import Erreichbarkeit
@@ -163,12 +163,16 @@ def tot_finden(d: GraphDaten, e: Erreichbarkeit, doku: Mapping[str, frozenset[st
 # Ein `sicher_tot`-Kandidat, dessen einfacher Name (letztes Qualname-Segment, >= NAME_MIN Zeichen)
 # als Bezeichner-Token in einer ANDEREN committeten Code-Datei desselben Repos oder eines
 # Vorfahren-Repos vorkommt, wird `wahrscheinlich_tot` mit Grund `namensverweis`. In der eigenen
-# Datei zaehlen nur Vorkommen ausserhalb der Zeilen der eigenen Definition. Deckt ab: Klassen nur
+# Datei zaehlen nur Vorkommen ausserhalb der Zeilen der eigenen Definition. Gelesen werden Code-Dateien
+# plus HTML/Vorlagen (VORLAGEN_ENDUNGEN), nie generierte Dateien (Ruling S9). Deckt ab: Klassen nur
 # als Typ/Attribut, `obj.methode()`, String-Dispatch, nicht aufgeloeste Testimporte.
 
 NAME_MIN: int = 3
 _CODE_SPRACHEN = frozenset({"python", "typescript", "tsx", "javascript", "powershell", "bash", "rust", "go"})
 _BEZEICHNER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# S8-Erweiterung (Fix-Runde 3): HTML und Vorlagen verweisen per Name (Alpine `x-data="f"`, `onclick=`).
+VORLAGEN_ENDUNGEN: tuple[str, ...] = (".html", ".htm", ".vue", ".svelte", ".jinja", ".jinja2", ".j2", ".hbs",
+                                      ".ejs", ".erb", ".twig")
 
 
 def _einfach(symbol_id: str) -> str:
@@ -234,9 +238,10 @@ def namensverweise(wurzel: Path, commit: str, kandidaten: Iterable[str]) -> froz
     gerettet: set[str] = set()
     for b in _baeume(baum_lesen(Path(wurzel), commit)):
         with BlobLeser(b.wurzel) as leser:
-            for e in b.eintraege:  # ein Blob nach dem anderen, behalten werden nur Treffer
-                if e.sprache not in _CODE_SPRACHEN:
-                    continue
+            code = [e for e in b.eintraege if e.sprache in _CODE_SPRACHEN]
+            for e in code + blobs_mit_endung(b, VORLAGEN_ENDUNGEN):  # ein Blob nach dem anderen
+                if ist_generiert(e.pfad):
+                    continue  # Ruling S9: Build-Ausgabe verweist nicht
                 roh = leser.lesen(e.blob)
                 text = roh.decode("utf-8", errors="replace")
                 for name in set(_BEZEICHNER.findall(text)) & namen:

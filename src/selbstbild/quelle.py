@@ -240,3 +240,26 @@ def baum_lesen(
         eintraege=tuple(eintraege), uebersprungen=tuple(uebersprungen),
         unterbaeume=tuple(unterbaeume), regeln=regeln,
     )
+
+
+def blobs_mit_endung(baum: Baum, endungen: tuple[str, ...]) -> list[Eintrag]:
+    """Blobs eines (Unter-)Baums am selben Commit, deren Dateiname auf eine der `endungen` endet
+    (ohne Sprache, z. B. HTML-Vorlagen). Dieselben Ausschluesse wie `baum_lesen` (Muster, Symlink,
+    Groesse); nur dieser Baum, keine Submodule (die haben eigene `Baum`-Objekte). Liest keine Blobs."""
+    muster = [_glob_regex(m) for m in (*STANDARD_AUSGENOMMEN, *baum.regeln.ausgenommen)]
+    max_bytes = baum.regeln.max_dateigroesse_kb * 1024
+    roh = _git(baum.wurzel, "ls-tree", "-r", "-l", "-z", baum.commit).stdout
+    erg: list[Eintrag] = []
+    for satz in roh.split(b"\0"):
+        if not satz:
+            continue
+        kopf, _, pfad_roh = satz.partition(b"\t")
+        modus, art, blob, groesse_s = kopf.decode("ascii").split()
+        pfad = pfad_roh.decode("utf-8", errors="surrogateescape")
+        if art != "blob" or modus == _SYMLINK or _ausgenommen(pfad, muster):
+            continue
+        if not PurePosixPath(pfad).name.lower().endswith(endungen) or int(groesse_s) > max_bytes:
+            continue
+        erg.append(Eintrag(baum.repo, pfad, blob, int(groesse_s), None))
+    erg.sort(key=lambda e: e.pfad)
+    return erg
