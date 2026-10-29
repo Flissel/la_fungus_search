@@ -6,9 +6,10 @@ Datengetrieben und deterministisch (keine Zeitstempel, alles sortiert):
   Unter-Repos bekommen deren Ordner vorangestellt).
 - "Nie hier anlegen": `verboten` der Regeln mit Wurzel-`ort`.
 - Vorbilder: Ordner im Suchindex des Stands, die auf `ort` passen, ohne Namen mit `_` am Anfang und ohne
-  `__pycache__`, mit allen Pflichtteilen. Rang = SUMME der `lebendigkeit` aller Dateien darunter (die Summe belohnt
-  Umfang und Aktivitaet zugleich; das Maximum waere bei vielen Ordnern 1.0 und trennte nichts). Die ersten drei,
-  Gleichstand nach Name. Ohne Stand oder ohne Treffer entfaellt der Abschnitt.
+  `__pycache__`, mit allen Pflichtteilen. Rang = SUMME der `lebendigkeit` aller Dateien darunter. `lebendigkeit` ist nach
+  oben nicht begrenzt (zerfallsgewichtete Summe der Aenderungen). Die Summe misst, wie stark der Space als Ganzes
+  veraendert wird; sie bevorzugt dadurch grosse Spaces, ein Maximum je Datei wuerde das nicht abbilden. Die ersten
+  drei, Gleichstand nach Name. Ohne Stand oder ohne Treffer entfaellt der Abschnitt.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from ._glob import glob_regex
 from .hooks import REGELDATEI
+from . import struktur
 from .struktur import _UEBERSPRUNGEN, _flags, _regeln_von
 
 __all__ = ["skill_neuer_space"]
@@ -32,7 +34,7 @@ _WERKZEUGE = (
     ("selbstbild_nachbarn", "Aufrufer, Aufgerufene und Importe eines Knotens"),
     ("selbstbild_bereich", "zu welchem Bereich (Modul-Cluster) eine Datei gehoert"),
     ("selbstbild_regeln", "welche Strukturregeln fuer einen Pfad gelten"),
-    ("selbstbild_lebendigkeit", "wie lebendig eine Datei ist (0..1)"),
+    ("selbstbild_lebendigkeit", "wie lebendig eine Datei ist (zerfallsgewichtete Aenderungen, hoeher = lebendiger)"),
     ("selbstbild_tot", "Code, den nichts mehr erreicht"),
     ("selbstbild_doku", "Doku-Abschnitte, die zu einem Knoten gehoeren"),
 )
@@ -60,10 +62,10 @@ def _regeldateien(wurzel: Path) -> list[Path]:
     return sorted(gefunden, key=lambda p: (len(p.relative_to(wurzel).parts), p.relative_to(wurzel).as_posix()))
 
 
-def _regeln_sammeln(wurzel: Path) -> tuple[list[dict], list[str], list[str]]:
-    """(Space-Regeln mit Wurzel-Ort, Wurzel-Verbote, Hinweise)."""
+def _regeln_sammeln(wurzel: Path) -> tuple[list[dict], list[dict], list[str]]:
+    """(Space-Regeln mit Wurzel-Ort, Wurzel-Verbote je Regel samt Repo, Hinweise)."""
     space: list[dict] = []
-    verbote: set[str] = set()
+    verbote: list[dict] = []
     hinweise: set[str] = set()
     for ordner in _regeldateien(wurzel):
         vorn = ordner.relative_to(wurzel).as_posix()
@@ -73,12 +75,36 @@ def _regeln_sammeln(wurzel: Path) -> tuple[list[dict], list[str], list[str]]:
                 continue
             ort = _ort_norm(r.get("ort", ""))
             if ort in _WURZEL_ORTE:
-                verbote.update(_verbinden(vorn, str(v)) for v in r.get("verboten", []))
+                muster = sorted({str(v) for v in r.get("verboten", [])})
+                if muster:  # Muster bleiben relativ zur Wurzel ihres Repos
+                    verbote.append({"repo": vorn or wurzel.name, "art": str(r.get("art", "")), "muster": muster,
+                                    "hinweis": str(r["hinweis"]) if r.get("hinweis") else None})
                 continue
             space.append({"ort": _verbinden(vorn, ort), "pflicht": [str(t) for t in r.get("pflicht", [])]})
             if r.get("hinweis"):
                 hinweise.add(str(r["hinweis"]))
-    return space, sorted(verbote), sorted(hinweise)
+    verbote.sort(key=lambda v: (v["repo"], v["art"]))
+    return space, verbote, sorted(hinweise)
+
+
+def _submodule(wurzel: Path, orte: list[str]) -> list[str]:
+    """Submodul-Pfade aus `.gitmodules`, unter denen mindestens ein Space-`ort` liegt."""
+    try:
+        text = (wurzel / ".gitmodules").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    pfade = {m.group(1).strip().replace("\\", "/").strip("/") for m in re.finditer(r"^\s*path\s*=\s*(.+)$", text, re.M)}
+    return sorted(p for p in pfade if p and any(o == p or o.startswith(p + "/") for o in orte))
+
+
+def _schritt_2(orte: list[str], hinweise: list[str], submodule: list[str]) -> str:
+    satz = "2. Den Space am oben genannten Ort anlegen, mit den oben genannten Pflichtteilen (falls es welche gibt)."
+    if hinweise:
+        satz += " Hinweis aus den Regeln: " + " / ".join(hinweise) + "."
+    for sub in submodule:
+        satz += (f" Der Ort liegt im Submodul `{sub}`: dort im Submodul committen und danach den Submodul-Pin"
+                 " im aeusseren Repo aktualisieren.")
+    return satz
 
 
 def _stand_ordner(wurzel: Path, stand_unter: Path | None) -> Path | None:
@@ -130,6 +156,9 @@ def _dateien_im_stand(stand: Path) -> list[tuple[str, float]]:
 def _hat_teil(dateien: list[str], teil: str) -> bool:
     teil = teil.replace("\\", "/").removeprefix("./").rstrip("/")
     if not any(c in teil for c in "*?"):
+        if struktur.GROSSKLEIN_EGAL:
+            teil = teil.lower()
+            dateien = [d.lower() for d in dateien]
         return any(d == teil or d.startswith(teil + "/") for d in dateien)
     rx = re.compile(glob_regex(teil).pattern, _flags())
     for d in dateien:
@@ -181,7 +210,7 @@ def skill_neuer_space(wurzel: Path, stand_unter: Path | None = None) -> str:
         "",
         "# Neuen Space anlegen",
         "",
-        "Diese Datei wird aus den `selbstbild.yaml`-Regeln der Repos und dem Selbstbild-Graphen erzeugt"
+        "Diese Datei wird aus den `selbstbild.yaml`-Regeln der Repos und dem Suchindex des vermessenen Stands erzeugt"
         " (`python -m selbstbild skill neuer-space <wurzel> <ziel.md>`). Nicht von Hand aendern.",
         "",
         "## Wohin",
@@ -200,8 +229,14 @@ def skill_neuer_space(wurzel: Path, stand_unter: Path | None = None) -> str:
                  " und mit dem User klaeren, was der neue Space braucht.")
     if verbote:
         z += ["", "## Nie hier anlegen", ""]
-        z += [f"- `{v}`" for v in verbote]
-        z += ["", "Der Schreib-Waechter blockiert diese Pfade."]
+        for v in verbote:
+            z += [f"Regel `{v['art']}`: Die Muster gelten relativ zur Wurzel des Repos `{v['repo']}`, aus dessen"
+                  " Regel sie stammen, nicht fuer jeden gleichnamigen Ordner im Baum.", ""]
+            z += [f"- `{m}`" for m in v["muster"]]
+            if v["hinweis"]:
+                z += ["", f"Hinweis: {v['hinweis']}"]
+            z.append("")
+        z += ["Der Schreib-Waechter blockiert diese Pfade."]
 
     stand = _stand_ordner(wurzel, stand_unter)
     vorbilder = _vorbilder(stand, space) if stand is not None and space else []
@@ -215,7 +250,7 @@ def skill_neuer_space(wurzel: Path, stand_unter: Path | None = None) -> str:
     z += [
         "", "## Ablauf", "",
         "1. Mit dem User klaeren: Welches Vorbild passt, und welche Faehigkeiten soll der Space bekommen?",
-        "2. Den Space am oben genannten Ort anlegen, mit den oben genannten Pflichtteilen (falls es welche gibt).",
+        _schritt_2(orte, hinweise, _submodule(wurzel, orte)),
         "3. Tests schreiben und ausfuehren.",
         "4. Doku nicht von Hand schreiben: Sie entsteht durch den Doku-Loop.",
         "", "## Hilfen (MCP-Server `selbstbild`)", "",

@@ -152,3 +152,39 @@ def test_cli_skill_schreibt_und_ueberschreibt_nur_mit_flag(wurzel: Path, tmp_pat
     assert "--ueberschreiben" in capsys.readouterr().err
     assert main(["skill", "neuer-space", str(wurzel), str(ziel), "--ueberschreiben"]) == 0
     assert ziel.read_bytes() != b"alt"
+
+
+def test_skill_texte_praezise(wurzel: Path):
+    text = skill_neuer_space(wurzel)
+    assert "0..1" not in text and "zerfallsgewichtete Aenderungen, hoeher = lebendiger" in text
+    assert "Suchindex" in text and "Selbstbild-Graphen" not in text
+    abschnitt = text.split("## Nie hier anlegen")[1].split("\n## ")[0]
+    assert "relativ zur Wurzel des Repos `aussen`" in abschnitt and "`kein_space_im_root`" in abschnitt
+    assert "Hinweis: Spaces gehoeren nach sub/spaces/<name>/" in abschnitt
+
+
+def test_skill_schritt_2_nennt_hinweis_und_submodul(wurzel: Path):
+    ohne = skill_neuer_space(wurzel).split("## Ablauf")[1]
+    assert "2. " in ohne and "Spaces gehoeren nach sub/spaces/<name>/" in ohne.split("3. ")[0]
+    assert "Submodul" not in ohne
+    (wurzel / ".gitmodules").write_bytes(b'[submodule "sub"]\n\tpath = sub\n\turl = x\n')
+    mit = skill_neuer_space(wurzel).split("## Ablauf")[1].split("3. ")[0]
+    assert "Submodul `sub`" in mit and "Pin" in mit
+
+
+def test_skill_pflichtteil_gross_klein_egal_auf_windows(wurzel: Path, tmp_path: Path, monkeypatch):
+    from selbstbild import struktur
+
+    stand = tmp_path / "stand3"
+    stand.mkdir()
+    with closing(sqlite3.connect(stand / "suche.sqlite")) as c:
+        c.execute("CREATE TABLE eintrag (id TEXT PRIMARY KEY, art TEXT NOT NULL, repo TEXT, pfad TEXT, zeile INTEGER,"
+                  " blob TEXT, lebendigkeit REAL, tot TEXT, bereich TEXT, warnung TEXT)")
+        c.execute("INSERT INTO eintrag VALUES ('r', 'datei', 'aussen', 'README.md', NULL, NULL, 0.7, NULL, NULL, NULL)")
+        c.execute("INSERT INTO eintrag VALUES ('a', 'datei', 'aussen/sub', 'spaces/x/Main.py', NULL, NULL, 1.0, NULL, NULL, NULL)")
+        c.execute("INSERT INTO eintrag VALUES ('b', 'datei', 'aussen/sub', 'spaces/x/Tests/t.py', NULL, NULL, 1.0, NULL, NULL, NULL)")
+        c.commit()
+    monkeypatch.setattr(struktur, "GROSSKLEIN_EGAL", False)
+    assert "## Vorbilder" not in skill_neuer_space(wurzel, stand)
+    monkeypatch.setattr(struktur, "GROSSKLEIN_EGAL", True)
+    assert "`sub/spaces/x/`" in skill_neuer_space(wurzel, stand)
