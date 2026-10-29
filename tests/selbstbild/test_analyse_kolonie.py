@@ -60,3 +60,60 @@ def test_klein_schnell() -> None:
 def test_ohne_wurzeln_leer() -> None:
     e = kolonie_laufen(_daten([_datei("a.py"), _datei("b.py")], [_imp("a.py", "b.py")]))
     assert e.besuche == e.spuren == e.bereiche == e.zentrum == ()
+
+
+def test_sackgasse_neustart_rundlaufend_s11() -> None:
+    """Ruling S11: Ein Agent in einer Sackgasse startet auf der naechsten Wurzel, nicht auf seiner eigenen."""
+    kn = [_datei(f"w{i}.py", True) for i in range(3)] + [_datei(f"s{i}.py") for i in range(3)]
+    ka = [_imp(f"w{i}.py", f"s{i}.py") for i in range(3)]
+    e = kolonie_laufen(_daten(kn, ka), KolonieParameter(agenten=1, schritte=12))
+    assert e.tote_ecken == ()
+    besuche = dict(e.besuche)
+    assert all(besuche[id_datei("r", f"w{i}.py")] >= 2 for i in range(3))
+
+
+def test_mehr_wurzeln_als_agenten_alle_besucht_s11() -> None:
+    """300 Wurzeln, 192 Agenten: Start gestreut, Neustart rundlaufend ueber alle Wurzeln."""
+    kn = [_datei(f"w{i:03}.py", True) for i in range(300)] + [_datei("nabe.py")]
+    ka = [_imp(f"w{i:03}.py", "nabe.py") for i in range(300)]
+    e = kolonie_laufen(_daten(kn, ka))
+    wurzeln = {id_datei("r", f"w{i:03}.py") for i in range(300)}
+    assert not wurzeln & set(e.tote_ecken)
+
+
+def test_bereiche_inhalt() -> None:
+    kn = [_datei("start.py", True), _datei("a.py"), _datei("b.py"), _datei("x.py"), _datei("y.py")]
+    ka = [_imp("start.py", "a.py"), _imp("a.py", "b.py"), _imp("b.py", "start.py"), _imp("x.py", "y.py")]
+    e = kolonie_laufen(_daten(kn, ka), KolonieParameter(agenten=6, schritte=60))
+    assert e.bereiche == ((id_datei("r", "a.py"), id_datei("r", "b.py"), id_datei("r", "start.py")),)
+
+
+def test_spuren_gekappt(monkeypatch) -> None:
+    from selbstbild.analyse import kolonie
+
+    monkeypatch.setattr(kolonie, "_SPUREN_MAX", 3)
+    e = kolonie_laufen(_stern(9), KolonieParameter(agenten=16, schritte=60))
+    assert len(e.spuren) == 3
+    assert [w for _, _, w in e.spuren] == sorted((w for _, _, w in e.spuren), reverse=True)
+
+
+def test_2000_dateien_unter_10s() -> None:
+    import random
+
+    rnd = random.Random(7)
+    kn = [_datei(f"d{i:04}.py", i % 40 == 0) for i in range(2000)]
+    ka = sorted({(rnd.randrange(2000), rnd.randrange(2000)) for _ in range(8000)})
+    kanten = [_imp(f"d{a:04}.py", f"d{b:04}.py") for a, b in ka if a != b]
+    t = time.perf_counter()
+    e = kolonie_laufen(_daten(kn, kanten))
+    assert time.perf_counter() - t < 10.0
+    assert len(e.besuche) > 1000
+
+
+def test_budget_schritte_s11() -> None:
+    from selbstbild.analyse.kolonie import budget_schritte
+
+    assert budget_schritte(19608) == 1022     # ceil(10 * 19608 / 192)
+    assert budget_schritte(10) == 1
+    assert budget_schritte(10**6) == 5000     # gedeckelt
+    assert budget_schritte(0) == 1

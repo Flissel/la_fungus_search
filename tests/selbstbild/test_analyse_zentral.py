@@ -141,3 +141,37 @@ def test_top_nicht_positiv(graph_stand):
     d = laden(graph_stand([_d("a.py", "1.0")], []))
     assert hotspots(d, {}, top=0) == ()
     assert hotspots(d, {}, top=-3) == ()
+
+
+def test_hotspots_ohne_testdateien_standard(graph_stand):
+    knoten = [_d("tests/test_a.py", "5.0"), _d("src/a.py", "1.0"), _d("src/b.py", "2.0"),
+              _d("web/__mocks__/m.js", "3.0")]
+    d = laden(graph_stand(knoten, []))
+    assert {h.datei for h in hotspots(d, {})} == {id_datei("r", "src/a.py"), id_datei("r", "src/b.py")}
+    assert id_datei("r", "tests/test_a.py") in {h.datei for h in hotspots(d, {}, mit_tests=True)}
+
+
+def test_pagerank_ohne_quersprachige_aufrufe_s14(graph_stand):
+    """Ruling S14: ruft_auf zwischen Sprachfamilien (Namens-Rueckfall .strip() -> TSX-Methode) zaehlt nicht."""
+    ziel = Knoten(id_symbol("r", "ui/branding.tsx", "Panel.strip"), "symbol", "Panel.strip", None, ())
+    py_ziel = _s("lib/text.py", "strip")
+    knoten = [_d("ui/branding.tsx"), ziel, _d("lib/text.py"), py_ziel]
+    kanten = []
+    for i in range(20):
+        s = _s(f"py{i}.py", "f")
+        knoten += [_d(f"py{i}.py"), s]
+        kanten.append(Kante("ruft_auf", s.id, ziel.id, False, None))
+    kanten.append(Kante("ruft_auf", _s("py0.py", "f").id, py_ziel.id, True, None))
+    d = laden(graph_stand(knoten, kanten))
+    sicht = symbolgraph(d)
+    assert sicht.graph.ecount() == 1  # nur der Python-Aufruf bleibt
+    pr = pagerank(d)
+    assert pr[py_ziel.id] > pr[ziel.id]
+
+
+def test_sprachfamilie():
+    from selbstbild.analyse.lader import sprachfamilie
+
+    assert [sprachfamilie(p) for p in ("a.py", "b.pyi", "c.ts", "d.tsx", "e.mjs", "f.jsx", "g.rs", "h.go",
+                                      "i.sql", "j.sh", "k")] == \
+        ["python", "python", "js_ts", "js_ts", "js_ts", "js_ts", "rust", "go", "rest", "rest", "rest"]

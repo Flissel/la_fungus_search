@@ -2,9 +2,20 @@
 
 Uebernommen aus embeddinggemma (nicht importiert): Agenten starten an Einstiegspunkten, laufen
 entlang der Kanten, legen Pheromon ab, das Pheromon verfaellt, Besuche werden gezaehlt.
+
+Start (Ruling S11): Die Wurzeldateien werden einmal per `rng.permutation` gemischt. Agent i startet
+auf der i-ten Wurzel dieser Reihenfolge; nur wenn es mehr Agenten als Wurzeln gibt, wird rundlaufend
+wiederholt. Ein Agent in einer Sackgasse (keine ausgehende Kante) startet neu auf der naechsten Wurzel
+eines gemeinsamen Rundlauf-Zaehlers ueber ALLE Wurzeln (nicht auf seiner eigenen). So erreicht die
+Kolonie auch bei mehr Wurzeln als Agenten jede Wurzel, sobald es genug Sackgassen gibt.
+
+`budget_schritte` liefert die Schrittzahl fuer einen budgetgleichen Lauf (Agenten-Schritte ~ 10 x
+Dateien, hoechstens `BUDGET_MAX_SCHRITTE`), den `lauf` in der Abnahme bzw. mit `--kolonie-budget`
+zusaetzlich rechnet.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -16,6 +27,8 @@ _SPUREN_MAX = 2000
 _ZENTRUM_MAX = 50
 _SCHWELLE_ANTEIL = 0.1  # Bereiche: Kanten mit Pheromon >= 10 % des Maximums
 _STELLEN = 6
+BUDGET_JE_DATEI = 10       # Agenten-Schritte je Datei im budgetgleichen Lauf (Ruling S11)
+BUDGET_MAX_SCHRITTE = 5000
 
 
 @dataclass(frozen=True)
@@ -41,6 +54,13 @@ class KolonieErgebnis:
     zentrum: tuple[str, ...]                        # die 50 meistbesuchten Dateien
     tote_ecken: tuple[str, ...]                     # nie besuchte Dateien, sortiert
     parameter: KolonieParameter = KolonieParameter()
+
+
+def budget_schritte(dateien: int, agenten: int = KolonieParameter.agenten) -> int:
+    """Schritte je Agent, damit Agenten x Schritte ~ 10 x Dateien (mindestens 1, hoechstens 5000)."""
+    if agenten <= 0:
+        return 1
+    return max(1, min(BUDGET_MAX_SCHRITTE, math.ceil(BUDGET_JE_DATEI * dateien / agenten)))
 
 
 def _leer(p: KolonieParameter) -> KolonieErgebnis:
@@ -94,18 +114,21 @@ def kolonie_laufen(d: GraphDaten, p: KolonieParameter = KolonieParameter()) -> K
     besuche = np.zeros(n, dtype=np.int64)
 
     rng = np.random.default_rng(SEED)
-    wurzel_arr = np.array(start, dtype=np.int64)
-    # Gleichverteilung: Agent i startet auf Wurzel i mod Anzahl (deterministische Reihenfolge).
-    heim = wurzel_arr[np.arange(p.agenten) % len(wurzel_arr)]
-    pos = heim.copy()
+    # Ruling S11: gestreute Reihenfolge aller Wurzeln; Agent i startet auf reihe[i mod Anzahl].
+    reihe = np.array(start, dtype=np.int64)[rng.permutation(len(start))]
+    pos = reihe[np.arange(p.agenten) % len(reihe)]
+    zaehler = p.agenten % len(reihe)  # naechste Wurzel fuer einen Neustart (Rundlauf ueber alle)
     np.add.at(besuche, pos, 1)
     for _ in range(p.schritte):
         grad = zeiger[pos + 1] - zeiger[pos]
         lebend = grad > 0
-        # Sackgasse (keine ausgehende Kante): Agent beginnt wieder an seiner Startwurzel.
+        # Sackgasse (keine ausgehende Kante): Neustart auf den naechsten Wurzeln des Rundlaufs,
+        # in Agenten-Reihenfolge (deterministisch).
         if not lebend.all():
-            pos = np.where(lebend, pos, heim)
-            np.add.at(besuche, pos[~lebend], 1)
+            tot_idx = np.flatnonzero(~lebend)
+            pos[tot_idx] = reihe[(zaehler + np.arange(len(tot_idx))) % len(reihe)]
+            zaehler = (zaehler + len(tot_idx)) % len(reihe)
+            np.add.at(besuche, pos[tot_idx], 1)  # der Neustart verbraucht den Schritt
         if not lebend.any():
             continue
         idx_a = np.flatnonzero(lebend)

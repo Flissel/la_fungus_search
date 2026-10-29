@@ -226,3 +226,81 @@ def test_cli_goldsatz_und_vergleichen(git_repo, heim, tmp_path):
     erg = _cli(heim, "vergleichen", str(git_repo.wurzel), str(kaputt))
     assert erg.returncode != 0
     assert b"Goldsatz ungueltig" in erg.stderr
+
+
+def test_cli_anderer_db_fehler_exit_1(git_repo, tmp_path):
+    import sqlite3
+
+    from selbstbild.speicher import pfad_kennung
+
+    _klein(git_repo)
+    home = tmp_path / "home"
+    ordner = home / f"{git_repo.wurzel.name}-{pfad_kennung(git_repo.wurzel)}"
+    ordner.mkdir(parents=True)
+    c = sqlite3.connect(ordner / "graph.sqlite")
+    c.execute("CREATE TABLE meta(falsch TEXT)")
+    c.commit()
+    c.close()
+    for befehl in (("analysieren", str(git_repo.wurzel)), ("goldsatz", str(git_repo.wurzel), str(tmp_path / "g.yaml"))):
+        erg = _cli(home, *befehl)
+        assert erg.returncode == 1, befehl
+        assert b"no such column" in erg.stderr and b"Traceback" not in erg.stderr
+
+
+@pytest.mark.parametrize("modul, name, wert", [
+    ("selbstbild.analyse.tot", "VORLAGEN_ENDUNGEN", (".html",)),
+    ("selbstbild.analyse.tot", "INERTE_DEKORATOREN", frozenset({"property"})),
+    ("selbstbild.analyse", "TEST_ORDNER", frozenset({"tests"})),
+    ("selbstbild.analyse", "CODE_SPRACHEN", frozenset({"python"})),
+])
+def test_regelkonstanten_im_parameter_digest_s13(monkeypatch, modul, name, wert):
+    import importlib
+    import re
+
+    from selbstbild.analyse.ergebnis import digest_von
+    from selbstbild.analyse.lauf import parameter
+
+    vorher = digest_von(parameter(True))
+    assert "tot_regeln" not in dict(parameter(True)) and "regeln" in dict(parameter(True))
+    monkeypatch.setattr(importlib.import_module(modul), name, wert)
+    assert digest_von(parameter(True)) != vorher
+    monkeypatch.undo()
+    assert digest_von(parameter(True)) == vorher
+    from selbstbild.analyse import tot
+
+    monkeypatch.setattr(tot, "_KONVENTION", re.compile("^x$"))
+    assert digest_von(parameter(True)) != vorher
+
+
+def test_kolonie_budget_lauf_s11(git_repo, heim):
+    _klein(git_repo)
+    vermessen(git_repo.wurzel)
+    a = analysieren(git_repo.wurzel, kolonie_budget=True)
+    stat = dict(a.statistik)
+    assert stat["kolonie_budget_schritte"] == 1  # ceil(10 * 2 Dateien / 192)
+    assert {"kolonie_budget_besuchte_dateien", "kolonie_budget_tote_ecken",
+            "kolonie_budget_zentrum_in_pagerank_top50_dateien", "laufzeit_kolonie_budget_ms"} <= set(stat)
+    assert dict(a.parameter)["kolonie_budget"] == "an"
+    gespeichert = gespeicherte_analyse(git_repo.wurzel)  # Lauf mit Budget wird bevorzugt gefunden
+    assert dict(gespeichert.parameter)["kolonie_budget"] == "an"
+    assert dict(gespeichert.statistik)["kolonie_budget_schritte"] == 1
+    from selbstbild.analyse.lauf import zusammenfassung
+
+    assert zusammenfassung(a)["kolonie_budget"]["besuchte_dateien"] == stat["kolonie_budget_besuchte_dateien"]
+
+
+def test_cli_kolonie_budget_schalter(git_repo, heim, tmp_path):
+    _klein(git_repo)
+    vermessen(git_repo.wurzel)
+    erg = _cli(heim, "analysieren", str(git_repo.wurzel), "--kolonie-budget")
+    assert erg.returncode == 0, erg.stderr.decode("utf-8", "replace")
+    z = json.loads(erg.stdout)
+    assert z["kolonie_budget"]["schritte"] == 1 and "besuchte_dateien" in z["kolonie_budget"]
+    erg = _cli(heim, "analysieren", str(git_repo.wurzel))
+    assert json.loads(erg.stdout)["kolonie_budget"] is None
+
+
+def test_pagerank_quersprache_gezaehlt(git_repo, heim):
+    _klein(git_repo)
+    vermessen(git_repo.wurzel)
+    assert dict(analysieren(git_repo.wurzel, kolonie=False).statistik)["pagerank_quersprache_ausgelassen"] == 0

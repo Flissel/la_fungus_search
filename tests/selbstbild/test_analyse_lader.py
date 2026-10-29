@@ -83,3 +83,35 @@ def test_symbol_ohne_datei_gezaehlt(graph_stand):
     d = laden(graph_stand(kn, [Kante("ruft_auf", SA, SB, True, None)]))
     assert dateigraph(d).graph.ecount() == 0
     assert d.luecken["symbol_ohne_datei"] == 1
+
+
+def test_anderer_db_fehler_ist_kein_stand_ohne_graph(tmp_path: Path):
+    """Fix-Welle: nur fehlende Tabellen bzw. fehlender Graph sind StandOhneGraph; der Rest geht mit Text weiter."""
+    import sqlite3
+
+    from selbstbild.analyse.lader import StandOhneGraph
+
+    c = sqlite3.connect(tmp_path / "graph.sqlite")
+    c.execute("CREATE TABLE meta(falsch TEXT)")  # Tabelle da, Spalte fehlt: kein "no such table"
+    c.commit()
+    c.close()
+    with pytest.raises(RuntimeError, match="no such column") as e:
+        laden(tmp_path)
+    assert not isinstance(e.value, StandOhneGraph)
+
+
+def test_fehlende_tabelle_bleibt_stand_ohne_graph(tmp_path: Path):
+    import sqlite3
+
+    from selbstbild.analyse.lader import StandOhneGraph
+
+    sqlite3.connect(tmp_path / "graph.sqlite").close()
+    with pytest.raises(StandOhneGraph):
+        laden(tmp_path)
+
+
+def test_gemessen_um_aus_derselben_lesung(graph_stand):
+    ordner = graph_stand(_knoten(), [])
+    with Speicher(ordner / "graph.sqlite") as s:
+        s.meta_setzen("gemessen_um", "1234")
+    assert laden(ordner).gemessen_um == "1234"

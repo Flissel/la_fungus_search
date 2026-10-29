@@ -6,6 +6,7 @@ from collections.abc import Mapping
 import math
 from dataclasses import dataclass
 
+from . import ist_testdatei
 from .lader import GraphDaten, dateigraph, datei_von, symbolgraph
 
 DAEMPFUNG: float = 0.85
@@ -74,10 +75,31 @@ def _lebendigkeit(attr: tuple[tuple[str, str], ...]) -> float:
     return 0.0
 
 
-def hotspots(d: GraphDaten, pr: Mapping[str, float], top: int = 50) -> tuple[Hotspot, ...]:
+def _pfad_von(datei_id: str) -> str:
+    return datei_id.split(":", 2)[2] if datei_id.count(":") >= 2 else datei_id
+
+
+def dateien_top(pagerank_top: tuple[tuple[str, float], ...], n: int = 50) -> list[str]:
+    """Die ersten `n` verschiedenen DATEIEN der PageRank-Rangliste (Symbole auf ihre Datei abgebildet).
+    "Top-50" meint ueberall (Zusammenfassung, Goldsatz-Vergleich) 50 Dateien."""
+    erg: list[str] = []
+    for i, _ in pagerank_top:
+        f = datei_von(i) if i.startswith("symbol:") else i
+        if f not in erg:
+            erg.append(f)
+            if len(erg) == n:
+                break
+    return erg
+
+
+def hotspots(d: GraphDaten, pr: Mapping[str, float], top: int = 50,
+             mit_tests: bool = False) -> tuple[Hotspot, ...]:
     """Wert = Produkt dreier Perzentile: zentral (PageRank Datei + Symbole), aenderung
-    (Attr `lebendigkeit`, fehlend = 0), groesse (Anzahl Symbole, Ruling S1)."""
-    dateien = sorted(i for i, k in d.knoten.items() if k.art == "datei")
+    (Attr `lebendigkeit`, fehlend = 0), groesse (Anzahl Symbole, Ruling S1).
+
+    Testdateien (`ist_testdatei`) zaehlen standardmaessig nicht, auch nicht in den Perzentilen."""
+    dateien = sorted(i for i, k in d.knoten.items()
+                     if k.art == "datei" and (mit_tests or not ist_testdatei(_pfad_von(i))))
     if top <= 0 or not dateien:
         return ()
     zentral = {f: pr.get(f, 0.0) for f in dateien}

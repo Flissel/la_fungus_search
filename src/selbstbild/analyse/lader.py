@@ -4,11 +4,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import igraph
 
 from ..speicher import Speicher, _kante_von, _knoten_von
+from ..sprachen import sprache_fuer
 from ..typen import Kante, Knoten, id_datei
 
 ANALYSE_VERSION: int = 1
@@ -25,6 +27,7 @@ class GraphDaten:
     knoten: dict[str, Knoten]
     kanten: tuple[Kante, ...]
     luecken: dict[str, int]
+    gemessen_um: str | None = None  # aus derselben Lese-Transaktion wie Knoten und Kanten
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,17 @@ class StandOhneGraph(RuntimeError):
     """Stand ohne brauchbaren Graphen (fehlt, altes Format, ohne commit/commit_zeit): neu vermessen."""
 
 
+class StandUnlesbar(RuntimeError):
+    """`graph.sqlite` da, aber nicht lesbar (gesperrt, beschaedigt, falsches Schema): Text der DB-Meldung."""
+
+
+def db_fehler(stand: Path, e: sqlite3.DatabaseError) -> RuntimeError:
+    """Nur eine fehlende Tabelle heisst "kein vermessener Stand"; alles andere bleibt ein Fehler mit Text."""
+    if "no such table" in str(e):
+        return _nicht_vermessen(stand)
+    return StandUnlesbar(f"Stand {stand}: graph.sqlite nicht lesbar ({type(e).__name__}: {e})")
+
+
 def _nicht_vermessen(stand: Path) -> StandOhneGraph:
     return StandOhneGraph(f"Stand {stand} ohne Graph: erst vermessen bzw. neu vermessen"
                           " (`python -m selbstbild vermessen`)")
@@ -61,6 +75,7 @@ def laden(stand: Path) -> GraphDaten:
             commit = _meta(c, "commit")
             if commit is None:
                 raise _nicht_vermessen(stand)
+            gemessen_um = _meta(c, "gemessen_um")
             zeit = _meta(c, "commit_zeit")
             if zeit is None:
                 bericht = _meta(c, "bericht")
@@ -72,13 +87,13 @@ def laden(stand: Path) -> GraphDaten:
             kanten = tuple(_kante_von(json.loads(w)) for (w,) in c.execute(Speicher._KANTEN_SQL))
         finally:
             c.execute("COMMIT")
-    except sqlite3.OperationalError as e:  # fehlende Tabellen: kein vermessener Stand
-        raise _nicht_vermessen(stand) from e
+    except sqlite3.DatabaseError as e:  # nur fehlende Tabellen sind "nicht vermessen"
+        raise db_fehler(stand, e) from e
     finally:
         c.close()
     ohne = sum(1 for k in kanten if k.von not in knoten or k.nach not in knoten)
     return GraphDaten(commit, int(zeit), knoten, kanten,
-                      {"kante_ohne_knoten": ohne})
+                      {"kante_ohne_knoten": ohne}, gemessen_um)
 
 
 def datei_von(symbol_id: str) -> str:
@@ -141,13 +156,42 @@ def dateigraph(d: GraphDaten) -> Sicht:
 
 _SYMBOLKANTEN = ("ruft_auf", "importiert", "definiert_route", "registriert")
 
+# Ruling S14: Sprachfamilien. `ruft_auf` zwischen Familien stammt aus dem Namens-Rueckfall
+# (Python `.strip()` -> TSX-Methode `strip`) und zaehlt nicht in PageRank/Hotspots.
+SPRACHFAMILIEN: dict[str, str] = {"python": "python", "typescript": "js_ts", "tsx": "js_ts",
+                                  "javascript": "js_ts", "rust": "rust", "go": "go"}
+
+
+@lru_cache(maxsize=1 << 16)
+def sprachfamilie(pfad: str) -> str:
+    """python | js_ts | rust | go | rest (nach der Endung, wie `sprache_fuer`)."""
+    return SPRACHFAMILIEN.get(sprache_fuer(pfad) or "", "rest")
+
+
+def _knoten_pfad(d: GraphDaten, i: str) -> str:
+    k = d.knoten[i]
+    if k.beleg is not None:
+        return k.beleg.pfad
+    kopf = i.rpartition("#")[0] if k.art == "symbol" else i
+    return kopf.split(":", 2)[2] if kopf.count(":") >= 2 else kopf
+
+
+def quersprachig(d: GraphDaten, k: Kante) -> bool:
+    """`ruft_auf` zwischen zwei bekannten Knoten verschiedener Sprachfamilien (Ruling S14)."""
+    return (k.art == "ruft_auf" and k.von in d.knoten and k.nach in d.knoten
+            and sprachfamilie(_knoten_pfad(d, k.von)) != sprachfamilie(_knoten_pfad(d, k.nach)))
+
 
 def symbolgraph(d: GraphDaten) -> Sicht:
-    """Knoten = Datei- und Symbolknoten; Kanten = ruft_auf, importiert, definiert_route, registriert."""
+    """Knoten = Datei- und Symbolknoten; Kanten = ruft_auf, importiert, definiert_route, registriert.
+
+    Ruling S14: `ruft_auf` zwischen Sprachfamilien entfaellt (siehe `quersprachig`)."""
     ids = {i for i, k in d.knoten.items() if k.art in ("datei", "symbol")}
     w: dict[tuple[str, str], float] = {}
     for k in d.kanten:
         if k.art not in _SYMBOLKANTEN or k.von not in ids or k.nach not in ids or k.von == k.nach:
+            continue
+        if quersprachig(d, k):
             continue
         w[(k.von, k.nach)] = w.get((k.von, k.nach), 0.0) + _gewicht(k)
     return _sicht(ids, w)

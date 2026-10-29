@@ -62,7 +62,7 @@ def _fehler(meldung: str, code: int) -> int:
 
 def _analyse_holen(wurzel: Path) -> Any:
     """Gespeicherte Analyse oder ein Exit-Code (int) samt Meldung auf stderr."""
-    from selbstbild.analyse.lader import StandOhneGraph
+    from selbstbild.analyse.lader import StandOhneGraph, StandUnlesbar
     from selbstbild.analyse.lauf import NichtAnalysiert, NichtVermessen, gespeicherte_analyse
 
     try:
@@ -71,20 +71,21 @@ def _analyse_holen(wurzel: Path) -> Any:
         return _fehler(str(e), 1)
     except StandOhneGraph as e:
         return _fehler(str(e), 3)
-    except NichtAnalysiert as e:
+    except (NichtAnalysiert, StandUnlesbar) as e:
         return _fehler(str(e), 1)
 
 
 def _analysieren(args: argparse.Namespace) -> int:
     from selbstbild.analyse.ergebnis import export_json
-    from selbstbild.analyse.lader import StandOhneGraph
+    from selbstbild.analyse.lader import StandOhneGraph, StandUnlesbar
     from selbstbild.analyse.lauf import NichtVermessen, analysieren, speicher_spitze_mb, zusammenfassung
 
     start = time.perf_counter_ns()
     try:
         a = analysieren(args.wurzel, kolonie=not args.ohne_kolonie,
-                        pruefen_reproduzierbar=args.pruefen_reproduzierbar)
-    except NichtVermessen as e:
+                        pruefen_reproduzierbar=args.pruefen_reproduzierbar,
+                        kolonie_budget=args.kolonie_budget)
+    except (NichtVermessen, StandUnlesbar) as e:
         return _fehler(str(e), 1)
     except StandOhneGraph as e:
         return _fehler(str(e), 3)
@@ -166,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
     an.add_argument("--export", type=Path, default=None, help="kanonisches analyse.json schreiben")
     an.add_argument("--pruefen-reproduzierbar", action="store_true",
                     help="Mathe und Kolonie ein zweites Mal rechnen und vergleichen (doppelte Laufzeit)")
+    an.add_argument("--kolonie-budget", action="store_true",
+                    help="zusaetzlich budgetgleiche Kolonie (~10 Agenten-Schritte je Datei, max. 5000 Schritte)")
     g = befehle.add_parser("goldsatz", help="Goldsatz-Kandidaten (YAML) aus der gespeicherten Analyse")
     g.add_argument("wurzel", type=Path)
     g.add_argument("ziel", type=Path)
