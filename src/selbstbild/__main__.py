@@ -148,6 +148,19 @@ def _vergleichen(args: argparse.Namespace) -> int:
     return 0
 
 
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _ist_loopback(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    try:
+        host = urlsplit(url if "://" in url else f"http://{url}").hostname
+    except ValueError:
+        return False
+    return host is not None and host.lower() in _LOOPBACK
+
+
 def _suche_messen(args: argparse.Namespace) -> int:
     from selbstbild.suche.dicht import Embedder
     from selbstbild.suche.messung import (gold_aus_ketten, gold_aus_transkripten, messen_quellen, repos_im_index,
@@ -155,6 +168,11 @@ def _suche_messen(args: argparse.Namespace) -> int:
 
     if len(args.ollama) != len(args.modell):
         return _fehler("--ollama und --modell muessen paarweise angegeben werden", 2)
+    if args.transkripte is not None:  # echte Prompts gehen an den Embedder: nur an diesen Rechner
+        fremd = [u for u in args.ollama if not _ist_loopback(u)]
+        if fremd:
+            return _fehler("mit --transkripte nur Loopback-Embedder erlaubt (localhost, 127.0.0.1, ::1):"
+                           " Prompts duerfen den Rechner nicht verlassen", 2)
     pfad = stand_finden(args.wurzel)
     if pfad is None:
         return _nicht_vermessen(args.wurzel)

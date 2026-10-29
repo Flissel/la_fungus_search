@@ -378,3 +378,31 @@ def test_cli_keine_prompt_texte_in_ausgaben(git_repo, graph_stand, monkeypatch, 
     assert daten["paare"] == {"transkripte": 1}  # KETTEN fehlt -> Warnung auf stderr, kein Paar
     assert "ketten" in aus.err
     assert set(daten["ergebnis"]["transkripte"]) == {"stichwort", "struktur"}
+
+
+@pytest.mark.parametrize("url", ["http://example.org:11434", "http://192.168.1.5:11434", "https://ollama.fremd.de"])
+def test_cli_transkripte_nur_an_loopback(tmp_path, capsys, url):
+    """Minor 12: mit --transkripte gehen echte Prompts an den Embedder, also nur an localhost/127.0.0.1/::1."""
+    assert main(["suche-messen", str(tmp_path), "--transkripte", str(tmp_path), "--ollama", url,
+                 "--modell", "m"]) == 2
+    assert "loopback" in capsys.readouterr().err.lower()
+
+
+@pytest.mark.parametrize("url", ["http://localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434"])
+def test_cli_transkripte_loopback_erlaubt(tmp_path, capsys, url):
+    # erlaubt: scheitert erst am fehlenden Stand (Exit 1), nicht an der Adresse
+    assert main(["suche-messen", str(tmp_path), "--transkripte", str(tmp_path), "--ollama", url,
+                 "--modell", "m"]) == 1
+
+
+def test_cli_fremde_url_ohne_transkripte_erlaubt(tmp_path):
+    assert main(["suche-messen", str(tmp_path), "--ollama", "http://example.org:11434", "--modell", "m"]) == 1
+
+
+def test_ist_loopback_raender():
+    from selbstbild.__main__ import _ist_loopback
+
+    assert _ist_loopback("http://LOCALHOST:11434") and _ist_loopback("127.0.0.1:11434")
+    assert not _ist_loopback("http://localhost.fremd.de:11434")
+    assert not _ist_loopback("http://127.0.0.1@fremd.de:11434")
+    assert not _ist_loopback("http://[::1")
