@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from ..quelle import Baum, BlobLeser, Eintrag, baum_lesen, blobs_mit_endung
+from ..quelle import Baum, BlobLeser, Eintrag, baum_lesen, blobs_mit_namen
 from ..sprachen import SPRACHEN
-from . import ist_generiert, ist_testdatei
+from . import CODE_SPRACHEN, ist_generiert, ist_testdatei
 from .erreichbar import Erreichbarkeit
 from .lader import GraphDaten, datei_von
 
@@ -24,9 +24,20 @@ _TS_ENDUNGEN = tuple(sorted(e for s in ("typescript", "tsx", "javascript") for e
 
 # Ruling S9: Namen, die Frameworks per Konvention aufrufen (http.server, ast/docutils-Visitor,
 # unittest/pytest, Ereignis-Handler, Klassen-Hooks). Nie `sicher_tot`, Grund `konvention`.
+# Fix-Welle: pytest-Hooks, alembic upgrade/downgrade, AWS lambda_handler, Django `handle`; Go `init`
+# nur in .go-Dateien (siehe `_ausnahmen`).
 _KONVENTION = re.compile(
-    r"^(do_.*|visit_.*|depart_.*|generic_visit|on_.*|handle_.*|setUp|tearDown|setUpClass|tearDownClass"
-    r"|setup_method|teardown_method|__init_subclass__|__class_getitem__)$")
+    r"^(do_.*|visit_.*|depart_.*|generic_visit|on_.*|handle_.*|handle|setUp|tearDown|setUpClass|tearDownClass"
+    r"|setup_method|teardown_method|__init_subclass__|__class_getitem__|pytest_.*|upgrade|downgrade"
+    r"|lambda_handler)$")
+
+# Ruling S10: Decorators, die keine Registrierung bedeuten. Ein dekoriertes Symbol ist nie `sicher_tot`
+# (Grund `dekorator`), ausser ALLE seine Decorators stehen hier (`functools.*` als Praefix).
+INERTE_DEKORATOREN = frozenset({
+    "property", "staticmethod", "classmethod", "dataclass", "dataclasses.dataclass", "abstractmethod",
+    "abc.abstractmethod", "overload", "typing.overload", "cached_property", "contextmanager",
+    "contextlib.contextmanager", "wraps", "total_ordering", "final", "typing.final", "override"})
+INERTE_PRAEFIXE: tuple[str, ...] = ("functools.",)
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,16 @@ def _zuletzt(d: GraphDaten, symbol_id: str) -> int | None:
     return z if z is not None and z > 0 else None
 
 
+def _inert(dekorator: str) -> bool:
+    return dekorator in INERTE_DEKORATOREN or dekorator.startswith(INERTE_PRAEFIXE)
+
+
+def _dekoriert_aktiv(d: GraphDaten, i: str) -> bool:
+    """Hat das Symbol mindestens einen nicht inerten Decorator (Attr `dekoriert`, Ruling S10)?"""
+    roh = _attr(d, i).get("dekoriert", "")
+    return any(not _inert(x) for x in roh.split(",") if x)
+
+
 def _s4(d: GraphDaten, i: str) -> set[str]:
     """Eigene Ausnahmen nach Ruling S4 und R22 (ohne Vererbung)."""
     erg: set[str] = set()
@@ -102,6 +123,10 @@ def _ausnahmen(d: GraphDaten, e: Erreichbarkeit, i: str) -> set[str]:
         vorfahr = f"{kopf}#{'.'.join(teile[:n])}"
         if vorfahr in d.knoten:
             erg |= _s4(d, vorfahr)
+            if _dekoriert_aktiv(d, vorfahr):
+                erg.add("dekorator")  # registrierte Klasse/Funktion: Verschachteltes lebt mit
+    if _dekoriert_aktiv(d, i):
+        erg.add("dekorator")  # Ruling S10: Registrierung per Decorator erzeugt keine Kante
     if datei.get("fehlerhaft") == "1" or _attr(d, i).get("fehlerhaft") == "1":
         erg.add("fehlerhaft")
     if datei.get("spezial_fehlt") == "1":
@@ -110,7 +135,8 @@ def _ausnahmen(d: GraphDaten, e: Erreichbarkeit, i: str) -> set[str]:
         erg.add("dunder")
     if ist_testdatei(pfad):
         erg.add("testdatei")
-    if _KONVENTION.match(einfach) or (art == "methode" and einfach.startswith("test")):
+    if _KONVENTION.match(einfach) or (art == "methode" and einfach.startswith("test")) \
+            or (pfad.endswith(".go") and einfach == "init"):
         erg.add("konvention")  # Ruling S9: Aufruf per Namenskonvention (Framework-Dispatch)
     if art == "methode" and "." in qual:
         eltern = f"{i.rpartition('#')[0]}#{qual.rpartition('.')[0]}"
@@ -168,11 +194,29 @@ def tot_finden(d: GraphDaten, e: Erreichbarkeit, doku: Mapping[str, frozenset[st
 # als Typ/Attribut, `obj.methode()`, String-Dispatch, nicht aufgeloeste Testimporte.
 
 NAME_MIN: int = 3
-_CODE_SPRACHEN = frozenset({"python", "typescript", "tsx", "javascript", "powershell", "bash", "rust", "go"})
-_BEZEICHNER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Fix-Welle: Bezeichner Unicode-faehig (`größe_berechnen`), wie Python- und JS-Bezeichner.
+_BEZEICHNER = re.compile(r"[^\W\d]\w*")
 # S8-Erweiterung (Fix-Runde 3): HTML und Vorlagen verweisen per Name (Alpine `x-data="f"`, `onclick=`).
 VORLAGEN_ENDUNGEN: tuple[str, ...] = (".html", ".htm", ".vue", ".svelte", ".jinja", ".jinja2", ".j2", ".hbs",
                                       ".ejs", ".erb", ".twig")
+# Fix-Welle: Konfiguration und Daten registrieren per Name (entry points, Dockerfile-CMD, YAML-Handler).
+# json/yaml haben eine Sprache und kommen aus `Baum.eintraege`, der Rest ueber den Dateinamen.
+SCAN_DATEN_SPRACHEN = frozenset({"json", "yaml"})
+KONFIG_ENDUNGEN: tuple[str, ...] = (".toml", ".cfg", ".ini")
+KONFIG_NAMEN = frozenset({"Makefile", "Procfile"})
+KONFIG_PRAEFIXE: tuple[str, ...] = ("Dockerfile",)
+_LOCKDATEI = re.compile(r"^(.*[-.]lock\.(json|ya?ml)|npm-shrinkwrap\.json)$", re.IGNORECASE)
+
+
+def ist_lockdatei(name: str) -> bool:
+    """Lock-Dateien (`package-lock.json`, `pnpm-lock.yaml` ...) verweisen nie (nur Paketnamen)."""
+    return _LOCKDATEI.match(name) is not None
+
+
+def _ohne_sprache_lesen(name: str) -> bool:
+    low = name.lower()
+    return (low.endswith(VORLAGEN_ENDUNGEN) or low.endswith(KONFIG_ENDUNGEN) or name in KONFIG_NAMEN
+            or name.startswith(KONFIG_PRAEFIXE))
 
 
 def _einfach(symbol_id: str) -> str:
@@ -238,17 +282,19 @@ def namensverweise(wurzel: Path, commit: str, kandidaten: Iterable[str]) -> froz
     gerettet: set[str] = set()
     for b in _baeume(baum_lesen(Path(wurzel), commit)):
         with BlobLeser(b.wurzel) as leser:
-            code = [e for e in b.eintraege if e.sprache in _CODE_SPRACHEN]
-            for e in code + blobs_mit_endung(b, VORLAGEN_ENDUNGEN):  # ein Blob nach dem anderen
-                if ist_generiert(e.pfad):
-                    continue  # Ruling S9: Build-Ausgabe verweist nicht
+            code = [e for e in b.eintraege
+                    if e.sprache in CODE_SPRACHEN or e.sprache in SCAN_DATEN_SPRACHEN]
+            for e in code + blobs_mit_namen(b, _ohne_sprache_lesen):  # ein Blob nach dem anderen
+                if ist_generiert(e.pfad) or ist_lockdatei(e.pfad.rpartition("/")[2]):
+                    continue  # Ruling S9: Build-Ausgabe verweist nicht; Lock-Dateien auch nicht
                 roh = leser.lesen(e.blob)
                 text = roh.decode("utf-8", errors="replace")
-                for name in set(_BEZEICHNER.findall(text)) & namen:
+                # gestreamt: grosse JSON-Dateien erzeugen keine Liste aller Bezeichner
+                for name in {w for m in _BEZEICHNER.finditer(text) if (w := m.group()) in namen}:
                     s = dateien.setdefault((e.repo, name), set())
                     if len(s) < 2:
                         s.add(e.pfad)
-                eigene = je_datei.get((e.repo, e.pfad))
+                eigene = je_datei.get((e.repo, e.pfad)) if e.sprache in CODE_SPRACHEN else None
                 if eigene:
                     gerettet |= _in_eigener_datei(e, roh, text, eigene)
     for sid in alle:

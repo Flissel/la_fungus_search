@@ -8,12 +8,12 @@ from .._glob import glob_regex
 from ..quelle import Baum, BlobLeser, baum_lesen
 from .lader import GraphDaten
 
-_WORT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_WORT = re.compile(r"[^\W\d]\w*")  # Unicode-Bezeichner (Fix-Welle)
 _BACKTICK = re.compile(r"`([^`\n]+)`")
-_CODEARTIG = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
+_CODEARTIG = re.compile(r"[^\W\d]\w{2,}")
 
 
-_KETTE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+(\()?")
+_KETTE = re.compile(r"[^\W\d]\w*(?:\.[^\W\d]\w*)+(\()?")
 
 
 def _codeartig(w: str) -> bool:

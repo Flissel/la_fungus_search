@@ -137,3 +137,79 @@ def test_ist_generiert(pfad, erwartet):
     from selbstbild.analyse import ist_generiert
 
     assert ist_generiert(pfad) is erwartet
+
+
+def _deko(pfad: str, q: str, art: str, dekoriert: str) -> Knoten:
+    return Knoten(id_symbol("r", pfad, q), "symbol", q, None, (("dekoriert", dekoriert), ("symbolart", art)))
+
+
+def test_dekorator_nie_sicher_tot_ausser_inert_s10(graph_stand):
+    """Ruling S10: Framework-Registrierung per Decorator erzeugt keine Kante."""
+    knoten = [_d("op.py"), _deko("op.py", "cell_health_timer", "funktion", "kopf.timer"),
+              _deko("op.py", "list_installed", "funktion", "marketplace.command,property"),
+              _deko("op.py", "nur_inert", "funktion", "functools.lru_cache,property,staticmethod"),
+              _deko("op.py", "Daten", "klasse", "dataclass,typing.final"),
+              _deko("op.py", "Registriert", "klasse", "registry.register"),
+              _sym("op.py", "Registriert.innen", "methode")]
+    d = laden(graph_stand(knoten, [], commit_zeit=STICHTAG))
+    tot = {t.symbol: t for t in tot_finden(d, erreichbarkeit(d), {})}
+    for q in ("cell_health_timer", "list_installed", "Registriert", "Registriert.innen"):
+        f = tot[id_symbol("r", "op.py", q)]
+        assert f.stufe == "wahrscheinlich_tot" and "dekorator" in f.gruende, q
+    for q in ("nur_inert", "Daten"):
+        f = tot[id_symbol("r", "op.py", q)]
+        assert f.stufe == "sicher_tot" and "dekorator" not in f.gruende, q
+
+
+@pytest.mark.parametrize("pfad, q, art", [
+    ("svc/main.go", "init", "funktion"), ("conftest_plugin.py", "pytest_configure", "funktion"),
+    ("alembic/versions/001_x.py", "upgrade", "funktion"), ("alembic/versions/001_x.py", "downgrade", "funktion"),
+    ("aws/fn.py", "lambda_handler", "funktion"), ("app/management/commands/sync.py", "Command.handle", "methode"),
+])
+def test_konvention_ergaenzt(graph_stand, pfad, q, art):
+    knoten = [_d(pfad), _sym(pfad, q, art)]
+    if "." in q:
+        knoten.append(_sym(pfad, q.split(".")[0], "klasse"))
+    d = laden(graph_stand(knoten, [], commit_zeit=STICHTAG))
+    f = {t.symbol: t for t in tot_finden(d, erreichbarkeit(d), {})}[id_symbol("r", pfad, q)]
+    assert f.stufe == "wahrscheinlich_tot" and "konvention" in f.gruende
+
+
+def test_init_nur_in_go_konvention(graph_stand):
+    knoten = [_d("x.py"), _sym("x.py", "init", "funktion")]
+    d = laden(graph_stand(knoten, [], commit_zeit=STICHTAG))
+    f = {t.symbol: t for t in tot_finden(d, erreichbarkeit(d), {})}[id_symbol("r", "x.py", "init")]
+    assert f.stufe == "sicher_tot"
+
+
+KONFIG = {
+    "pyproject.toml": '[project.scripts]\nwerkzeug = "pkg.cli:aus_toml"\n',
+    "setup.cfg": "[options.entry_points]\nconsole_scripts =\n    w = pkg.cli:aus_cfg\n",
+    "tox.ini": "[testenv]\ncommands = python -c 'import pkg; pkg.aus_ini()'\n",
+    "Dockerfile.dev": 'CMD ["python", "-c", "import pkg; pkg.aus_docker()"]\n',
+    "Makefile": "lauf:\n\tpython -c 'import pkg; pkg.aus_make()'\n",
+    "Procfile": "web: python -c 'import pkg; pkg.aus_procfile()'\n",
+    "deploy/job.yaml": "handler: pkg.cli.aus_yaml\n",
+    "conf/plugins.json": '{"hook": "aus_json"}\n',
+    "web/package-lock.json": '{"x": "aus_lock"}\n',
+}
+NAMEN = ("aus_toml", "aus_cfg", "aus_ini", "aus_docker", "aus_make", "aus_procfile", "aus_yaml", "aus_json",
+         "aus_lock", "größe_berechnen", "nur_hier")
+CLI = "".join(f"def {n}():\n    return 1\n\n\n" for n in NAMEN)
+
+
+def test_s8_liest_konfig_und_unicode_namen(git_repo, heim):
+    """Fix-Welle: S8 liest Konfigurations- und Datendateien (ohne Lock-Dateien); Bezeichner Unicode."""
+    git_repo.datei("pkg/cli.py", CLI)
+    git_repo.datei("pkg/nutzer.py", "from pkg.cli import *\n\n\ndef f():\n    return größe_berechnen()\n")
+    for pfad, text in KONFIG.items():
+        git_repo.datei(pfad, text)
+    git_repo.commit("alt", datum="2025-01-01T00:00:00Z")
+    vermessen(git_repo.wurzel)
+    from selbstbild.vermessen import stand_finden
+
+    d = laden(stand_finden(git_repo.wurzel).parent)
+    kandidaten = [_s("pkg/cli.py", n) for n in NAMEN]
+    gerettet = namensverweise(git_repo.wurzel, d.commit, kandidaten)
+    erwartet = {_s("pkg/cli.py", n) for n in NAMEN if n not in ("aus_lock", "nur_hier")}
+    assert gerettet == erwartet

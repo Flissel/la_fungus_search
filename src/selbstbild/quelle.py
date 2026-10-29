@@ -246,6 +246,11 @@ def blobs_mit_endung(baum: Baum, endungen: tuple[str, ...]) -> list[Eintrag]:
     """Blobs eines (Unter-)Baums am selben Commit, deren Dateiname auf eine der `endungen` endet
     (ohne Sprache, z. B. HTML-Vorlagen). Dieselben Ausschluesse wie `baum_lesen` (Muster, Symlink,
     Groesse); nur dieser Baum, keine Submodule (die haben eigene `Baum`-Objekte). Liest keine Blobs."""
+    return blobs_mit_namen(baum, lambda name: name.lower().endswith(endungen))
+
+
+def blobs_mit_namen(baum: Baum, passt: Callable[[str], bool]) -> list[Eintrag]:
+    """Wie `blobs_mit_endung`, aber `passt(dateiname)` entscheidet (z. B. `Dockerfile*`, `Makefile`)."""
     muster = [_glob_regex(m) for m in (*STANDARD_AUSGENOMMEN, *baum.regeln.ausgenommen)]
     max_bytes = baum.regeln.max_dateigroesse_kb * 1024
     roh = _git(baum.wurzel, "ls-tree", "-r", "-l", "-z", baum.commit).stdout
@@ -258,7 +263,7 @@ def blobs_mit_endung(baum: Baum, endungen: tuple[str, ...]) -> list[Eintrag]:
         pfad = pfad_roh.decode("utf-8", errors="surrogateescape")
         if art != "blob" or modus == _SYMLINK or _ausgenommen(pfad, muster):
             continue
-        if not PurePosixPath(pfad).name.lower().endswith(endungen) or int(groesse_s) > max_bytes:
+        if not passt(PurePosixPath(pfad).name) or int(groesse_s) > max_bytes:
             continue
         erg.append(Eintrag(baum.repo, pfad, blob, int(groesse_s), None))
     erg.sort(key=lambda e: e.pfad)

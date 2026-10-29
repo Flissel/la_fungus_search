@@ -236,3 +236,17 @@ def test_punktketten_in_prosa():
 def test_conftest_ist_testdatei():
     assert ist_testdatei("conftest.py") and ist_testdatei("pkg/conftest.py")
     assert not ist_testdatei("contest.py")
+
+
+def test_ist_testdatei_erweiterung_s2():
+    for p in ("pkg/test/helfer.py", "web/spec/a.ts", "e2e/login.ts", "src/__mocks__/api.js",
+              "a/b.test.jsx", "a/b.test.mjs", "a/b.test.cjs", "a/b.test.mts", "a/b.test.cts",
+              "ui/Button.stories.tsx", "ui/Button.stories.mdx"):
+        assert ist_testdatei(p), p
+    for p in ("src/testing.py", "src/specs.py", "src/e2e.py", "a/b.test", "src/latest.py", "contest/x.py"):
+        assert not ist_testdatei(p), p
+
+
+def test_doku_bezeichner_unicode():
+    ids = bezeichner_aus_text("Die Funktion `größe_berechnen` und straßen_name werden genutzt.")
+    assert {"größe_berechnen", "straßen_name"} <= ids
