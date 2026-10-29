@@ -28,6 +28,9 @@ from .vermessen import stand_finden
 
 Antwort = dict[str, Any]
 
+# Spiegel von `analyse.bereiche.ISOLIERT` (der Server laedt die Analyse nicht)
+ISOLIERT = "(isoliert)"
+
 # Windows vergleicht Pfade ohne Beachtung der Gross-/Kleinschreibung.
 PFAD_OHNE_GROSSKLEIN: bool = os.name == "nt"
 
@@ -201,7 +204,10 @@ def w_bereich(wurzel: Path, id_oder_pfad: str) -> Antwort:
         z = _datei_eintrag(stand, wurzel, id_oder_pfad)
         if z is None:
             return {"fehler": f"unbekannt im Index: {id_oder_pfad}"}
-        return {"id": z[0], "pfad": z[1], "bereich": z[2]}
+        aus: Antwort = {"id": z[0], "pfad": z[1], "bereich": z[2]}
+        if z[2] == ISOLIERT:  # roher Einzelwert bleibt; er ist aber kein Bereich
+            aus["hinweis"] = "Datei ohne Kanten im Graphen (Sammelbecken), kein eigener Bereich"
+        return aus
     return _mit_stand(wurzel, tun)
 
 

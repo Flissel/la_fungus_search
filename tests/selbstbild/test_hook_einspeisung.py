@@ -80,7 +80,7 @@ def test_veralteter_index_kopf(git_repo, heim):
     git_repo.datei("neu.txt", "x")
     git_repo.commit("weiter")
     block = kontextblock(git_repo.wurzel, "newsletter freigeben")
-    assert block is not None and "Index veraltet" in block.splitlines()[0]
+    assert block is not None and "HEAD weiter" in block.splitlines()[0] and "veraltet" not in block.splitlines()[0]
     assert "app/versand.py:1" in block  # Datei selbst unveraendert -> Frische-Regel erfuellt
 
 
@@ -185,7 +185,7 @@ def test_veraltet_geaenderte_stellen_getrennt(git_repo, heim):
     git_repo.commit("weiter")
     git_repo.datei("app/versand.py", "# anders\ndef newsletter_freigeben():\n    return 2\n")
     block = kontextblock(git_repo.wurzel, "newsletter freigeben")
-    assert block is not None and "Index veraltet" in block.splitlines()[0]
+    assert block is not None and "HEAD weiter" in block.splitlines()[0] and "veraltet" not in block.splitlines()[0]
     teile = block.split("Seit Index geändert:")
     assert len(teile) == 2 and "docs/newsletter.md" in teile[0]
     assert "newsletter_freigeben (app/versand.py)" in teile[1]
@@ -503,3 +503,42 @@ def test_schwelle_begruendet():
 
     assert einspeisung.MIN_TOKENS_STARK == 2
     assert einspeisung.BM25_STARK == pytest.approx(-2 * math.log(1000))
+
+
+def test_kopf_nennt_index_commit_wenn_head_weiter(git_repo, heim):
+    """Minor 7: kein 'veraltet' – die gezeigten Zeilen haben die Frische-Pruefung je Datei bestanden."""
+    _aufbauen(git_repo)
+    gemessen = git_repo.git("rev-parse", "HEAD")
+    kopf = kontextblock(git_repo.wurzel, "newsletter freigeben").splitlines()[0]
+    assert kopf == f"Selbstbild (Commit {gemessen[:7]}, Index frisch)"
+    git_repo.datei("neu.txt", "x")
+    git_repo.commit("weiter")
+    kopf = kontextblock(git_repo.wurzel, "newsletter freigeben").splitlines()[0]
+    assert kopf == f"Selbstbild (Index von {gemessen[:7]}, HEAD weiter)"
+
+
+def _bereich_setzen(stand: Path, wert: str) -> None:
+    import sqlite3
+    from contextlib import closing
+
+    with closing(sqlite3.connect(stand / "suche.sqlite")) as c:
+        c.execute("UPDATE eintrag SET bereich=? WHERE pfad='app/versand.py'", (wert,))
+        c.commit()
+
+
+def test_isoliert_nicht_in_bereiche_zeile(git_repo, heim):
+    """Minor 16: `(isoliert)` ist kein Bereich, sondern 'ohne Kanten'; die Zusammenfassung laesst es weg."""
+    stand = _aufbauen(git_repo)
+    _bereich_setzen(stand, "Versand")
+    assert "Bereiche: Versand" in kontextblock(git_repo.wurzel, "newsletter freigeben")
+    _bereich_setzen(stand, "(isoliert)")
+    block = kontextblock(git_repo.wurzel, "newsletter freigeben")
+    assert block is not None and "app/versand.py:1" in block
+    assert "Bereiche:" not in block and "(isoliert)" not in block
+
+
+def test_isoliert_spiegel_gleich():
+    from selbstbild.analyse.bereiche import ISOLIERT
+    from selbstbild.hooks import einspeisung
+
+    assert einspeisung.ISOLIERT == ISOLIERT

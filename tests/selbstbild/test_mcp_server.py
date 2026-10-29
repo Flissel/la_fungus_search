@@ -246,3 +246,21 @@ def test_w_regeln_wie_waechter(git_repo, graph_stand, monkeypatch):
     arten_sub = [r["art"] for r in mcp_server.w_regeln(w, "vibemind-os/spaces/x/main.py")["regeln"]]
     assert "space" in arten_sub
     assert struktur.pruefe_schreibziel(w / "vibemind-os" / "spaces" / "x" / "main.py") == ()
+
+
+def test_w_bereich_isoliert_roh_mit_hinweis(git_repo, graph_stand, monkeypatch):
+    """Minor 16: `(isoliert)` bleibt als echter Einzelwert stehen, mit Hinweis, dass es kein Bereich ist."""
+    stand = _aufbauen(git_repo, graph_stand, monkeypatch)
+    c = sqlite3.connect(stand / "suche.sqlite")
+    c.execute("UPDATE eintrag SET bereich='(isoliert)' WHERE pfad='app/a.py'")
+    c.commit()
+    c.close()
+    erg = mcp_server.w_bereich(git_repo.wurzel, "app/a.py")
+    assert erg["bereich"] == "(isoliert)" and "ohne Kanten" in erg["hinweis"]
+    assert "hinweis" not in mcp_server.w_bereich(git_repo.wurzel, "app/versand.py")
+
+
+def test_isoliert_spiegel_gleich_mcp():
+    from selbstbild.analyse.bereiche import ISOLIERT
+
+    assert mcp_server.ISOLIERT == ISOLIERT

@@ -41,6 +41,9 @@ from .verlauf import hauptpfad, letzte_dateien
 FRIST_S = 1.5
 MAX_ZEICHEN = 8000
 MAX_BEREICHE = 3
+# Spiegel von `analyse.bereiche.ISOLIERT` (kein Import: Hook-Leichtigkeit): Sammelbecken fuer Dateien ohne Kanten,
+# kein echter Bereich. Er bleibt am einzelnen Eintrag stehen, faellt aber aus der Zeile "Bereiche:".
+ISOLIERT = "(isoliert)"
 MAX_STELLEN = 8
 MAX_DOKU = 3
 MAX_TOKENS = 12
@@ -524,7 +527,7 @@ def _block(cwd: Path, prompt: str, pruefen: Callable[[], None], transkript: Path
         if r:
             text += f" – {r}"
         stellen.append(text)
-        if bereich and bereich not in bereiche and len(bereiche) < MAX_BEREICHE:
+        if bereich and bereich != ISOLIERT and bereich not in bereiche and len(bereiche) < MAX_BEREICHE:
             bereiche.append(bereich)
 
     # Abschnitt "Zuletzt bearbeitet und Nachbarn": nur Arbeitsbereich, kein Prompt-Treffer
@@ -550,7 +553,7 @@ def _block(cwd: Path, prompt: str, pruefen: Callable[[], None], transkript: Path
         text = f"- {zeig} – {rolle(d)}"
         if bereich:
             text += f"; Bereich {bereich}"
-            if bereich not in bereiche and len(bereiche) < MAX_BEREICHE:
+            if bereich != ISOLIERT and bereich not in bereiche and len(bereiche) < MAX_BEREICHE:
                 bereiche.append(bereich)
         arten = regel_cache.get(zeig)
         if arten is None:
@@ -576,7 +579,9 @@ def _block(cwd: Path, prompt: str, pruefen: Callable[[], None], transkript: Path
     if not stellen and not doku and not any(" – seit Index geändert" not in z for z in kontext_zeilen):
         return None
 
-    aus = [f"Selbstbild (Commit {commit[:7]}, Index {'frisch' if frisch else 'veraltet'})"]
+    # HEAD weiter als der Index heisst nicht "veraltet": die gezeigten Zeilen bestanden die Frische-Pruefung je Datei
+    aus = [f"Selbstbild (Commit {commit[:7]}, Index frisch)" if frisch
+           else f"Selbstbild (Index von {commit[:7]}, HEAD weiter)"]
     if warnungen:
         aus += ["Warnungen:", *warnungen]
     if bereiche:
