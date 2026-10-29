@@ -274,6 +274,73 @@ def test_transkripte_filtern_keine_prompts(tmp_path):
     assert gold == ((echt, frozenset({"datei:r:a.py", "datei:r:b.py"})),)
 
 
+def test_gold_ziele_auf_hauptbaum_und_index(git_repo, graph_stand, tmp_path):
+    """T12: Worktree-Ziele zaehlen im Hauptbaum; nur Ziele im Index; Prompts ohne solches Ziel entfallen."""
+    stand = _stand(git_repo, graph_stand)
+    w = git_repo.wurzel
+    ordner = tmp_path / "tr"
+    ordner.mkdir()
+    zeilen = [
+        _prompt("Erste Aufgabe mit genug Text"), _edit(str(w / ".worktrees" / "wt1" / "app" / "versand.py")),
+        _edit(str(w / "app" / "nicht_im_index.py")),
+        _prompt("Zweite Aufgabe ohne erreichbares Ziel"), _edit(str(w / "docs" / "plan.md")),
+        _prompt("Dritte Aufgabe im zweiten Checkout"), _edit(str(w / ".claude" / "worktrees" / "a1" / "app" / "a.py")),
+    ]
+    (ordner / "s.jsonl").write_bytes(("\n".join(zeilen) + "\n").encode("utf-8"))
+    gold = gold_aus_transkripten(ordner, w, n=10, wurzel_repo="repo", stand=stand)
+    assert [z for _, z in gold] == [frozenset({VERSAND}), frozenset({RECHNUNG})]
+    ohne_index = gold_aus_transkripten(ordner, w, n=10, wurzel_repo="repo")
+    assert [z for _, z in ohne_index] == [frozenset({VERSAND, "datei:repo:app/nicht_im_index.py"}),
+                                          frozenset({"datei:repo:docs/plan.md"}), frozenset({RECHNUNG})]
+
+
+def test_stichproben_mit_transkript_und_offset(git_repo, graph_stand, tmp_path, capsys):
+    from selbstbild.hooks.verlauf import letzte_dateien
+    from selbstbild.suche.messung import transkript_stichproben
+
+    stand = _stand(git_repo, graph_stand)
+    w = git_repo.wurzel
+    ordner = tmp_path / "tr"
+    ordner.mkdir()
+    geheim = "GEHEIM-STICHPROBE mit genug Text"
+    zeilen = [_prompt("Vorher eine Aufgabe mit Text"), _edit(str(w / "app" / "cron.py")),
+              _prompt("kurz"),  # kurze Zurufe bleiben Teil der Aufgabe davor
+              _prompt(geheim), _edit(str(w / "app" / "versand.py"))]
+    datei = ordner / "s.jsonl"
+    datei.write_bytes(("\n".join(zeilen) + "\n").encode("utf-8"))
+    (ordner / "ausgeschlossen.jsonl").write_bytes(("\n".join(zeilen) + "\n").encode("utf-8"))
+    proben = transkript_stichproben(ordner, w, n=10, wurzel_repo="repo", stand=stand,
+                                    ausschliessen=("ausgeschlossen.jsonl",))
+    assert len(proben) == 2 and all(p.transkript == datei for p in proben)
+    p = proben[1]
+    assert p.anfrage == geheim and p.ziele == frozenset({VERSAND})
+    roh = datei.read_bytes()
+    assert json.loads(roh[p.ende:].split(b"\n", 1)[0])["message"]["content"] == geheim  # Offset = Prompt-Zeile
+    assert letzte_dateien(datei, ende=p.ende) == [str(w / "app" / "cron.py")]  # Verlauf nur davor
+    assert proben[0].ende == 0
+    gleich = gold_aus_transkripten(ordner, w, n=10, wurzel_repo="repo", stand=stand,
+                                   ausschliessen=("ausgeschlossen.jsonl",))
+    assert gleich == tuple((s.anfrage, s.ziele) for s in proben)
+    assert geheim not in capsys.readouterr().out
+
+
+def test_stichprobe_deterministisch_nach_filter(git_repo, graph_stand, tmp_path):
+    from selbstbild.suche.messung import transkript_stichproben
+
+    stand = _stand(git_repo, graph_stand)
+    w = git_repo.wurzel
+    ordner = tmp_path / "tr"
+    ordner.mkdir()
+    zeilen: list[str] = []
+    for i in range(12):
+        zeilen += [_prompt(f"Aufgabe nummer {i} mit ausreichend Text"),
+                   _edit(str(w / "app" / ("versand.py" if i % 2 else "fehlt.py")))]
+    (ordner / "a.jsonl").write_bytes(("\n".join(zeilen) + "\n").encode("utf-8"))
+    a = transkript_stichproben(ordner, w, n=3, wurzel_repo="repo", stand=stand)
+    assert len(a) == 3 and a == transkript_stichproben(ordner, w, n=3, wurzel_repo="repo", stand=stand)
+    assert all(s.ziele == frozenset({VERSAND}) for s in a)
+
+
 def _cli_stand(git_repo, graph_stand, monkeypatch, name: str | None = "repo") -> Path:
     stand = _stand(git_repo, graph_stand)
     if name is not None:

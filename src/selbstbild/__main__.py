@@ -177,7 +177,8 @@ def _suche_messen(args: argparse.Namespace) -> int:
         sys.stderr.write(f"Warnung: Gold-Quelle ketten fehlt ({ketten})\n")
     if args.transkripte is not None:
         gold["transkripte"] = gold_aus_transkripten(args.transkripte, args.wurzel, args.n,
-                                                    wurzel_repo=wurzel_repo, repos=repos)
+                                                    wurzel_repo=wurzel_repo, repos=repos,
+                                                    stand=pfad.parent)  # nur erreichbare Ziele
     else:
         sys.stderr.write("Warnung: Gold-Quelle transkripte nicht angegeben (--transkripte)\n")
     for q in [q for q, g in gold.items() if not g]:

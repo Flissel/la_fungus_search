@@ -5,6 +5,8 @@ Speicher: dieses Modul schreibt sie nie in Ausgaben, Logs oder Meldungen von Aus
 
 Datei-Ids heissen `datei:<repo>:<pfad>`. Pfade aus KETTEN.md und Transkripten sind relativ zum aeusseren
 Repo und werden per laengstem Praefix auf das Repo (Wurzel oder Submodul) abgebildet.
+Ziele in Git-Worktrees (`.worktrees/<name>/`, `.claude/worktrees/<name>/`) zaehlen als ihr Pfad im Hauptbaum;
+die Messung zaehlt nur Ziele, die im Suchindex liegen (T12).
 """
 from __future__ import annotations
 
@@ -15,9 +17,10 @@ import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Collection, Mapping, NamedTuple, Sequence
 
 from ..analyse.lader import SEED
+from ..hooks.verlauf import hauptpfad
 from .abfrage import suchen_gemeldet
 from .dicht import Embedder, aehnlichste, einbetten, vektoren_bauen
 from .index import index_pfad
@@ -113,58 +116,111 @@ def _relativ(pfad: str, wurzel: Path) -> str | None:
     return "/".join(teile[-n:])
 
 
-def _kandidaten(datei: Path, wurzel: Path, wurzel_repo: str, repos: Sequence[str]) -> list[tuple[str, frozenset[str]]]:
-    paare: list[tuple[str, set[str]]] = []
+class Stichprobe(NamedTuple):
+    """Ein Transkript-Prompt mit seinen Zielen; `ende` ist der Byte-Offset der Prompt-Zeile im Transkript
+    (fuer `kontextblock(..., transkript=..., transkript_ende=ende)`: der Hook sieht nur den Verlauf davor)."""
+    anfrage: str
+    ziele: frozenset[str]
+    transkript: Path
+    ende: int
+
+
+def _kandidaten(datei: Path, wurzel: Path, wurzel_repo: str, repos: Sequence[str]) -> list[Stichprobe]:
+    """Zeilenweise (Transkripte werden mehrere hundert MB gross); nur Zeilen mit `"user"` oder `"tool_use"`
+    werden dekodiert. Ziele liegen im Hauptbaum (`hauptpfad`: Worktree-Pfade zaehlen als ihr Hauptpfad)."""
+    paare: list[tuple[str, set[str], int]] = []
     try:
-        zeilen = datei.read_text(encoding="utf-8", errors="replace").splitlines()
+        f = open(datei, "rb")
     except OSError:
         return []
-    for zeile in zeilen:
-        try:
-            eintrag = json.loads(zeile)
-        except ValueError:
-            continue
-        if not isinstance(eintrag, dict):
-            continue
-        nachricht = eintrag.get("message")
-        if eintrag.get("isSidechain") is True or eintrag.get("isCompactSummary") is True:
-            continue  # Subagent-Verlauf und Kompaktierungs-Zusammenfassung sind keine Aufgaben des Users
-        if eintrag.get("type") == "user" and not eintrag.get("isMeta"):
-            text = _prompt_text(nachricht)
-            if text is not None and text.lstrip().startswith(_KEIN_PROMPT):
-                continue  # System-/Befehls-Einschuebe: weder Prompt noch Aufgabengrenze
-            if text is not None and len(text) >= MIN_PROMPT:  # kurze Zurufe ("ja") beenden keine Aufgabe
-                paare.append((text, set()))
-        elif eintrag.get("type") == "assistant" and paare and isinstance(nachricht, dict):
-            inhalt = nachricht.get("content")
-            for x in inhalt if isinstance(inhalt, list) else []:
-                if not (isinstance(x, dict) and x.get("type") == "tool_use" and x.get("name") in _SCHREIBER):
-                    continue
-                eingabe = x.get("input")
-                pfad = eingabe.get("file_path") if isinstance(eingabe, dict) else None
-                rel = _relativ(pfad, wurzel) if isinstance(pfad, str) else None
-                if rel is not None:
-                    paare[-1][1].add(datei_id_von_pfad(rel, wurzel_repo, repos))
-    return [(t, frozenset(z)) for t, z in paare if z]
+    with f:
+        pos = 0
+        for roh in f:
+            beginn = pos
+            pos += len(roh)
+            if b'"user"' not in roh and b'"tool_use"' not in roh:
+                continue
+            try:
+                eintrag = json.loads(roh.decode("utf-8", errors="replace"))
+            except ValueError:
+                continue
+            if not isinstance(eintrag, dict):
+                continue
+            nachricht = eintrag.get("message")
+            if eintrag.get("isSidechain") is True or eintrag.get("isCompactSummary") is True:
+                continue  # Subagent-Verlauf und Kompaktierungs-Zusammenfassung sind keine Aufgaben des Users
+            if eintrag.get("type") == "user" and not eintrag.get("isMeta"):
+                text = _prompt_text(nachricht)
+                if text is not None and text.lstrip().startswith(_KEIN_PROMPT):
+                    continue  # System-/Befehls-Einschuebe: weder Prompt noch Aufgabengrenze
+                if text is not None and len(text) >= MIN_PROMPT:  # kurze Zurufe ("ja") beenden keine Aufgabe
+                    paare.append((text, set(), beginn))
+            elif eintrag.get("type") == "assistant" and paare and isinstance(nachricht, dict):
+                inhalt = nachricht.get("content")
+                for x in inhalt if isinstance(inhalt, list) else []:
+                    if not (isinstance(x, dict) and x.get("type") == "tool_use" and x.get("name") in _SCHREIBER):
+                        continue
+                    eingabe = x.get("input")
+                    pfad = eingabe.get("file_path") if isinstance(eingabe, dict) else None
+                    rel = _relativ(hauptpfad(pfad)[0], wurzel) if isinstance(pfad, str) else None
+                    if rel is not None:
+                        paare[-1][1].add(datei_id_von_pfad(rel, wurzel_repo, repos))
+    return [Stichprobe(t, frozenset(z), datei, b) for t, z, b in paare if z]
 
 
-def gold_aus_transkripten(ordner: Path, repo_wurzel: Path, n: int = 20, seed: int = SEED, *,
-                          wurzel_repo: str | None = None,
-                          repos: Sequence[str] = ()) -> tuple[tuple[str, frozenset[str]], ...]:
+def _im_index(stand: Path, ids: set[str]) -> set[str]:
+    """Datei-Ids, zu denen `suche.sqlite` einen Eintrag `datei` oder `doku_seite` hat (nur lesend)."""
+    ziel = index_pfad(Path(stand))
+    if not ziel.is_file():
+        raise FileNotFoundError(f"kein Suchindex: {ziel}")
+    frage = {}
+    for d in ids:
+        rest = d.split(":", 1)[1]
+        frage[d] = d
+        frage["doku_seite:" + rest] = d
+    schluessel = sorted(frage)
+    gefunden: set[str] = set()
+    with closing(sqlite3.connect(f"{ziel.resolve().as_uri()}?mode=ro", uri=True)) as c:
+        for i in range(0, len(schluessel), 500):
+            teil = schluessel[i:i + 500]
+            gefunden.update(frage[r] for (r,) in c.execute(
+                f"SELECT id FROM eintrag WHERE id IN ({','.join('?' * len(teil))})", teil))
+    return gefunden
+
+
+def transkript_stichproben(ordner: Path, repo_wurzel: Path, n: int = 20, seed: int = SEED, *,
+                           wurzel_repo: str | None = None, repos: Sequence[str] = (), stand: Path | None = None,
+                           ausschliessen: Collection[str] = ()) -> tuple[Stichprobe, ...]:
     """Je User-Prompt (ab 20 Zeichen) die danach bis zum naechsten Prompt geschriebenen Dateien unter `repo_wurzel`.
 
-    Nur lesend; Prompt-Texte stehen ausschliesslich im Rueckgabewert (Speicher). Stichprobe von `n` aus der
-    nach (Datei, Position) sortierten Kandidatenliste mit `random.Random(seed)`."""
+    Worktree-Ziele zaehlen als ihr Pfad im Hauptbaum. Mit `stand` zaehlen nur Ziele, die im Suchindex liegen;
+    Prompts ohne solches Ziel entfallen (kurze Prompts bleiben: ihr Ziel soll der Verlauf liefern). Ohne die
+    Transkripte `agent-*` und die Dateinamen in `ausschliessen` (z. B. die laufende Session). Nur lesend;
+    Prompt-Texte stehen ausschliesslich im Rueckgabewert. Stichprobe von `n` aus der nach (Datei, Position)
+    sortierten Kandidatenliste mit `random.Random(seed)`."""
     wurzel_repo = wurzel_repo or Path(repo_wurzel).name
-    alle: list[tuple[str, frozenset[str]]] = []
+    alle: list[Stichprobe] = []
     for datei in sorted(Path(ordner).glob("*.jsonl"), key=lambda p: p.name):
-        if datei.name.startswith("agent-"):
-            continue  # Subagent-Transkripte
+        if datei.name.startswith("agent-") or datei.name in ausschliessen:
+            continue  # Subagent-Transkripte, ausgeschlossene Sessions
         alle.extend(_kandidaten(datei, Path(repo_wurzel), wurzel_repo, repos))
+    if stand is not None:
+        erreichbar = _im_index(Path(stand), {d for s in alle for d in s.ziele})
+        alle = [s._replace(ziele=s.ziele & erreichbar) for s in alle]
+        alle = [s for s in alle if s.ziele]
     if len(alle) <= n:
         return tuple(alle)
     ausgewaehlt = sorted(random.Random(seed).sample(range(len(alle)), n))
     return tuple(alle[i] for i in ausgewaehlt)
+
+
+def gold_aus_transkripten(ordner: Path, repo_wurzel: Path, n: int = 20, seed: int = SEED, *,
+                          wurzel_repo: str | None = None, repos: Sequence[str] = (), stand: Path | None = None,
+                          ausschliessen: Collection[str] = ()) -> tuple[tuple[str, frozenset[str]], ...]:
+    """`transkript_stichproben` als Gold-Paare `(anfrage, ziele)` (gleiche Ziehung)."""
+    return tuple((s.anfrage, s.ziele) for s in transkript_stichproben(
+        ordner, repo_wurzel, n, seed, wurzel_repo=wurzel_repo, repos=repos, stand=stand,
+        ausschliessen=ausschliessen))
 
 
 # --- Messen ----------------------------------------------------------------
