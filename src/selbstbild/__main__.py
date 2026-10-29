@@ -1,4 +1,4 @@
-"""CLI: `python -m selbstbild vermessen|export|status|analysieren|goldsatz|vergleichen|suche-messen <wurzel> ...`."""
+"""CLI: `python -m selbstbild vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|suche-messen <wurzel> ...`."""
 from __future__ import annotations
 
 import argparse
@@ -197,6 +197,36 @@ def _suche_messen(args: argparse.Namespace) -> int:
     return 0
 
 
+def _index(args: argparse.Namespace) -> int:
+    from selbstbild.analyse.lader import StandOhneGraph, StandUnlesbar
+    from selbstbild.suche.index import index_bauen
+
+    pfad = stand_finden(args.wurzel)
+    if pfad is None:
+        return _fehler(f"erst vermessen: python -m selbstbild vermessen {args.wurzel}", 1)
+    try:
+        with Speicher(pfad) as sp:
+            if not sp.hat_graph():
+                return _neu_vermessen(args.wurzel)
+        zaehler = index_bauen(args.wurzel, pfad.parent)
+    except StandOhneGraph:
+        return _neu_vermessen(args.wurzel)
+    except StandUnlesbar as e:
+        return _fehler(str(e), 2)
+    _ausgeben({"stand": str(pfad.parent), **zaehler})
+    return 0
+
+
+def _suchen(args: argparse.Namespace) -> int:
+    from selbstbild.mcp_server import w_suchen
+
+    antwort = w_suchen(args.wurzel, args.anfrage, args.top)
+    if "fehler" in antwort:
+        return _fehler(antwort["fehler"], 1)
+    _ausgeben(antwort)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="selbstbild", description="Vermisst ein Git-Repo als Graph.")
     p.add_argument("-v", "--ausfuehrlich", action="store_true", help="Fortschritt nach stderr")
@@ -226,6 +256,12 @@ def main(argv: list[str] | None = None) -> int:
     vg = befehle.add_parser("vergleichen", help="ausgefuellten Goldsatz gegen Mathe und Kolonie messen")
     vg.add_argument("wurzel", type=Path)
     vg.add_argument("gold", type=Path)
+    ix = befehle.add_parser("index", help="Suchindex (suche.sqlite) aus dem vermessenen Stand bauen, Zaehler als JSON")
+    ix.add_argument("wurzel", type=Path)
+    su = befehle.add_parser("suchen", help="Anfrage gegen den Suchindex, Treffer als JSON")
+    su.add_argument("wurzel", type=Path)
+    su.add_argument("anfrage")
+    su.add_argument("--top", type=int, default=10)
     sm = befehle.add_parser("suche-messen", help="recall@10 und MRR der Suche gegen KETTEN- und Transkript-Gold")
     sm.add_argument("wurzel", type=Path)
     sm.add_argument("--ollama", action="append", default=[], help="Ollama-URL (paarweise mit --modell)")
@@ -257,6 +293,10 @@ def main(argv: list[str] | None = None) -> int:
         return _goldsatz(args)
     if args.befehl == "vergleichen":
         return _vergleichen(args)
+    if args.befehl == "index":
+        return _index(args)
+    if args.befehl == "suchen":
+        return _suchen(args)
     if args.befehl == "suche-messen":
         return _suche_messen(args)
     return _status(args.wurzel)
