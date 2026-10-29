@@ -3,6 +3,10 @@
 Stand: 29.10.2026 (Task 11). Code aus Task 1 bis 10 (561 Tests), la_fungus `main` @ `cfed30f`. Für diese Abnahme
 wurde **kein Code geändert**. Gemessen wurde VibeMind (`C:\Users\User\Desktop\Vibemind_V1`) am Commit `2de425b9`.
 
+Nachtrag Task 12 (29.10.2026): Der Einspeisungs-Hook nutzt jetzt den Gesprächsverlauf und hat eine
+Schweigeschwelle. Das Transkript-Gold zählt nur noch erreichbare Ziele (la_fungus `2d66e8f`, `acadb91`, 587 Tests).
+Die Re-Messung steht in **Schritt 4b**. Die Messung aus Schritt 4 bleibt als Historie stehen.
+
 Stufe 3 liest Graph (Stufe 1) und Analyse (Stufe 2) nur lesend und baut daraus `suche.sqlite` (FTS5, Kanten und
 optional Datei-Vektoren). Darauf sitzen die Suche (`stichwort`, `struktur`, `dicht`, `fusion`), der MCP-Server, der
 Einspeisungs-Hook (UserPromptSubmit), der Schreib-Wächter (PreToolUse), `pruefen` und der erzeugte Skill
@@ -13,9 +17,10 @@ Einspeisungs-Hook (UserPromptSubmit), der Schreib-Wächter (PreToolUse), `pruefe
 | Ziel | Ergebnis | Status |
 |---|---|---|
 | `cells.py#list` nach S16 nicht mehr an der PageRank-Spitze | nicht mehr in den Top-500 | **erreicht** |
-| Einspeisung: erwartete Datei im Block, ≥ 16 von 20 | **0 von 20** | **verfehlt** (Ursache s. Schritt 4) |
-| Einspeisung: nie `sicher_tot` ohne Warnung | 0 ohne Warnung, 2 mit Warnung | erreicht |
-| Einspeisung: Latenz ≤ 1,5 s | Median 93 ms, Maximum 235 ms (im Prozess); Hook-Prozess Median 86 ms, Maximum 148 ms | erreicht |
+| Einspeisung: erwartete Datei im Block, ≥ 16 von 20 | T11: **0 von 20**; nach T12 (Verlauf, bereinigtes Gold): **3 von 20**, davon 0 „neu“ | **verfehlt** (Ursachen s. Schritt 4 und 4b) |
+| Einspeisung: kein Block statt eines unpassenden (T12) | schweigt bei 2 von 20 (mit Verlauf) und 4 von 10 (ohne Verlauf); 14 der 17 Blöcke ohne erwartete Datei | **nur teilweise** (die Schwelle trennt kurz von lang, nicht passend von unpassend, s. 4b) |
+| Einspeisung: nie `sicher_tot` ohne Warnung | T11: 0 ohne, 2 mit Warnung; T12: 0 ohne, 0 mit Warnung | erreicht |
+| Einspeisung: Latenz ≤ 1,5 s | T11: Median 93 ms, Maximum 235 ms; T12 inkl. Transkript: Median 92 ms, Maximum 333 ms (im Prozess), Hook-Prozess Median 134 ms, Maximum 171 ms | erreicht |
 | E1: `fusion` schlägt `struktur` um ≥ 5 Punkte | bestes Modell +3,8 Punkte (KETTEN) | **dichte Suche bleibt aus** |
 | Wächter: Root-Space deny mit Hinweis, Submodul-Space still | beides wie gefordert | erreicht |
 | `pruefen` | 0 Verstöße (auch 0 weiche) | erreicht |
@@ -57,6 +62,8 @@ abgebrochen.**
 | m1) Messung `stichwort`/`struktur` + Schritt 4 | 27 s | 0,17 GB (0,45 GB im Wiederholungslauf) | 5,72 / 4,77 GB |
 | d1) Vektoren + `dicht`/`fusion` `qwen3-embedding:0.6b` | 1 455 s | 0,71 GB | 5,46 / 3,63 GB |
 | d2) Vektoren + `dicht`/`fusion` `nomic-embed-text:latest` | 1 193 s | 0,40 GB | 5,56 / **2,33 GB** (unter 3 GB, aber über der Abbruchgrenze 1,5 GB; Ollama lud nomic nach, andere Sessions liefen) |
+| t12) Re-Messung Einspeisung (Schritt 4b) | 13,5 s | 0,08 GB | 5,47 / 4,57 GB |
+| t12d) Diagnose zu Schritt 4b | 10,1 s | 0,17 GB | 5,85 / 4,70 GB |
 
 Ollama: Nur schon installierte Embedder, nichts gezogen. `qwen3-embedding:0.6b` war bereits geladen (5,8 GB VRAM)
 und blieb geladen. `nomic-embed-text` wurde für d2 von Ollama nachgeladen. Andere Modelle wurden nicht angefasst.
@@ -214,6 +221,116 @@ gilt der Abgleich über die volle Datei-Id, nicht nur über den Pfad.
 - **Zielbild prüfen:** Die Spec-Zahl 16/20 setzt voraus, dass ein Prompt seine Zieldatei benennt. Für
   Fortsetzungs-Prompts bräuchte der Hook den Gesprächskontext, und den hat er per Entwurf nicht.
 
+## Schritt 4b: Einspeisung nach Task 12
+
+Task 12 hat den Hook umgebaut (la_fungus `2d66e8f`) und das Gold bereinigt (`acadb91`). Danach wurde neu gemessen,
+auf demselben Index (`2de425b9`, Graph = Index, äußerer HEAD `8f7be186`, also „Index veraltet“ nach Ruling U6). Der
+Index musste nicht neu gebaut werden, denn der Hook schweigt nicht pauschal (17 von 20 Blöcken).
+
+**Was der Hook jetzt tut:**
+- **Arbeitsbereich:** `hooks/verlauf.letzte_dateien` liest höchstens 256 KB vor dem Prompt aus dem Transkript
+  (`transcript_path` des Hooks, in der Messung zusätzlich `transkript_ende` = Byte-Offset der Prompt-Zeile). Es
+  liefert nur Pfade aus `tool_use`-Eingaben (`file_path`, `notebook_path`, `path`), nie Texte. `hauptpfad` bildet
+  `…/.worktrees/<name>/…` und `…/.claude/worktrees/<name>/…` auf den Hauptbaum ab. Die Pfade werden wie im Index auf
+  Datei-Ids abgebildet (längster Repo-Präfix, Submodule als `<name>/<pfad>`). Dazu kommen 1-Hop-Nachbarn über
+  `kante` (`importiert`/`ruft_auf`, beide Richtungen, Datei und ihre Symbole), höchstens 5 je Datei und 40 insgesamt.
+- **Prompt-Treffer:** FTS5 wie bisher (40 Zeilen), dann Datei-Dedup und Tot-Dämpfung (×0,5) wie in `suche.abfrage`.
+- **Fusion:** RRF (k = 60) aus Prompt-Liste und Arbeitsbereich. Treffer, die auch im Arbeitsbereich liegen, stehen
+  oben und tragen „zuletzt bearbeitet“ bzw. „Nachbar von …“. Reine Kontextdateien stehen im eigenen Abschnitt
+  „Zuletzt bearbeitet und Nachbarn“ mit Bereich, passender Strukturregel und Warnungen (höchstens 6 + 4 Zeilen).
+- **Schweigeschwelle**, vor der Messung festgelegt und committet (`2d66e8f`), danach nicht verändert: kein Block, wenn
+  keine Kontextdatei im Index liegt und kein Prompt-Treffer stark ist. Stark heißt, dass mindestens 2 verschiedene
+  Prompt-Tokens Name, Pfad oder Text derselben Datei treffen, oder dass der beste bm25-Wert höchstens
+  −2 · ln 1000 ≈ −13,8 ist. Begründung: Ein Term trägt etwa −IDF bei, und IDF ≈ ln(1/p) für den Anteil p der
+  Einträge, die ihn enthalten. Das ist fast unabhängig von der Indexgröße. Die Schwelle entspricht damit zwei
+  Tokens mit je 1 ‰ Häufigkeit in einer Zeile durchschnittlicher Länge. Ohne starken Treffer erscheinen
+  Prompt-Treffer nur, wenn sie im Arbeitsbereich liegen.
+- **Zweiter Checkout:** Liegt eine Kontextdatei in einem Worktree, nennt der Block Worktree-Name und Hauptpfad.
+- Unverändert: Frist 1,5 s (jetzt inklusive Transkript-Lesen), höchstens 8 000 Zeichen, still bei jedem Problem,
+  nur Standardbibliothek (plus `selbstbild.struktur` für die Regel je Datei, Ruling U1), Frische nach U6 (ein Block
+  nur aus „seit Index geändert“-Namen wird nicht ausgegeben), nie `sicher_tot` ohne Warnung.
+
+**Gold (bereinigt):** Ziele werden mit `hauptpfad` normalisiert, und es zählen nur Ziele im Index. Prompts ohne
+solches Ziel entfallen, kurze Prompts bleiben. Aus 95 Transkripten (ohne die laufende Session und ohne `agent-*`)
+gab es 203 Kandidaten, davon 106 mit erreichbarem Ziel (T11 ohne `hauptpfad`: 82). Gezogen wurden 20 mit Seed
+20261028, sortiert wie bisher (`transkript_stichproben`). 7 der 20 Prompts sind kürzer als 80 Zeichen. Die 20
+stammen aus 6 Transkripten. Die Stichprobe unterscheidet sich von der aus Schritt 4, weil die Kandidatenliste
+gefiltert ist.
+
+| Nr | < 80 Zeichen | Verlaufspfade / im Index (256 KB) | Ziel im Verlauf | Block | Stellen / Doku / Kontext / geändert | erwartete Datei im Block | ms |
+|---|---|---|---|---|---|---|---|
+| 1 | ja | 0 / 0 | nein | **nein** | – | nein | 10 |
+| 2 | ja | 5 / 3 | nein | ja | 0 / 0 / 7 / 0 | nein | 74 |
+| 3 | nein | 8 / 0 | nein | ja | 8 / 0 / 0 / 0 | nein | 101 |
+| 4 | nein | 0 / 0 | nein | ja | 1 / 3 / 0 / 0 | nein | 47 |
+| 5 | ja | 0 / 0 | nein | **nein** | – | nein | 18 |
+| 6 | ja | 3 / 1 | ja (Rang 1) | ja | 0 / 0 / 1 / 0 | **ja** | 27 |
+| 7 | nein | 1 / 1 | nein | ja | 8 / 3 / 1 / 1 | nein | 122 |
+| 8 | nein | 0 / 0 | nein | ja | 8 / 3 / 0 / 0 | nein | 269 |
+| 9 | ja | 0 / 0 | nein | ja | 8 / 0 / 0 / 0 | nein | 205 |
+| 10 | ja | 4 / 0 | nein | ja | 8 / 0 / 0 / 3 | nein | 189 |
+| 11 | nein | 0 / 0 | nein | ja | 8 / 3 / 0 / 0 | nein | 77 |
+| 12 | nein | 0 / 0 | nein | ja | 8 / 3 / 0 / 1 | nein | 333 |
+| 13 | nein | 5 / 1 | ja (Rang 1) | ja | 8 / 3 / 1 / 0 | **ja** | 82 |
+| 14 | nein | 0 / 0 | nein | ja | 8 / 2 / 0 / 0 | nein | 96 |
+| 15 | nein | 1 / 0 | nein | ja | 8 / 1 / 0 / 0 | nein | 124 |
+| 16 | ja | 0 / 0 | nein | ja | 0 / 3 / 0 / 0 | nein | 37 |
+| 17 | nein | 3 / 1 | nein | ja | 8 / 2 / 1 / 0 | nein | 109 |
+| 18 | nein | 2 / 0 | nein | ja | 8 / 0 / 0 / 0 | nein | 87 |
+| 19 | nein | 7 / 5 | ja (Rang 2) | ja | 8 / 2 / 9 / 0 | **ja** | 123 |
+| 20 | nein | 4 / 0 | nein | ja | 8 / 0 / 0 / 0 | nein | 88 |
+
+| | Ergebnis | Ziel |
+|---|---|---|
+| (a) erwartete Datei im Block | **3/20** (frisch mit Zeile bzw. Bereich: 3/20; mit „seit Index geändert“: 3/20) | ≥ 16/20, **verfehlt** |
+| (b) davon „neu“ (erwartete Datei, die nicht schon unter den letzten Dateien vor dem Prompt war) | **0/20** | ohne Ziel |
+| (c) Hook schweigt | 2/20 | – |
+| (d) `sicher_tot` ohne Warnung | 0 (auch 0 mit Warnung) | nie, **erfüllt** |
+| (e) Latenz inkl. Transkript-Lesen | im Prozess Median 92 ms, Maximum 333 ms; Hook als Prozess (Python-Start, Transkripte bis 239 MB) Median 134 ms, Maximum 171 ms | ≤ 1,5 s, **erfüllt** |
+| (f) Blockgröße | Median 1 788, Maximum 2 991 Zeichen | ≤ 8 000, erfüllt |
+| ohne Verlauf (Nr. 1–10, `transkript=None`) | schweigt 4/10, trifft 0/10, Median 25 ms, Maximum 99 ms | – |
+
+Jede Stellen-Zeile ließ sich einem Index-Eintrag zuordnen (0 nicht zuordenbar). Die Hook-Prozess-Läufe bekamen den
+ganzen `transcript_path` (ohne `transkript_ende`), sie messen also nur die Latenz.
+
+**Ursachen, belegt mit einer Diagnose (keine Abnahme, gleiche 20 Prompts):**
+
+1. **Das 256-KB-Fenster ist zu klein für diese Transkripte.** Vor den Prompts liegen 1,8 bis 224 MB Verlauf, und
+   die letzten 256 KB enthalten oft nur Werkzeugergebnisse ohne Dateipfade (9 von 20 Prompts: 0 Pfade). Eine
+   erwartete Datei unter den ersten 6 Kontextdateien gäbe es bei 256 KB für 3, bei 1 MB für 6, bei 4 MB für 9 und
+   bei 16 MB oder 64 MB ebenfalls für 9 Prompts. Das Lesen kostet bei 256 KB im Median 0,7 ms, bei 1 MB 2,9 ms und
+   bei 4 MB 9,6 ms (Maximum 12,7 ms). Das Fenster stammt aus der Schnittstelle des Briefs und wurde **nicht** an die
+   Messung angepasst.
+2. **Viele Ziele gibt es vor dem Prompt noch nicht.** Bei 5 der 20 Prompts sind alle Ziele Dateien, die erst danach
+   angelegt wurden (erste Berührung ist `Write`, vorher nie im Verlauf). Bei Nr. 1 gilt das für 13 der 14 Ziele.
+   Kein Hook kann eine noch nicht existierende Datei nennen.
+3. **Obergrenze des Verlaufs:** Im *gesamten* Verlauf vor dem Prompt liegt eine erwartete Datei bei 12 der 20
+   Prompts. Bei 3 davon steht sie weit hinten (Rang 11, 23 und 28 der Verlaufsdateien) und fiele auch bei großem
+   Fenster aus den 6 Kontextzeilen. Mit diesem Gold liegt die erreichbare Zahl für Verlauf plus Stichwort deshalb
+   bei etwa 12 bis 13 von 20, nicht bei 16.
+4. **Stichwort und Nachbarn finden fast nichts Neues.** Unter den 40 FTS-Zeilen des Prompts liegt eine erwartete
+   Datei bei 1 von 20 Prompts, unter 500 Zeilen bei 2 von 20. 1-Hop-Nachbarn der Verlaufsdateien treffen bei 0 von
+   20. Daher (b) = 0.
+5. **Die Schweigeschwelle trennt kurz von lang, nicht passend von unpassend.** Stark sind 16 der 20 Prompts. Alle
+   Prompts mit 12 Tokens (der Deckel `MAX_TOKENS`) erfüllen beide Kriterien (bester bm25 −15,5 bis −22,3, 3 bis
+   9 Tokens in derselben Datei). Bei den 4 kurzen Prompts, die schweigen dürften, fehlt beides. Mehrere Prompts
+   teilen denselben besten bm25-Wert (−16,59 viermal, −16,14 und −15,5 je zweimal). Ihre ersten 12 Tokens sind also
+   wohl gleich (gemeinsamer Vorspann in einem Transkript). Von den 17 Blöcken enthalten 14 keine erwartete Datei.
+   Nicht abbildbare Verlaufspfade (256 KB, alle 20 Prompts): 14 in anderen Arbeitsbäumen unter `ClaudeWork`, 5 unter
+   `.claude` (Memory), 1 im Temp-Ordner und 11 anderswo außerhalb des Repos. Kein Pfad im Repo ging bei der
+   Abbildung verloren.
+
+**Vorschläge (nicht umgesetzt, keine Anpassung an die Abnahme):**
+- **Fenster vergrößern:** `letzte_dateien` mit 4 MB statt 256 KB aufrufen. Laut Diagnose wären das 9 statt 3 von 20,
+  bei etwa 10 ms Lesezeit. Das sollte als eigene Entscheidung mit neuer Messung auf einer frischen Stichprobe
+  laufen, nicht als Nachjustierung dieser Abnahme.
+- **Schwelle schärfen:** Tokens nach Seltenheit gewichten oder nur Treffer in Name und Pfad zählen, nicht im Text.
+  Lange Prompts treffen über Symbolnamen im Datei-Text fast immer 2 Tokens. Auch hier gilt: erst festlegen, dann
+  auf frischer Stichprobe messen.
+- **Zielbild der Abnahme anpassen:** „16 von 20“ setzt voraus, dass das Ziel vor dem Prompt existiert und erkennbar
+  ist. Vorschlag: neu angelegte Ziele aus dem Gold nehmen oder getrennt zählen, und (b) als eigentliche Kennzahl
+  für „findet die richtige Stelle“ führen.
+
 ## Schritt 5: Wächter-Durchstich (ohne zu schreiben)
 
 Wächter als Subprozess (`python -m selbstbild.hooks.waechter`), Hook-JSON mit `tool_name: Write` auf stdin,
@@ -273,11 +390,13 @@ Reihenfolge nach OK: `hooks pth` → `hooks einspielen` (ohne `--trocken`) → `
 
 ## Bekannte Grenzen und offene Punkte
 
-- **Einspeisung 0/20** gegen das Spec-Ziel 16/20 (s. Schritt 4). Die Abnahme dieses Ziels ist **nicht bestanden**.
+- **Einspeisung 0/20 (T11), 3/20 nach T12** gegen das Spec-Ziel 16/20 (s. Schritt 4 und 4b). Die Abnahme dieses
+  Ziels ist **nicht bestanden**. Mit diesem Gold liegt die Obergrenze für Verlauf plus Stichwort bei etwa 12 von 20,
+  denn bei 5 der 20 Prompts wurden alle Ziele erst danach angelegt.
 - **E1:** Die dichte Suche bleibt aus. Fusion mit qwen 0.6b liegt auf KETTEN 3,8 Punkte über `struktur`, gefordert
   sind 5.
 - **Restartefakt PageRank Rang 10** (`read_text`, 576 unsichere Methoden-Rückfallkanten). Vorschlag: eigenes Ruling.
-- **`gold_aus_transkripten`** liest jede JSONL-Datei ganz in den Speicher (`read_text().splitlines()`). Die größte hat
-  228 MB. Hier blieb der Peak bei 0,45 GB, auf größeren Transkripten wäre zeilenweises Lesen sicherer.
+- **`gold_aus_transkripten`** las bis T11 jede JSONL-Datei ganz in den Speicher. Seit T12 liest es zeilenweise
+  (Peak der Re-Messung 0,08 GB).
 - **Prognose dichter Läufe** unterschätzt die Dauer um den Textaufbau (s. Schritt 3).
 - Die Messung ist einmalig. Wiederholt habe ich nur die Messung m1 (gleiche Zahlen, kürzere Latenzen).
