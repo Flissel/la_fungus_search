@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from selbstbild.__main__ import main
+from selbstbild.hooks import installieren
 from selbstbild.hooks.installieren import einspielen, entfernen, pth_anlegen
 
 PY = Path("C:/venv/Scripts/python.exe")
@@ -21,6 +22,14 @@ FREMD = {
         "Stop": [{"hooks": [{"type": "command", "command": "stop.sh"}]}],
     },
 }
+
+
+@pytest.fixture(autouse=True)
+def import_geprueft(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path, tuple[str, ...]]]:
+    """Die Import-Vorpruefung haengt sonst am echten venv (PY gibt es nicht); hier nur protokolliert."""
+    aufrufe: list[tuple[Path, tuple[str, ...]]] = []
+    monkeypatch.setattr(installieren, "_import_pruefen", lambda py, module: aufrufe.append((py, tuple(module))))
+    return aufrufe
 
 
 def _schreibe(pfad: Path, daten: object) -> None:
@@ -273,3 +282,75 @@ def test_cli_wettlauf_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(installieren, "einspielen", boese)
     assert main(["hooks", "einspielen", str(tmp_path / "x.json")]) == 2
     assert "waehrend" in capsys.readouterr().err
+
+
+def test_nur_waechter(tmp_path: Path, import_geprueft) -> None:
+    s = tmp_path / "settings.local.json"
+    einspielen(s, PY, nur={"waechter"})
+    d = json.loads(s.read_text(encoding="utf-8"))
+    assert list(d["hooks"]) == ["PreToolUse"] and len(_eigene(d, "PreToolUse")) == 1
+    assert WAE in _eigene(d, "PreToolUse")[0]["command"]
+    assert import_geprueft == [(PY.resolve(), ("selbstbild.hooks.waechter",))]
+    assert einspielen(s, PY, nur={"waechter"}) == ""
+
+
+def test_nur_waechter_laesst_eigene_einspeisung_stehen(tmp_path: Path) -> None:
+    s = tmp_path / "settings.local.json"
+    _schreibe(s, FREMD)
+    alt = Path("D:/alt/python.exe")
+    einspielen(s, alt)
+    einspielen(s, PY, nur={"waechter"})
+    d = json.loads(s.read_text(encoding="utf-8"))
+    assert _eigene(d, "UserPromptSubmit") == [{"type": "command", "command": f'"{alt.resolve().as_posix()}" {EIN}',
+                                               "timeout": 5}]
+    assert _eigene(d, "PreToolUse")[0]["command"] == f'"{PY.resolve().as_posix()}" {WAE}'
+
+
+def test_nur_unbekannt_wirft(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        einspielen(tmp_path / "s.json", PY, nur={"gibtsnicht"})
+
+
+def test_import_fehlschlag_schreibt_nichts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def scheitert(py: Path, module: object) -> None:
+        raise RuntimeError(f"Hooks nicht importierbar mit {py}")
+
+    monkeypatch.setattr(installieren, "_import_pruefen", scheitert)
+    s = tmp_path / "settings.local.json"
+    _schreibe(s, FREMD)
+    vorher = s.read_bytes()
+    for trocken in (False, True):
+        with pytest.raises(RuntimeError, match="nicht importierbar"):
+            einspielen(s, PY, trocken=trocken, nur={"waechter"})
+    assert s.read_bytes() == vorher and not (tmp_path / "settings.local.json.selbstbild-sicherung").exists()
+    neu = tmp_path / "neu.json"
+    with pytest.raises(RuntimeError):
+        einspielen(neu, PY)
+    assert not neu.exists()
+    assert main(["hooks", "einspielen", str(s), "--nur", "waechter"]) == 2
+    assert s.read_bytes() == vorher
+
+
+def test_cli_nur_wiederholbar(tmp_path: Path, import_geprueft) -> None:
+    s = tmp_path / "settings.local.json"
+    assert main(["hooks", "einspielen", str(s), "--nur", "waechter"]) == 0
+    d = json.loads(s.read_text(encoding="utf-8"))
+    assert list(d["hooks"]) == ["PreToolUse"]
+    assert main(["hooks", "einspielen", str(s), "--nur", "waechter", "--nur", "einspeisung"]) == 0
+    d = json.loads(s.read_text(encoding="utf-8"))
+    assert len(_eigene(d, "UserPromptSubmit")) == 1 and len(_eigene(d, "PreToolUse")) == 1
+    assert set(import_geprueft[-1][1]) == {"selbstbild.hooks.waechter", "selbstbild.hooks.einspeisung"}
+
+
+def test_import_pruefen_echter_interpreter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Echter Kindprozess mit diesem Interpreter; PYTHONPATH wird nicht vererbt."""
+    import sys
+
+    monkeypatch.undo()  # echte Vorpruefung statt Protokoll
+    (tmp_path / "nur_im_pythonpath_xyz.py").write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    py = Path(sys.executable)
+    assert installieren._importierbar(py, ["json", "sqlite3"]) is None
+    assert installieren._importierbar(py, ["nur_im_pythonpath_xyz"]) is not None
+    with pytest.raises(RuntimeError, match="hooks pth"):
+        installieren._import_pruefen(py, ["nur_im_pythonpath_xyz"])

@@ -1,13 +1,18 @@
 """Hook-Installer (Stufe 3, T9): schreibt/entfernt die zwei Hooks in einer `settings.local.json`.
 
 Fremde Eintraege bleiben unberuehrt; eine Struktur, die nicht dem Settings-Schema entspricht, wird nie repariert
-(ValueError, nichts geschrieben).
+(ValueError, nichts geschrieben). `nur` waehlt einzelne Hooks (`waechter`, `einspeisung`); nicht gewaehlte eigene
+Eintraege bleiben, wie sie sind. Vor dem Schreiben (auch trocken) muss der Hook-Interpreter die gewaehlten Module
+ohne geerbtes PYTHONPATH importieren koennen, sonst RuntimeError und nichts geschrieben.
 """
 from __future__ import annotations
 
 import difflib
 import json
 import os
+import subprocess
+import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +26,26 @@ _HOOKS: tuple[tuple[str, str, str | None], ...] = (
     ("PreToolUse", "selbstbild.hooks.waechter", SCHREIB_MATCHER),
 )
 _MARKER = tuple(f"-m {modul}" for _, modul, _ in _HOOKS)
+HOOK_NAMEN = ("waechter", "einspeisung")
+_IMPORT_FRIST_S = 20
+
+
+def _importierbar(python: Path, module: Iterable[str]) -> str | None:
+    """None, wenn `python` alle Module importiert (Kindprozess ohne PYTHONPATH, neutrales cwd); sonst ein Grund."""
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PYTHONPATH"}
+    code = "; ".join(f"import {m}" for m in module) or "pass"
+    try:
+        erg = subprocess.run([str(python), "-c", code], env=env, cwd=tempfile.gettempdir(), capture_output=True,
+                             timeout=_IMPORT_FRIST_S)
+    except (OSError, subprocess.SubprocessError) as e:
+        return type(e).__name__
+    return None if erg.returncode == 0 else f"Exit {erg.returncode}"
+
+
+def _import_pruefen(python: Path, module: Iterable[str]) -> None:
+    """RuntimeError, wenn der Hook-Interpreter die Hook-Module nicht importieren kann (fehlende .pth, F7)."""
+    if _importierbar(python, module) is not None:
+        raise RuntimeError(f"Hooks nicht importierbar mit {python} – erst `python -m selbstbild hooks pth <venv> <src>`")
 
 
 def _gewollt(python: Path, modul: str) -> dict[str, Any]:
@@ -153,12 +178,24 @@ def _ergebnis(stand: _Stand, daten: dict[str, Any], name: str) -> tuple[str, byt
     return _diff(stand.text, neu, name), (BOM if stand.bom else b"") + neu.encode("utf-8")
 
 
-def einspielen(settings: Path, python: Path, *, trocken: bool = False) -> str:
+def _auswahl(nur: Iterable[str] | None) -> list[tuple[str, str, str | None]]:
+    if nur is None:
+        return list(_HOOKS)
+    gewaehlt = set(nur)
+    fremd = gewaehlt - set(HOOK_NAMEN)
+    if fremd or not gewaehlt:
+        raise ValueError(f"unbekannte Hook-Auswahl: {', '.join(sorted(fremd)) or '(leer)'} (erlaubt: waechter, einspeisung)")
+    return [h for h in _HOOKS if h[1].rsplit(".", 1)[-1] in gewaehlt]
+
+
+def einspielen(settings: Path, python: Path, *, trocken: bool = False, nur: set[str] | None = None) -> str:
     python = Path(python).resolve()
+    hooks = _auswahl(nur)
+    _import_pruefen(python, [modul for _, modul, _ in hooks])
     stand = _lesen(settings)
     daten = stand.daten
     geaendert = False
-    for ereignis, modul, matcher in _HOOKS:
+    for ereignis, modul, matcher in hooks:
         soll = _gewollt(python, modul)
         liste = _ereignis(daten, ereignis, anlegen=False)
         if liste is not None and _erfuellt(liste, soll, matcher):

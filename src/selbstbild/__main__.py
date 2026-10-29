@@ -269,7 +269,8 @@ def _hooks(args: argparse.Namespace) -> int:
 
     try:
         if args.aktion == "einspielen":
-            diff = einspielen(args.settings, args.python or Path(sys.executable), trocken=args.trocken)
+            diff = einspielen(args.settings, args.python or Path(sys.executable), trocken=args.trocken,
+                              nur=set(args.nur) if args.nur else None)
         elif args.aktion == "entfernen":
             diff = entfernen(args.settings)
         else:
@@ -335,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
     hk_ein.add_argument("settings", type=Path)
     hk_ein.add_argument("--trocken", action="store_true", help="nur Diff, nichts schreiben")
     hk_ein.add_argument("--python", type=Path, default=None, help="Interpreter der Hooks (Standard: dieser)")
+    hk_ein.add_argument("--nur", action="append", choices=["waechter", "einspeisung"], default=None,
+                        help="nur diesen Hook eintragen (wiederholbar; Standard: beide)")
     hk_weg = aktionen.add_parser("entfernen", help="nur die eigenen Hooks austragen")
     hk_weg.add_argument("settings", type=Path)
     hk_pth = aktionen.add_parser("pth", help="selbstbild-src.pth in site-packages des venv anlegen")
