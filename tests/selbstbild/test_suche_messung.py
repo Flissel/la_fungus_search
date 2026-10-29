@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import threading
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -12,7 +14,10 @@ from selbstbild.__main__ import main
 from selbstbild.suche.abfrage import suchen
 from selbstbild.suche.dicht import Embedder
 from selbstbild.suche.index import index_bauen
-from selbstbild.suche.messung import gold_aus_ketten, gold_aus_transkripten, messen
+from selbstbild.speicher import Speicher
+from selbstbild.suche.abfrage import suchen_gemeldet
+from selbstbild.suche.messung import (_datei_ranking, datei_id_von_pfad, gold_aus_ketten,
+                                      gold_aus_transkripten, messen, messen_quellen)
 from selbstbild.typen import Beleg, Kante, Knoten
 
 KETTEN = """# Ketten
@@ -133,8 +138,16 @@ def test_messen_struktur_hilft(git_repo, graph_stand):
 
 
 class _H(BaseHTTPRequestHandler):
+    aufrufe: list[int] = []
+    nur_aufwaermen = False  # Test: Aufwaermen klappt, jede spaetere Anfrage scheitert
+
     def do_POST(self) -> None:  # noqa: N802
         daten = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+        self.aufrufe.append(len(daten["input"]))
+        if self.nur_aufwaermen and daten["input"] != ["aufwaermen"]:
+            self.send_response(500)
+            self.end_headers()
+            return
         roh = json.dumps({"embeddings": [[0.0, 2.0] if "rechnung" in t.lower() else [3.0, 0.0]
                                          for t in daten["input"]]}).encode()
         self.send_response(200)
@@ -160,8 +173,9 @@ def test_messen_dicht_und_fusion(git_repo, graph_stand):
         s.server_close()
         t.join(5)
     assert erg["stichwort"]["recall@10"] == 1.0
-    assert erg["dicht:mod"]["recall@10"] == 1.0 and erg["dicht:mod"]["mrr"] == 1.0
-    assert erg["fusion:mod"]["recall@10"] == 1.0
+    assert erg["dicht:mod"] == {"recall@10": 1.0, "mrr": 1.0, "dicht_leer": 0}
+    assert erg["fusion:mod"]["recall@10"] == 1.0 and erg["fusion:mod"]["dicht_leer"] == 0
+    assert "dicht_leer" not in erg["stichwort"]
 
 
 def test_messen_unbekannte_variante(git_repo, graph_stand):
@@ -175,3 +189,125 @@ def test_messen_unbekannte_variante(git_repo, graph_stand):
 def test_cli_ohne_stand(tmp_path, capsys):
     assert main(["suche-messen", str(tmp_path)]) == 1
     assert capsys.readouterr().out == ""
+
+
+@contextmanager
+def _server(nur_aufwaermen: bool = False) -> Iterator[str]:
+    _H.aufrufe = []
+    _H.nur_aufwaermen = nur_aufwaermen
+    s = HTTPServer(("127.0.0.1", 0), _H)
+    t = threading.Thread(target=s.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield f"http://127.0.0.1:{s.server_address[1]}"
+    finally:
+        s.shutdown()
+        s.server_close()
+        t.join(5)
+        _H.nur_aufwaermen = False
+
+
+def test_vektoren_einmal_je_modell_ueber_quellen(git_repo, graph_stand):
+    stand = _stand(git_repo, graph_stand)
+    quellen = {"a": (("rechnung", frozenset({RECHNUNG})),), "b": (("newsletter", frozenset({VERSAND})),)}
+    with _server() as url:
+        erg = messen_quellen(stand, quellen, varianten=["dicht:mod", "fusion:mod"],
+                             embedder={"mod": Embedder("ollama", url, "mod")})
+        gebaut = [n for n in _H.aufrufe if n == 3]  # alle drei Dateien in einem Batch
+    assert len(gebaut) == 1 and set(erg) == {"a", "b"}
+    assert erg["a"]["fusion:mod"]["recall@10"] == 1.0
+
+
+def test_suchen_gemeldet_leerer_dichter_zweig(git_repo, graph_stand):
+    stand = _stand(git_repo, graph_stand)
+    with _server() as url:
+        e = Embedder("ollama", url, "mod")
+        messen(stand, (("rechnung", frozenset({RECHNUNG})),), varianten=["dicht:mod"], embedder={"mod": e})
+        assert suchen_gemeldet(stand, "rechnung", dicht=True, embedder=e)[1] is False
+    with _server(nur_aufwaermen=True) as url:  # Vektoren stehen, die Anfrage scheitert -> Zweig leer
+        treffer, leer = suchen_gemeldet(stand, "rechnung", dicht=True, embedder=Embedder("ollama", url, "mod"))
+        assert leer is True and treffer  # Fusion lieferte still nur Stichwort/Struktur
+    assert suchen_gemeldet(stand, "rechnung", dicht=False)[1] is False
+
+
+def test_aufwaermen_scheitert_variante_fehlgeschlagen(git_repo, graph_stand):
+    stand = _stand(git_repo, graph_stand)
+    gold = (("rechnung", frozenset({RECHNUNG})),)
+    tot = Embedder("ollama", "http://127.0.0.1:9", "mod")  # Port 9: niemand hoert zu
+    erg = messen(stand, gold, varianten=["stichwort", "dicht:mod", "fusion:mod"], embedder={"mod": tot})
+    assert erg["dicht:mod"] == {"fehlgeschlagen": 1.0} and erg["fusion:mod"] == {"fehlgeschlagen": 1.0}
+    assert erg["stichwort"]["recall@10"] == 1.0
+
+
+def test_datei_ranking_dedupliziert_nach_datei():
+    ids = [FREIGEBEN, VERSAND, "symbol:repo:app/versand.py#anderes", "env:X", CRON, "doku_seite:repo:app/cron.py"]
+    assert _datei_ranking(ids) == [VERSAND, CRON]
+
+
+def test_datei_id_windows_pfad_und_gross_klein():
+    repos = ("vibemind", "vibemind/vibemind-os")
+    assert datei_id_von_pfad("Vibemind-OS\\spaces\\x.py", "vibemind", repos) == "datei:vibemind/vibemind-os:spaces/x.py"
+    assert datei_id_von_pfad("docs\\a.md", "vibemind", repos) == "datei:vibemind:docs/a.md"
+    assert datei_id_von_pfad("vibemind-os-extra/a.py", "vibemind", repos) == "datei:vibemind:vibemind-os-extra/a.py"
+
+
+def test_transkripte_filtern_keine_prompts(tmp_path):
+    wurzel = tmp_path / "r"
+    wurzel.mkdir()
+    ordner = tmp_path / "tr"
+    ordner.mkdir()
+    echt = "Echte Aufgabe mit genug Text hier"
+    zeilen = [
+        _prompt(echt), _edit(str(wurzel / "a.py")),
+        _prompt("This session is being continued from a previous conversation that ran out"),
+        _prompt("<command-name>/clear</command-name> und mehr Text dahinter"),
+        _prompt("<local-command-stdout>Ausgabe lang genug fuer die Grenze</local-command-stdout>"),
+        _prompt("[Request interrupted by user for tool use] mit Text"),
+        _zeile("user", isSidechain=True, message={"role": "user", "content": "Subagent-Aufgabe mit viel Text"}),
+        _zeile("user", isCompactSummary=True, message={"role": "user", "content": "Zusammenfassung mit viel Text"}),
+        _edit(str(wurzel / "b.py")),
+    ]
+    (ordner / "s.jsonl").write_text("\n".join(zeilen), encoding="utf-8")
+    (ordner / "agent-abc.jsonl").write_text("\n".join([_prompt("Agenten-Prompt lang genug fuer Grenze"),
+                                                      _edit(str(wurzel / "c.py"))]), encoding="utf-8")
+    gold = gold_aus_transkripten(ordner, wurzel, n=10, wurzel_repo="r")
+    assert gold == ((echt, frozenset({"datei:r:a.py", "datei:r:b.py"})),)
+
+
+def _cli_stand(git_repo, graph_stand, monkeypatch, name: str | None = "repo") -> Path:
+    stand = _stand(git_repo, graph_stand)
+    if name is not None:
+        with Speicher(stand / "graph.sqlite") as sp:
+            sp.meta_setzen("name", name)
+    monkeypatch.setattr("selbstbild.__main__.stand_finden", lambda w: stand / "graph.sqlite")
+    return stand
+
+
+def test_cli_fremdes_repo_im_index(git_repo, graph_stand, monkeypatch, capsys):
+    _cli_stand(git_repo, graph_stand, monkeypatch, name="anders")
+    assert main(["suche-messen", str(git_repo.wurzel)]) == 2
+    aus = capsys.readouterr()
+    assert aus.out == "" and "'repo'" in aus.err and "'anders'" in aus.err
+
+
+def test_cli_ohne_namen_in_meta(git_repo, graph_stand, monkeypatch, capsys):
+    _cli_stand(git_repo, graph_stand, monkeypatch, name=None)
+    assert main(["suche-messen", str(git_repo.wurzel)]) == 2
+    assert "name" in capsys.readouterr().err
+
+
+def test_cli_keine_prompt_texte_in_ausgaben(git_repo, graph_stand, monkeypatch, capsys, tmp_path):
+    _cli_stand(git_repo, graph_stand, monkeypatch)
+    marker = "MARKER-7f3a9c-newsletter-freigeben"
+    ordner = tmp_path / "tr"
+    ordner.mkdir()
+    (ordner / "s.jsonl").write_text("\n".join([
+        _prompt(f"{marker} bitte erledigen"), _edit(str(git_repo.wurzel / "app" / "versand.py"))]),
+        encoding="utf-8")
+    assert main(["suche-messen", str(git_repo.wurzel), "--transkripte", str(ordner)]) == 0
+    aus = capsys.readouterr()
+    assert marker not in aus.out and marker not in aus.err
+    daten = json.loads(aus.out)
+    assert daten["paare"] == {"transkripte": 1}  # KETTEN fehlt -> Warnung auf stderr, kein Paar
+    assert "ketten" in aus.err
+    assert set(daten["ergebnis"]["transkripte"]) == {"stichwort", "struktur"}

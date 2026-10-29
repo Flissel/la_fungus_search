@@ -124,9 +124,18 @@ def suchen(stand: Path, anfrage: str, top_k: int = 10, *, dicht: bool = False,
     Der dichte Zweig braucht Vektoren aus `dicht.vektoren_bauen` zum Modell des Embedders; fehlen sie oder
     antwortet der Embedder nicht, bleibt er leer und die Fusion ist unveraendert.
     `struktur=False` laesst die Struktur-Erweiterung weg (reine Stichwortsuche, fuer die Messung)."""
+    return suchen_gemeldet(stand, anfrage, top_k, dicht=dicht, embedder=embedder, struktur=struktur)[0]
+
+
+def suchen_gemeldet(stand: Path, anfrage: str, top_k: int = 10, *, dicht: bool = False,
+                    embedder: "Embedder | None" = None,
+                    struktur: bool = True) -> tuple[tuple[Treffer, ...], bool]:
+    """Wie `suchen`, meldet zusaetzlich `dicht_leer`: True, wenn der dichte Zweig angefordert war, aber leer blieb
+    (Embedder tot, keine Vektoren zum Modell). Nur fuer die Messung: dort darf eine Fusion nicht still zur
+    Struktur-Suche werden."""
     tokens = anfrage_tokens(anfrage)
     if not tokens:
-        return ()
+        return (), False
     stand = Path(stand)
     with closing(_offnen(stand)) as c:
         stichwort = _stichwort(c, tokens)
@@ -151,7 +160,7 @@ def suchen(stand: Path, anfrage: str, top_k: int = 10, *, dicht: bool = False,
         treffer.append(Treffer(i, art, pfad, zeile, wert, tuple(sorted(zweige)),
                                float(lebendig) if lebendig is not None else 0.0, tot, bereich, warnung))
     treffer.sort(key=lambda t: (-t.wert, t.id))
-    return tuple(treffer[:top_k])
+    return tuple(treffer[:top_k]), bool(dicht and not dichte)
 
 
 def nachbarn(stand: Path, id: str, richtung: Literal["ein", "aus", "beide"] = "beide",

@@ -150,7 +150,8 @@ def _vergleichen(args: argparse.Namespace) -> int:
 
 def _suche_messen(args: argparse.Namespace) -> int:
     from selbstbild.suche.dicht import Embedder
-    from selbstbild.suche.messung import gold_aus_ketten, gold_aus_transkripten, messen, repos_im_index
+    from selbstbild.suche.messung import (gold_aus_ketten, gold_aus_transkripten, messen_quellen, repos_im_index,
+                                          wurzel_name)
 
     if len(args.ollama) != len(args.modell):
         return _fehler("--ollama und --modell muessen paarweise angegeben werden", 2)
@@ -161,21 +162,38 @@ def _suche_messen(args: argparse.Namespace) -> int:
         repos = repos_im_index(pfad.parent)
     except FileNotFoundError as e:
         return _fehler(str(e), 1)
-    wurzel_repo = min(repos, key=lambda r: (len(r), r)) if repos else args.wurzel.name
+    wurzel_repo = wurzel_name(pfad.parent)
+    if wurzel_repo is None:
+        return _fehler("Wurzel-Repo-Name fehlt in graph.sqlite (meta `name`): neu vermessen", 2)
+    fremd = [r for r in repos if r != wurzel_repo and not r.startswith(wurzel_repo + "/")]
+    if fremd:
+        return _fehler(f"Index und Graph passen nicht zusammen: Repo {fremd[0]!r} liegt nicht unter"
+                       f" Wurzel {wurzel_repo!r} (Index neu bauen)", 2)
     gold: dict[str, tuple[tuple[str, frozenset[str]], ...]] = {}
     ketten = args.wurzel / "docs" / "spaces" / "KETTEN.md"
     if ketten.is_file():
         gold["ketten"] = gold_aus_ketten(ketten.read_text(encoding="utf-8"), wurzel_repo, repos=repos)
+    else:
+        sys.stderr.write(f"Warnung: Gold-Quelle ketten fehlt ({ketten})\n")
     if args.transkripte is not None:
         gold["transkripte"] = gold_aus_transkripten(args.transkripte, args.wurzel, args.n,
                                                     wurzel_repo=wurzel_repo, repos=repos)
+    else:
+        sys.stderr.write("Warnung: Gold-Quelle transkripte nicht angegeben (--transkripte)\n")
+    for q in [q for q, g in gold.items() if not g]:
+        sys.stderr.write(f"Warnung: Gold-Quelle {q} ist leer und wird nicht gemessen\n")
+        del gold[q]
     embedder = {m: Embedder("ollama", u, m) for u, m in zip(args.ollama, args.modell)}
     varianten = ["stichwort", "struktur"] + [f"{a}:{m}" for m in embedder for a in ("dicht", "fusion")]
     try:
-        ergebnis = {q: messen(pfad.parent, g, varianten=varianten, embedder=embedder) for q, g in gold.items()}
+        ergebnis = messen_quellen(pfad.parent, gold, varianten=varianten, embedder=embedder)
     except RuntimeError as e:  # Embedder-Fehler tragen nur Typ und Status
         return _fehler(str(e), 2)
     _ausgeben({"paare": {q: len(g) for q, g in gold.items()}, "ergebnis": ergebnis})  # nie Prompt-Texte
+    kaputt = sorted({v for r in ergebnis.values() for v, z in r.items()
+                     if v.startswith("dicht:") and "fehlgeschlagen" in z})
+    if kaputt:
+        return _fehler(f"Embedder nicht erreichbar, Variante(n) fehlgeschlagen: {', '.join(kaputt)}", 2)
     return 0
 
 
