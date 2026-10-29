@@ -54,10 +54,13 @@ def _unter(ziel: Path, w: Path) -> bool:
 
 
 def wurzel_waehlen(wurzel: str | None, pfad: str | None) -> Path | None:
-    """Ausdruecklich genannte Wurzel; sonst die erste konfigurierte, die `pfad` enthaelt; sonst die erste."""
-    if wurzel:
-        return Path(wurzel)
+    """Ausdruecklich genannte Wurzel; sonst die erste konfigurierte, die `pfad` enthaelt; sonst die erste.
+    Ist `SELBSTBILD_WURZELN` gesetzt, muss eine ausdrueckliche Wurzel darunter liegen (sonst `_Meldung`)."""
     alle = wurzeln()
+    if wurzel:
+        if alle and not any(_unter(Path(wurzel), w) for w in alle):
+            raise _Meldung("wurzel liegt nicht unter SELBSTBILD_WURZELN")
+        return Path(wurzel)
     if pfad:
         ziel = Path(pfad)
         if ziel.is_absolute():
@@ -284,49 +287,50 @@ def _kein_wurzel() -> Antwort:
     return {"fehler": "keine Wurzel: SELBSTBILD_WURZELN setzen oder wurzel angeben"}
 
 
+def _mit_wurzel(wurzel: str | None, pfad: str | None, fn: Callable[[Path], Antwort]) -> Antwort:
+    try:
+        w = wurzel_waehlen(wurzel, pfad)
+    except _Meldung as m:
+        return {"fehler": str(m)}
+    return fn(w) if w else _kein_wurzel()
+
+
 # --- MCP-Werkzeuge (eine Liste: Registrierung und WERKZEUGE kommen daraus) ---------------------------------
 
 def selbstbild_suchen(anfrage: str, top_k: int = 10, wurzel: str | None = None) -> Antwort:
     """Sucht Dateien, Symbole und Doku im Selbstbild-Index (Stichwort + Struktur)."""
-    w = wurzel_waehlen(wurzel, None)
-    return w_suchen(w, anfrage, top_k) if w else _kein_wurzel()
+    return _mit_wurzel(wurzel, None, lambda w: w_suchen(w, anfrage, top_k))
 
 
 def selbstbild_nachbarn(id: str, richtung: str = "beide", wurzel: str | None = None) -> Antwort:
     """Kanten um einen Knoten (ein, aus, beide) mit Sicherheit."""
-    w = wurzel_waehlen(wurzel, None)
-    return w_nachbarn(w, id, richtung) if w else _kein_wurzel()  # type: ignore[arg-type]
+    return _mit_wurzel(wurzel, None, lambda w: w_nachbarn(w, id, richtung))  # type: ignore[arg-type]
 
 
 def selbstbild_bereich(id_oder_pfad: str, wurzel: str | None = None) -> Antwort:
     """Bereich (Community) einer Datei; Pfad relativ zur Wurzel oder absolut."""
-    w = wurzel_waehlen(wurzel, id_oder_pfad)
-    return w_bereich(w, id_oder_pfad) if w else _kein_wurzel()
+    return _mit_wurzel(wurzel, id_oder_pfad, lambda w: w_bereich(w, id_oder_pfad))
 
 
 def selbstbild_regeln(pfad: str, wurzel: str | None = None) -> Antwort:
     """Strukturregeln (committet), die fuer den Pfad gelten."""
-    w = wurzel_waehlen(wurzel, pfad)
-    return w_regeln(w, pfad) if w else _kein_wurzel()
+    return _mit_wurzel(wurzel, pfad, lambda w: w_regeln(w, pfad))
 
 
 def selbstbild_lebendigkeit(pfad: str, wurzel: str | None = None) -> Antwort:
     """Lebendigkeit (0..1) einer Datei."""
-    w = wurzel_waehlen(wurzel, pfad)
-    return w_lebendigkeit(w, pfad) if w else _kein_wurzel()
+    return _mit_wurzel(wurzel, pfad, lambda w: w_lebendigkeit(w, pfad))
 
 
 def selbstbild_tot(stufe: str = "sicher_tot", praefix: str = "", limit: int = 100,
                    wurzel: str | None = None) -> Antwort:
     """Tot-Kandidaten einer Stufe, optional unter einem Pfadpraefix."""
-    w = wurzel_waehlen(wurzel, praefix)
-    return w_tot(w, stufe, praefix, limit) if w else _kein_wurzel()
+    return _mit_wurzel(wurzel, praefix, lambda w: w_tot(w, stufe, praefix, limit))
 
 
 def selbstbild_doku(id: str, wurzel: str | None = None) -> Antwort:
     """Doku-Seiten, die den Namen der id erwaehnen."""
-    w = wurzel_waehlen(wurzel, None)
-    return w_doku(w, id) if w else _kein_wurzel()
+    return _mit_wurzel(wurzel, None, lambda w: w_doku(w, id))
 
 
 _FUNKTIONEN: tuple[Callable[..., Antwort], ...] = (

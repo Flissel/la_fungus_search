@@ -264,3 +264,23 @@ def test_isoliert_spiegel_gleich_mcp():
     from selbstbild.analyse.bereiche import ISOLIERT
 
     assert mcp_server.ISOLIERT == ISOLIERT
+
+
+def test_wurzel_ausserhalb_erlaubter_wurzeln(tmp_path, monkeypatch):
+    """Minor 13: mit SELBSTBILD_WURZELN darf eine ausdrueckliche wurzel nur darunter liegen."""
+    a, fremd = tmp_path / "a", tmp_path / "fremd"
+    a.mkdir(), fremd.mkdir(), (a / "sub").mkdir()
+    monkeypatch.setenv("SELBSTBILD_WURZELN", str(a))
+    erg = mcp_server.selbstbild_suchen("x", wurzel=str(fremd))
+    assert "fehler" in erg and "SELBSTBILD_WURZELN" in erg["fehler"]
+    for f in (lambda: mcp_server.selbstbild_regeln("x.py", wurzel=str(fremd)),
+              lambda: mcp_server.selbstbild_tot(wurzel=str(fremd)),
+              lambda: mcp_server.selbstbild_nachbarn("i", wurzel=str(fremd)),
+              lambda: mcp_server.selbstbild_bereich("x", wurzel=str(fremd)),
+              lambda: mcp_server.selbstbild_lebendigkeit("x", wurzel=str(fremd)),
+              lambda: mcp_server.selbstbild_doku("x", wurzel=str(fremd))):
+        assert "SELBSTBILD_WURZELN" in f()["fehler"]
+    monkeypatch.setattr(mcp_server, "stand_finden", lambda w: None)
+    assert "erst vermessen" in mcp_server.selbstbild_suchen("x", wurzel=str(a / "sub"))["fehler"]  # darunter: erlaubt
+    monkeypatch.delenv("SELBSTBILD_WURZELN")
+    assert "erst vermessen" in mcp_server.selbstbild_suchen("x", wurzel=str(fremd))["fehler"]  # ohne Liste: frei
