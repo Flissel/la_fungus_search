@@ -199,14 +199,29 @@ def _zeitstempel(text: str | None) -> float | None:
         return None
 
 
-def anstoss_noetig(konfig: Konfig, stand: Stand | None, jetzt: datetime) -> bool:
-    """Marker da, oder letzter Tick aelter als `tick_minuten`, oder noch nie gelaufen."""
+def koepfe_weichen_ab(stand: Stand, koepfe: Mapping[str, str]) -> bool:
+    """D6: `koepfe` (`""` = aeusserer HEAD, sonst repo-relativer Submodul-Pfad -> HEAD, wie `messbaum.Messbaum.commits`)
+    weichen von dem ab, was der Stand zuletzt verarbeitet hat. Ein Submodul, das der Stand nicht kennt, zaehlt."""
+    aussen = koepfe.get("")
+    if stand.letzter_commit_aussen is None:  # nie ein Commit verarbeitet (z. B. kein_seed): nur Intervall und Marker
+        return False
+    if aussen and aussen != stand.letzter_commit_aussen:
+        return True
+    return any(k and stand.submodul_commits.get(rel) != k for rel, k in koepfe.items() if rel)
+
+
+def anstoss_noetig(konfig: Konfig, stand: Stand | None, jetzt: datetime, *,
+                   koepfe: Mapping[str, str] | None = None) -> bool:
+    """Marker da, oder letzter Tick aelter als `tick_minuten`, oder noch nie gelaufen -- oder (D6, ohne Git-Hook)
+    `koepfe` weichen vom Stand ab. `koepfe=None` (Git nicht lesbar) verhaelt sich wie vorher."""
     try:
         if konfig.marker.exists():
             return True
     except OSError:
         pass
     if stand is None:
+        return True
+    if koepfe is not None and koepfe_weichen_ab(stand, koepfe):
         return True
     letzter = _zeitstempel(stand.letzter_tick)
     if letzter is None:
@@ -224,6 +239,15 @@ def marker_loeschen(konfig: Konfig) -> bool:
 
 
 # ---------- Sperre ----------
+
+def sperre_frisch(ordner: Path) -> bool:
+    """Nur lesend: haelt gerade ein (anderer) Lauf `tick.lock`, d. h. die Datei ist juenger als die Veraltungsgrenze?
+    Nie anlegen, nie uebernehmen, nie entfernen (Trockenlauf)."""
+    try:
+        return time.time() - (Path(ordner) / SPERRE_DATEI).stat().st_mtime <= SPERRE_VERALTET_S
+    except OSError:
+        return False
+
 
 def _veraltet_uebernehmen(pfad: Path) -> bool:
     """Veraltete Sperre per Umbenennen wegnehmen; True = neu versuchen. Nur einer gewinnt das Umbenennen; wer dabei

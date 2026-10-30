@@ -62,6 +62,8 @@ def _parser() -> argparse.ArgumentParser:
     t.add_argument("--erlaube-vorgabe", action="store_true",
                    help="tick auch auf der universellen Vorgabe ohne Torwaechter erlauben")
     t.add_argument("--ohne-llm", action="store_true", help="Signale nur in die Pruefliste, kein Judge")
+    t.add_argument("--trocken", action="store_true",
+                   help="nur messen und zaehlen, nichts schreiben; TickErgebnis als JSON auf stdout")
     unter.add_parser("seed", parents=[gemeinsam], help="Graph-Seed aus KETTEN.md (committet)")
     m = unter.add_parser("messen", parents=[gemeinsam], help="Beleg-Drift und Seed-Deckung messen (nur lesend)")
     m.add_argument("--json", action="store_true")
@@ -141,7 +143,17 @@ def log_rotieren(pfad: Path, *, max_bytes: int = LOG_MAX_BYTES) -> str | None:
 
 # ---------- Befehle ----------
 
+def _tick_trocken(konfig: Konfig, w: Werkzeuge) -> int:
+    """Trockenlauf: schreibt nichts (auch kein Log, keine Rotation); Meldungen auf stderr, stdout nur das JSON."""
+    extra = {k: w[k] for k in ("laufzeit", "budget", "manifest_bauer") if k in w}
+    erg = tk.tick(konfig, jetzt=_jetzt(w), melden=lambda zeile: print(zeile, file=sys.stderr), trocken=True, **extra)
+    print(json.dumps(dataclasses.asdict(erg), ensure_ascii=False, indent=1, sort_keys=True))
+    return 0
+
+
 def _tick(konfig: Konfig, args: argparse.Namespace, w: Werkzeuge) -> int:
+    if args.trocken:
+        return _tick_trocken(konfig, w)
     rotiert = log_rotieren(konfig.repo / LOG_DATEI)  # Minor 13: vor dem Lauf, eine Generation `.1`
     if rotiert:
         print(f"Log: {LOG_DATEI} {rotiert} (vorige Fassung in {LOG_DATEI}.1)")
@@ -351,7 +363,7 @@ def main(argv: list[str] | None = None, *, werkzeuge: Werkzeuge | None = None) -
         konfig, quelle = _konfig_aufloesen(args)
         print(f"Konfig: {quelle}; Repo {konfig.repo}", file=sys.stderr)
         if (args.befehl == "tick" and konfig_modul.ist_vorgabe(quelle) and not konfig.torwaechter
-                and not args.erlaube_vorgabe):
+                and not args.erlaube_vorgabe and not args.trocken):  # der Trockenlauf schreibt nichts
             raise KonfigFehler("tick auf der universellen Vorgabe ohne Torwaechter ist gesperrt "
                                "(falsche Wurzel? sonst mit --erlaube-vorgabe)")
     except (KonfigFehler, OSError, yaml.YAMLError, KeyError, TypeError, ValueError) as fehler:

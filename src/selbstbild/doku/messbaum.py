@@ -103,8 +103,8 @@ def _git(wo: Path, *args: str, hooks: Path | None = None,
         raise MessbaumFehler(f"git:{type(fehler).__name__}") from fehler
 
 
-def _git_text(wo: Path, *args: str, hooks: Path | None = None) -> str | None:
-    lauf = _git(wo, *args, hooks=hooks)
+def _git_text(wo: Path, *args: str, hooks: Path | None = None, timeout: int = GIT_TIMEOUT_S) -> str | None:
+    lauf = _git(wo, *args, hooks=hooks, timeout=timeout)
     return lauf.stdout.decode("utf-8", errors="replace").strip() if lauf.returncode == 0 else None
 
 
@@ -119,36 +119,37 @@ def _gleich(a: Path, b: Path) -> bool:
     return str(Path(a).resolve()).casefold() == str(Path(b).resolve()).casefold()
 
 
-def _initialisiert(pfad: Path, hooks: Path | None = None) -> str | None:
+def _initialisiert(pfad: Path, hooks: Path | None = None, timeout: int = GIT_TIMEOUT_S) -> str | None:
     """HEAD eines initialisierten Checkouts an genau diesem Pfad, sonst None."""
     if not (pfad / ".git").exists():
         return None
-    oben = _git_text(pfad, "rev-parse", "--show-toplevel", hooks=hooks)
+    oben = _git_text(pfad, "rev-parse", "--show-toplevel", hooks=hooks, timeout=timeout)
     if oben is None or not _gleich(Path(oben), pfad):
         return None
-    return _git_text(pfad, "rev-parse", "--verify", "-q", "HEAD^{commit}", hooks=hooks) or None
+    return _git_text(pfad, "rev-parse", "--verify", "-q", "HEAD^{commit}", hooks=hooks, timeout=timeout) or None
 
 
-def _gitlinks(repo: Path, hooks: Path | None = None) -> list[str]:
+def _gitlinks(repo: Path, hooks: Path | None = None, timeout: int = GIT_TIMEOUT_S) -> list[str]:
     """Gitlinks des committeten HEAD-Baums (nicht des Index: ein nur gestagtes Submodul gehoert nicht in den
     Messbaum)."""
-    lauf = _git(repo, "ls-tree", "-r", "-z", "HEAD", hooks=hooks)
+    lauf = _git(repo, "ls-tree", "-r", "-z", "HEAD", hooks=hooks, timeout=timeout)
     if lauf.returncode != 0:
         raise MessbaumFehler("git:ls-tree")
     return sorted(e.split("\t", 1)[1] for e in lauf.stdout.decode("utf-8", errors="replace").split("\0")
                   if e.startswith(GITLINK) and "\t" in e)
 
 
-def submodule_finden(repo: Path, hooks: Path | None = None) -> tuple[dict[str, tuple[Path, str]], tuple[str, ...]]:
+def submodule_finden(repo: Path, hooks: Path | None = None, timeout: int = GIT_TIMEOUT_S
+                     ) -> tuple[dict[str, tuple[Path, str]], tuple[str, ...]]:
     """(initialisiert: repo-relativer Pfad -> (echter Checkout, HEAD), nicht initialisiert), rekursiv. Nur lesend
     (`ls-tree`, `rev-parse`: keine Hooks, keine Filter)."""
     da: dict[str, tuple[Path, str]] = {}
     leer: list[str] = []
 
     def gehen(checkout: Path, praefix: str) -> None:
-        for p in _gitlinks(checkout, hooks):
+        for p in _gitlinks(checkout, hooks, timeout):
             rel = praefix + p
-            kopf = _initialisiert(checkout / p, hooks)
+            kopf = _initialisiert(checkout / p, hooks, timeout)
             if kopf is None:
                 leer.append(rel)
                 continue
@@ -159,9 +160,9 @@ def submodule_finden(repo: Path, hooks: Path | None = None) -> tuple[dict[str, t
     return da, tuple(sorted(leer))
 
 
-def submodul_koepfe(repo: Path) -> dict[str, str]:
+def submodul_koepfe(repo: Path, timeout: int = GIT_TIMEOUT_S) -> dict[str, str]:
     """HEAD je initialisiertem Submodul (repo-relativ, rekursiv) -- fuer die Aenderungsermittlung des Ticks."""
-    return {rel: k for rel, (_, k) in submodule_finden(repo)[0].items()}
+    return {rel: k for rel, (_, k) in submodule_finden(repo, timeout=timeout)[0].items()}
 
 
 # ---------- Worktrees ----------
@@ -388,3 +389,34 @@ def messbaum_status(konfig: Konfig) -> dict[str, object]:
     return {"pfad": str(wurzel), "vorhanden": (wurzel / ".git").is_file(), "worktrees": len(commits),
             "commit_aussen": commits.get(""), "nicht_messbar": _liste(daten, "nicht_messbar"),
             "entfernen_offen": _liste(daten, "entfernen_offen")}
+
+
+def vorhanden_lesend(konfig: Konfig, timeout: int = 60) -> Messbaum | None:
+    """Der vorhandene Messbaum, rein lesend (Trockenlauf, Ruling T3-a); `None`, wenn er nicht genau dem aktuellen
+    aeusseren HEAD und den Submodul-HEADs entspricht. Kein `worktree add`, kein Checkout, kein Schreiben: er gehoert
+    dem laufenden alten Loop. Geprueft wird der aufgezeichnete Zustand (`messbaum-<hash>.json`) und, dass jeder
+    Worktree wirklich auf seinem Commit steht (`HEAD` im Verwaltungsordner)."""
+    repo = Path(konfig.repo)
+    wurzel = messbaum_pfad(konfig)
+    try:
+        _wurzel_pruefen(wurzel, repo)
+        daten = _zustand_lesen(konfig)
+        commits = daten.get("commits")
+        if not isinstance(commits, dict) or not commits:
+            return None
+        aufgezeichnet = {str(k): str(v) for k, v in commits.items()}
+        kopf = _initialisiert(repo, timeout=timeout)
+        if kopf is None:
+            return None
+        jetzt = {"": kopf, **submodul_koepfe(repo, timeout)}
+        if aufgezeichnet != jetzt:
+            return None
+        for rel, commit in jetzt.items():
+            gitdir = _gitdir(wurzel / rel) if rel else _gitdir(wurzel)
+            if gitdir is None or (gitdir / "HEAD").read_bytes().decode("utf-8").strip() != commit:
+                return None
+    except (MessbaumFehler, OSError, UnicodeDecodeError):
+        return None
+    mess = dataclasses.replace(konfig, repo=wurzel,
+                               waechter_zustandsdatei=str(repo / konfig.waechter_zustandsdatei))
+    return Messbaum(mess, wurzel, jetzt, tuple(_liste(daten, "nicht_messbar")))

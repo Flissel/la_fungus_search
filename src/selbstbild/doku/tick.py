@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import os
 import subprocess
 import tempfile
 import time
@@ -91,7 +92,8 @@ from .schreibvorgang import (
 from .seed_befehl import RenderBericht, SchlankBericht, SeedErgebnis, graph_schlank, neu_rendern, seed, seed_deckung
 from .stand import (
     SPERRE_DATEI, Stand, anstoss_noetig, fremd_commits_laden, fremd_commits_merken, lokaler_ordner, marker_loeschen,
-    schreibvermerk_pfad, sperre, sperre_zustand, stand_laden, stand_pfad, stand_schreiben, temp_aufraeumen,
+    schreibvermerk_pfad, sperre, sperre_frisch, sperre_zustand, stand_laden, stand_pfad, stand_schreiben,
+    temp_aufraeumen,
     urteil_holen, urteil_merken, urteile_kuerzen, vollgraph_kennung, vollgraph_laden, vollgraph_pfad,
     vollgraph_schreiben, vollgraph_verwerfen,
 )
@@ -156,6 +158,7 @@ class TickErgebnis:
     pruefliste: int
     commit: str | None
     uebersprungen: str | None
+    graph_digest: str = ""  # nur Trockenlauf: `digest_stabil` des schlanken Graphen (Task 11 vergleicht mit graph.json)
 
 
 # ---------- Aenderungen ----------
@@ -198,6 +201,23 @@ def _koepfe(repo: Path) -> dict[str, str]:
         return messbaum.submodul_koepfe(repo)
     except messbaum.MessbaumFehler:
         return {}
+
+
+ANSTOSS_GIT_TIMEOUT_S = 20
+
+
+def anstoss_koepfe(repo: Path) -> dict[str, str] | None:
+    """D6: aeusserer HEAD (`""`) und HEAD je initialisiertem Submodul (committeter Gitlink-Baum, dieselbe Quelle und
+    dieselben Namen wie der Messbaum und `Stand.submodul_commits`). Ein `git rev-parse` plus `ls-tree`/`rev-parse` je
+    Submodul, jeder Aufruf mit Timeout. Scheitert Git -> `None`: dann entscheiden Marker und Intervall allein."""
+    try:
+        aussen = messbaum._git_text(Path(repo), "rev-parse", "--verify", "-q", "HEAD^{commit}",
+                                    timeout=ANSTOSS_GIT_TIMEOUT_S)
+        if not aussen:
+            return None
+        return {"": aussen, **messbaum.submodul_koepfe(Path(repo), ANSTOSS_GIT_TIMEOUT_S)}
+    except (messbaum.MessbaumFehler, OSError, ValueError):
+        return None
 
 
 def _unter(datei: str, wurzeln: Sequence[str]) -> bool:
@@ -312,13 +332,14 @@ class _Lauf:
         self.doku_fremd = False  # Task 17: fremde Aenderungen an der Doku gesehen -> keine Urteile, keine Notizen
         self.render_noetig = False  # Task 17 M2: ein Revert hat Bloecke geaendert -> im selben Lauf neu rendern
         self.ausstehend: dict[str, str] | None = None  # Ruling 55a: None = unveraendert aus dem alten Stand
+        self.trocken = False  # Trockenlauf: misst wie ein Tick, schreibt nichts (`trocken_laufen`)
 
     # ----- Ergebnis und Stand -----
 
     def ergebnis(self, *, commit: str | None = None, uebersprungen: str | None = None,
-                 pruefliste: int = 0) -> TickErgebnis:
+                 pruefliste: int = 0, graph_digest: str = "") -> TickErgebnis:
         return TickErgebnis(self.lauf, list(self.spaces), self.signale, self.llm_aufrufe, self.umgeschrieben,
-                            pruefliste, commit, uebersprungen)
+                            pruefliste, commit, uebersprungen, graph_digest)
 
     def stand_speichern(self, *, fortschreiben: bool, render_hashes: Mapping[str, str] | None = None,
                         hand_edit: Mapping[str, str] | None = None,
@@ -678,7 +699,8 @@ class _Lauf:
             marker = konfig.marker.exists()
         except OSError:
             marker = False
-        if not self.erzwingen and not anstoss_noetig(konfig, self.stand_alt, self.jetzt):
+        if not self.erzwingen and not anstoss_noetig(konfig, self.stand_alt, self.jetzt,
+                                                     koepfe=anstoss_koepfe(self.repo)):
             self.melden(f"Anstoß: kein Marker, letzter Lauf jünger als {konfig.tick_minuten} min – übersprungen "
                         "(kein_anstoss)")
             return self.ergebnis(uebersprungen="kein_anstoss")
@@ -788,6 +810,46 @@ class _Lauf:
         else:
             uebrig = [s for s in offene if isinstance(s.get("space"), str) and s["space"] not in spaces]
         return self._voll(basis, basis_roh, schlank(repo_graph), vorher, uebrig)
+
+    def trocken_laufen(self) -> TickErgebnis:
+        """Trockenlauf (Ruling T3-a/T3-b): misst alle Spaces im VORHANDENEN Messbaum und zaehlt die Signale, schreibt
+        aber nichts. Weder Repo, Stand, Pruefliste, Urteils-Cache, Vollgraph, Marker, Sperre, Notizen noch Budget; der
+        Messbaum wird nur gelesen (`messbaum.vorhanden_lesend`, nie `bereitstellen`), der Judge nie importiert.
+        Der Anstoss wird nicht gefragt."""
+        konfig = self.konfig
+        self.trocken = self.ohne_llm = True
+        self.stand_alt = stand_laden(konfig)
+        self.lauf_nr = (self.stand_alt.lauf_nr if self.stand_alt else 0) + 1
+        self.lauf = f"{self.jetzt:%Y-%m-%dT%H:%M:%S}#trocken"
+        if sperre_frisch(lokaler_ordner(konfig)):
+            self.melden("Trockenlauf: tick.lock ist frisch – der alte Loop läuft (alter_loop_laeuft)")
+            return self.ergebnis(uebersprungen="alter_loop_laeuft")
+        if not (self.repo / GRAPH_JSON).is_file():
+            self.melden("Trockenlauf: kein docs/graph/graph.json (kein_seed)")
+            return self.ergebnis(uebersprungen="kein_seed")
+        mb = messbaum.vorhanden_lesend(konfig)
+        if mb is None:
+            self.melden("Trockenlauf: kein Messbaum auf dem aktuellen Stand (messbaum_veraltet) – nichts angefasst")
+            return self.ergebnis(uebersprungen="messbaum_veraltet")
+        self.mess_konfig, self.mess_repo, self.nicht_messbar = mb.konfig, mb.wurzel, mb.nicht_messbar
+        self.kopf_aussen = mb.commits[""]
+        self.kopf_sub = submodul_kopf(self.repo) or ""
+        self.sub_koepfe = {rel: k for rel, k in mb.commits.items() if rel}
+        self.spaces = sorted(konfig.spaces)
+        basis_roh = (self.repo / GRAPH_JSON).read_bytes()
+        repo_graph = Graph.aus_text(basis_roh.decode("utf-8"))
+        voll = vollgraph_laden(konfig, self.stand_alt.vollgraph_kennung if self.stand_alt else None)
+        basis = repo_graph if voll is None else mit_schlank(voll.graph, repo_graph)
+        for doc in doku_dateien(konfig):
+            try:
+                self.doku_roh[doc] = (self.repo / doc).read_bytes()
+            except OSError:
+                pass
+        try:
+            return self._voll(basis, basis_roh, schlank(repo_graph), set(), [])
+        except umschreiben.GitFehler as fehler:
+            befehl = getattr(fehler, "befehl", None) or "git"
+            return self.ergebnis(uebersprungen=f"git_fehler:{befehl}")
 
     def _halbschreibung(self) -> None:
         h = halbschreibung_aufraeumen(self.repo, schreibvermerk_pfad(self.konfig), self.melden)
@@ -931,6 +993,8 @@ class _Lauf:
 
         # 7. Rendern
         render_hashes, hand_edit = self._rendern(graph, texte)
+        if self.trocken:  # nichts schreiben: weder Vollgraph noch Pruefliste noch Stand noch Commit
+            return self.ergebnis(graph_digest=schlank(graph).digest_stabil())
         # Ruling 49: voller Graph lokal; seine Hops/Aussagen ueberlagert beim naechsten Lauf der Repo-Graph
         kennung = vollgraph_kennung(self.kopf_aussen, self.kopf_sub, self.lauf)
         try:
@@ -1188,13 +1252,25 @@ def tick(konfig: Konfig, *, jetzt: datetime, erzwingen: bool = False, laufzeit: 
          ohne_llm: bool = False, budget: Any = None,
          drift: Callable[[Path], set[umschreiben.DriftFehler]] | None = None,
          manifest_bauer: ManifestBauer | None = None, nach_tick: Callable[[TickErgebnis], None] | None = None,
-         melden: Melden | None = None, uhr: Callable[[], float] = time.monotonic) -> TickErgebnis:
+         melden: Melden | None = None, uhr: Callable[[], float] = time.monotonic,
+         trocken: bool = False) -> TickErgebnis:
     """Ein Lauf des Doku-Loops (siehe Moduldoku). `budget` None -> `claude_budget` (erst im Judge geladen). `uhr`:
-    monotone Uhr fuer die Tick-Deadline (I7a)."""
+    monotone Uhr fuer die Tick-Deadline (I7a). `trocken`: nur messen und zaehlen (`_Lauf.trocken_laufen`), schreibt
+    nichts, nimmt keine Sperre, ruft kein LLM; `erzwingen` und `ohne_llm` sind dann ohne Wirkung."""
     melden = _melder(melden)
     lauf = _Lauf(konfig, jetzt=jetzt, erzwingen=erzwingen, laufzeit=laufzeit, ohne_llm=ohne_llm, budget=budget,
                  drift=drift or umschreiben.drift_fuer(konfig), manifest_bauer=manifest_bauer or korpus.manifest_bauen,
                  nach_tick=nach_tick, melden=melden, uhr=uhr)
+    if trocken:
+        vorher = os.environ.get("GIT_OPTIONAL_LOCKS")
+        os.environ["GIT_OPTIONAL_LOCKS"] = "0"  # `git status` darf den Index nicht auffrischen (schreiben)
+        try:
+            return lauf.trocken_laufen()
+        finally:
+            if vorher is None:
+                os.environ.pop("GIT_OPTIONAL_LOCKS", None)
+            else:
+                os.environ["GIT_OPTIONAL_LOCKS"] = vorher
     with sperre(lokaler_ordner(konfig)) as frei:
         if not frei:
             melden("Sperre: ein anderer Lauf hält tick.lock – übersprungen (laeuft_schon)")

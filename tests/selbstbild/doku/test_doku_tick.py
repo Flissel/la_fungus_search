@@ -373,6 +373,8 @@ def test_tick_erster_lauf_baut_alle_spaces(fx):
 
 def test_tick_ohne_anstoss_wird_uebersprungen(fx):
     _seed(fx)
+    _anstoss(fx)
+    _tick(fx)  # der Seed-Commit selbst ist ein bewegter HEAD (D6): erst nachziehen, dann gibt es keinen Anstoss mehr
     head = _head(fx.repo)
     erg = _tick(fx)
     assert erg.uebersprungen == "kein_anstoss" and erg.commit is None and _head(fx.repo) == head
