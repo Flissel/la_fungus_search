@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -77,7 +78,7 @@ from typing import TYPE_CHECKING, Any
 from . import anker, bauen, ketten_seed, korpus, messbaum, render_ketten, rowboat, umschreiben, waechter
 from . import aussagen as au
 from .anker import Beleg
-from .belegspeicher import aussage_entfernen, aussage_speichern, beleg_dateien, gespeicherte_belege
+from .belegspeicher import aussage_entfernen, aussage_speichern, beleg_dateien, gespeicherte_belege, knoten_id
 from .extraktoren import sql as sql_ex
 from .graph import Graph, graph_diff, mit_schlank, schlank
 from .konfig import Konfig, SpaceKonfig
@@ -85,9 +86,10 @@ from .pruefliste import (
     beleg_nicht_messbar, beleg_untracked, neue_offene, pruefliste_ergaenzen, pruefliste_laden, pruefliste_pfad,
 )
 from .schreibvorgang import (
-    GRAPH_DIR, GRAPH_JSON, LEDGER, SUBMODUL, Aenderung, Ausgang, doku_dateien, eigene_datei, fremde_aenderungen, git,
-    graph_text, halbschreibung_aufraeumen, hat_submodul, kopf, kopf_pruefen, ledger_commit_von,
-    schreiben_pruefen_committen, submodul_kopf, unsaubere_dateien, versionierte_dateien,
+    GRAPH_DIR, GRAPH_JSON, LEDGER, SUBMODUL, Aenderung, Ausgang, doku_dateien, doku_ziel, eigene_datei,
+    fremde_aenderungen, fremde_doku_ziele, git, graph_text, halbschreibung_aufraeumen, hat_submodul, kopf, kopf_pruefen,
+    ledger_commit_von, nur_lesend, nur_lesend_dateien, schreiben_pruefen_committen, submodul_kopf, unsaubere_dateien,
+    versionierte_dateien,
 )
 from .seed_befehl import RenderBericht, SchlankBericht, SeedErgebnis, graph_schlank, neu_rendern, seed, seed_deckung
 from .stand import (
@@ -113,6 +115,7 @@ __all__ = [
 ]
 
 KONFIG_DATEI = "config/doku_loop.yaml"
+REGEL_DATEI = "selbstbild.yaml"  # Stufe 4: Abschnitt `doku:` (D5); eine Aenderung baut wie die alte Konfig alles neu
 NACHBARN_MAX = 12
 QUELLTEXT_MERKEN = 7000  # Quelltext offener Signale im lokalen Stand (der Judge kuerzt ohnehin auf 6000)
 AUSSCHNITT_ZEILEN = 40  # Minor 15: `datei`-Belege zeigt der Judge nur +-40 Zeilen um die angezeigte Zeile
@@ -161,6 +164,13 @@ class TickErgebnis:
     graph_digest: str = ""  # nur Trockenlauf: `digest_stabil` des schlanken Graphen (Task 11 vergleicht mit graph.json)
     messbaum_commit: str = ""  # nur Trockenlauf: aeusserer Commit, auf dem tatsaechlich gemessen wurde
     hinweis: str = ""  # nur Trockenlauf: z. B. `messbaum_hinter_head_nur_eigene_dateien` (T3-c)
+    # Task 4: Zaehler der Aussagen-Pruefung (auch im Trockenlauf)
+    doku_gelesen: int = 0  # Doku-Dateien (KETTEN.md, weitere Doku, Doku-Ziele), deren Aussagen geprueft wurden
+    nur_lesend_gelesen: int = 0  # nur-lesend-Dateien (D7), gelesen im Messbaum
+    aussagen: int = 0  # gelesene Aussagen
+    aussagen_belegt: int = 0  # davon mit gemerkten Belegen nach dem Lauf
+    aussagen_neu: int = 0  # Belege erstmals gemerkt (Quelle `extraktor`, ohne LLM)
+    doku_uebersprungen: list[str] = dataclasses.field(default_factory=list)  # Ruling T4-b: fremd geaenderte Ziele
 
 
 # ---------- Aenderungen ----------
@@ -232,13 +242,14 @@ def _unter_sql_wurzel(datei: str, wurzeln: Sequence[str]) -> bool:
 
 
 def betroffene_spaces(konfig: Konfig, aussen: Sequence[str], sub: Sequence[str]) -> list[str]:
-    """Spaces, die neu gebaut werden. Alle bei unbekanntem Stand (`*`), geaendertem Dienst-Register oder Loop-Konfig,
+    """Spaces, die neu gebaut werden. Alle bei unbekanntem Stand (`*`), geaendertem Dienst-Register oder Loop-Konfig
+    (`config/doku_loop.yaml` oder die Regeldatei `selbstbild.yaml`),
     jeder geaenderten `*.sql` unter `sql_wurzeln` und jeder geaenderten `compose_live`-Datei (I5: SQL-Definitionen
     und Compose-Kanten sind global); sonst die Spaces, unter deren Wurzel eine geaenderte Datei liegt."""
     alle = sorted(konfig.spaces)
     if "*" in aussen or "*" in sub:
         return alle
-    if any(p in (konfig.dienste_yaml, KONFIG_DATEI) for p in aussen):
+    if any(p in (konfig.dienste_yaml, KONFIG_DATEI, REGEL_DATEI) for p in aussen):
         return alle
     compose = {c.strip("/") for c in konfig.compose_live}
     for p in (*aussen, *sub):
@@ -339,6 +350,14 @@ class _Lauf:
         self.koepfe: dict[str, str] | None = None  # D6: beim Anstoss gelesene Koepfe, im Tick wiederverwendet
         self.gesehen: dict[str, str] | None = None  # T3-b: Koepfe, die dieser Lauf gesehen hat (kommen in den Stand)
         self.messbaum_hinweis = ""
+        # Task 4
+        self.doku_fremd_ziele: list[str] = []  # Ruling T4-b: Ziele mit fremden Aenderungen, in diesem Lauf ausgelassen
+        self.doku_gelesen = 0
+        self.nur_lesend_gelesen = 0
+        self.n_aussagen = 0
+        self.n_belegt = 0
+        self.n_neu = 0
+        self.index_holer: Callable[[], Mapping[str, list[str]]] | None = None  # Datei-Index, einer je Lauf
 
     # ----- Ergebnis und Stand -----
 
@@ -346,7 +365,10 @@ class _Lauf:
                  pruefliste: int = 0, graph_digest: str = "", messbaum_commit: str = "",
                  hinweis: str = "") -> TickErgebnis:
         return TickErgebnis(self.lauf, list(self.spaces), self.signale, self.llm_aufrufe, self.umgeschrieben,
-                            pruefliste, commit, uebersprungen, graph_digest, messbaum_commit, hinweis)
+                            pruefliste, commit, uebersprungen, graph_digest, messbaum_commit, hinweis,
+                            doku_gelesen=self.doku_gelesen, nur_lesend_gelesen=self.nur_lesend_gelesen,
+                            aussagen=self.n_aussagen, aussagen_belegt=self.n_belegt, aussagen_neu=self.n_neu,
+                            doku_uebersprungen=list(self.doku_fremd_ziele))
 
     def stand_speichern(self, *, fortschreiben: bool, render_hashes: Mapping[str, str] | None = None,
                         hand_edit: Mapping[str, str] | None = None,
@@ -412,6 +434,9 @@ class _Lauf:
         urteile = rowboat.urteile_lesen(pfad, unlesbar=unlesbar, datei=konfig.rowboat_urteile)
         erledigt = rowboat.erledigt_pfad(konfig)
         offen = rowboat.offene_urteile(urteile, erledigt)
+        if offen and fremde_doku_ziele(konfig):  # Ruling T4-b: eine Korrektur darf nie fremde Arbeit mitcommitten
+            self.melden(f"Urteile: {len(offen)} offen, fremde Änderungen an Doku-Zielen – warten")
+            offen = []
         pps = list(unlesbar)
         if offen:
             md = self.repo / konfig.ketten_md
@@ -761,6 +786,8 @@ class _Lauf:
         geaendert = [p for p in (*aussen, *sub) if p != "*"]
         belegdateien = {p for p in geaendert if not _unter(p, self.alle_wurzeln) and not eigene_datei(konfig, p)} \
             & beleg_dateien(basis)
+        # Task 4: ein Commit an einem Doku-Ziel oder einer nur-lesend-Datei -> Aussagen pruefen (ohne Neubau)
+        doku_geaendert = [p for p in geaendert if doku_ziel(konfig, p) or nur_lesend(konfig, p)]
         offene = list(self.stand_alt.offene_signale) if self.stand_alt else []
         self.spaces = spaces
 
@@ -769,8 +796,8 @@ class _Lauf:
 
         self.melden(f"Änderungen: {zahl(aussen)} Dateien außen, {zahl(sub)} im Submodul -> Spaces: "
                     f"{', '.join(spaces) or 'keine'}; Beleg-Dateien außerhalb: {len(belegdateien)}; "
-                    f"offene Signale: {len(offene)}")
-        if not spaces and not belegdateien and not offene and not self.render_noetig:
+                    f"Doku geändert: {len(doku_geaendert)}; offene Signale: {len(offene)}")
+        if not spaces and not belegdateien and not offene and not self.render_noetig and not doku_geaendert:
             self.stand_speichern(fortschreiben=True)
             self.melden(f"Stand: Lauf {self.lauf_nr} fortgeschrieben – übersprungen (keine_aenderung)")
             return self._abschluss(self.ergebnis(uebersprungen="keine_aenderung"))
@@ -782,11 +809,8 @@ class _Lauf:
             self.melden(f"Fremde Änderungen: {len(fremd)} Datei(en) – übersprungen, nichts angefasst")
             return self._abschluss(self.ergebnis(uebersprungen="fremde_aenderungen:" + ",".join(fremd)))
         self.melden("Fremde Änderungen: keine")
-        for doc in doku_dateien(konfig):  # CAS-Basis der Doku jetzt festhalten (nicht erst nach dem Judge)
-            try:
-                self.doku_roh[doc] = (self.repo / doc).read_bytes()
-            except OSError:
-                pass
+        self._fremde_ziele(melden_pruefliste=True)
+        self._doku_roh_lesen()
         try:
             vorher = self.drift(self.repo)
         except umschreiben.TorwaechterFehler as fehler:
@@ -806,7 +830,7 @@ class _Lauf:
 
         # Ruling 45c: nur offene Signale -> ohne Neubau erneut fragen; neu gebaut wird nur nach einem Urteil
         # (Task 17 M2: nach einem Revert wird ohne Neubau gerendert, `_voll` mit leerer Space-Liste)
-        if not spaces and not belegdateien and not self.render_noetig:
+        if not spaces and not belegdateien and not self.render_noetig and not doku_geaendert:
             beantwortet, rest = self._offene_fragen(offene)
             self.signale = len(offene)
             if not beantwortet:
@@ -879,11 +903,8 @@ class _Lauf:
         repo_graph = Graph.aus_text(basis_roh.decode("utf-8"))
         voll = vollgraph_laden(konfig, self.stand_alt.vollgraph_kennung if self.stand_alt else None)
         basis = repo_graph if voll is None else mit_schlank(voll.graph, repo_graph)
-        for doc in doku_dateien(konfig):
-            try:
-                self.doku_roh[doc] = (self.repo / doc).read_bytes()
-            except OSError:
-                pass
+        self._fremde_ziele(melden_pruefliste=False)  # lesend: nur gezaehlt und im Ergebnis genannt
+        self._doku_roh_lesen()
         try:
             return self._voll(basis, basis_roh, schlank(repo_graph), set(), [])
         except umschreiben.GitFehler as fehler:
@@ -899,6 +920,36 @@ class _Lauf:
                 lauf=self.lauf)
         elif h.zustand == "fremd":
             self.melden(f"Halbschreibung: {len(h.dateien)} Datei(en) weichen ab – gilt als fremde Änderung")
+
+    def _fremde_ziele(self, *, melden_pruefliste: bool) -> None:
+        """Ruling T4-b: Doku-Ziele mit fremden (nicht committeten) Aenderungen werden in diesem Lauf ausgelassen --
+        keine Aussagen-Pruefung, kein Ersetzen, ihre gemerkten Aussagen bleiben unveraendert im Graph. Pruefpunkt
+        `doku_ziel_fremd` einmal je Datei und Inhalt (die Pruefliste dedupliziert nach Art/Datei/Id/Text)."""
+        self.doku_fremd_ziele = sorted(fremde_doku_ziele(self.konfig))
+        if not self.doku_fremd_ziele:
+            return
+        self.melden(f"Doku-Ziele: {len(self.doku_fremd_ziele)} mit fremden Änderungen – in diesem Lauf ausgelassen")
+        if not melden_pruefliste:
+            return
+        for datei in self.doku_fremd_ziele:
+            try:
+                stand = hashlib.sha256((self.repo / datei).read_bytes()).hexdigest()[:12]
+            except OSError:
+                stand = "fehlt"
+            self.offen.append(Pruefpunkt(
+                "doku_ziel_fremd", f"{datei} hat nicht committete fremde Änderungen (Inhalt {stand}); vom Loop "
+                "ausgelassen, gemerkte Aussagen bleiben, bis die Änderung committet ist", datei, None,
+                f"{datei}#{stand}"))
+
+    def _doku_roh_lesen(self) -> None:
+        """CAS-Basis der Doku jetzt festhalten (nicht erst nach dem Judge); fremd geaenderte Ziele nie."""
+        for doc in doku_dateien(self.konfig):
+            if doc in self.doku_fremd_ziele:
+                continue
+            try:
+                self.doku_roh[doc] = (self.repo / doc).read_bytes()
+            except OSError:
+                pass
 
     def _deadline(self) -> bool:
         """I7a: nach `tick_deadline_min` Laufzeit keine neuen Judge-Fragen mehr (die Signale bleiben offen)."""
@@ -1015,6 +1066,8 @@ class _Lauf:
         texte: dict[str, tuple[bytes, str]] = {}
         aussagen_signale = 0
         for doc in doku_dateien(konfig):
+            if doc in self.doku_fremd_ziele:  # Ruling T4-b: gemerkte Aussagen bleiben unveraendert im Graph
+                continue
             pfad = repo / doc
             roh = self.doku_roh.get(doc)
             if roh is None:
@@ -1025,7 +1078,12 @@ class _Lauf:
                 continue
             neu, n = self._aussagen(graph, doc, pfad, text)
             aussagen_signale += n
+            self.doku_gelesen += 1
             texte[doc] = (roh, neu)
+        aussagen_signale += self._nur_lesend_pruefen(graph)
+        self.melden(f"Aussagen: {self.doku_gelesen} Doku-Datei(en), {self.nur_lesend_gelesen} nur lesend, "
+                    f"{len(self.doku_fremd_ziele)} ausgelassen; {self.n_aussagen} Aussagen, {self.n_belegt} belegt, "
+                    f"{self.n_neu} neu gemerkt")
         self.signale = hop_signale + aussagen_signale
         self.melden(f"Belege: {self.signale} Signal(e) (Hops {hop_signale}, Aussagen {aussagen_signale}); "
                     f"Judge {self.llm_aufrufe} Aufruf(e), {self.umgeschrieben} umgeschrieben")
@@ -1123,11 +1181,32 @@ class _Lauf:
             f"{alt.digest[:12]} -> {neu.digest[:12]}); Hop-Zeile prüfen", self.konfig.ketten_md,
             zeile if isinstance(zeile, int) else None, f"{hop}#{neu.digest[:12]}"))
 
-    def _aussagen(self, graph: Graph, doc: str, pfad: Path, text: str) -> tuple[str, int]:
-        """Aussagen einer Datei pruefen; Rueckgabe (neuer Text, Zahl der Signale)."""
+    def _nur_lesend_pruefen(self, graph: Graph) -> int:
+        """D7/Ruling T4-a: nur-lesend-Dateien aus dem Messbaum (committeter Stand, nie der Arbeitsbaum eines
+        Submoduls) pruefen wie Doku, aber nie ersetzen; Rueckgabe die Zahl der Signale."""
+        signale = 0
+        for rel in nur_lesend_dateien(self.konfig, self.mess_repo):
+            try:
+                text = (self.mess_repo / rel).read_bytes().decode("utf-8")
+            except (OSError, UnicodeDecodeError) as fehler:
+                self.melden(f"Aussagen: {rel} (nur lesend) nicht lesbar ({type(fehler).__name__})")
+                continue
+            if au.handgepflegt(text):
+                continue
+            _, n = self._aussagen(graph, rel, self.mess_repo / rel, text, nur_lesend=True)
+            signale += n
+            self.nur_lesend_gelesen += 1
+        return signale
+
+    def _aussagen(self, graph: Graph, doc: str, pfad: Path, text: str, *,
+                  nur_lesend: bool = False) -> tuple[str, int]:
+        """Aussagen einer Datei pruefen; Rueckgabe (neuer Text, Zahl der Signale). `nur_lesend` (D7): ein Urteil
+        `veraltet` wird Pruefpunkt `nur_lesend_veraltet` mit dem Vorschlag, nie eine Ersetzung."""
         # Ruling 50: Text aus dem echten Arbeitsbaum, verankert wird gegen den Messbaum
+        if self.index_holer is None:
+            self.index_holer = ketten_seed._index_holer(self.mess_konfig.repo, self.mess_konfig, None)
         liste = au.aussagen_lesen(self.mess_repo / doc, self.mess_konfig, self.manifeste, self.sql_defs,
-                                  self.kopf_aussen, text=text)
+                                  self.kopf_aussen, text=text, index_holer=self.index_holer)
         signale = 0
         ersetzungen: list[tuple[au.Aussage, str, Beleg, list[Beleg]]] = []
         ids = {a.id for a in liste}
@@ -1142,6 +1221,7 @@ class _Lauf:
             gespeichert = gespeicherte_belege(graph, a.id)
             if gespeichert is None:
                 aussage_speichern(graph, a, aktuell, "extraktor")
+                self.n_neu += 1 if aktuell else 0
                 continue
             urteile = [(b, self.urteil(b)) for b in gespeichert]
             if any(u == "unsauber" for _, u in urteile):
@@ -1163,6 +1243,13 @@ class _Lauf:
             if ergebnis is not None:
                 ersetzungen.append(ergebnis)
         for a, neuer_text, gewaehlt, belege in sorted(ersetzungen, key=lambda e: e[0].zeile_start, reverse=True):
+            if nur_lesend:  # D7: nie ersetzen; der Vorschlag geht in die Pruefliste, die Belege werden nachgefuehrt
+                self.offen.append(Pruefpunkt(
+                    "nur_lesend_veraltet", f"Urteil veraltet ({gewaehlt.art} {gewaehlt.anker or '-'} in "
+                    f"{gewaehlt.file}); Vorschlag: {' '.join(neuer_text.split())}"[:500], a.datei, a.zeile_start,
+                    a.id))
+                aussage_speichern(graph, a, belege, "extraktor")
+                continue
             try:
                 text = au.aussage_ersetzen(text, a, neuer_text)
             except ValueError as fehler:
@@ -1184,6 +1271,8 @@ class _Lauf:
                if k.typ == "aussage" and k.datei == doc and k.id[len("aussage:"):] not in ids]
         for aid in weg:
             aussage_entfernen(graph, aid)
+        self.n_aussagen += len(liste)
+        self.n_belegt += sum(1 for aid in ids if knoten_id(aid) in graph.knoten)
         return text, signale
 
     def _urteilen(self, graph: Graph, a: au.Aussage, gespeichert: Sequence[Beleg],

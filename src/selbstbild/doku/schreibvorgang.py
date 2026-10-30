@@ -21,6 +21,7 @@ graph-schlank) pruefen vor jeder Arbeit, `schreiben_pruefen_committen` noch einm
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import subprocess
@@ -180,19 +181,90 @@ def unsaubere_dateien(repo: Path) -> frozenset[str]:
 
 
 def eigene_datei(konfig: Konfig, datei: str) -> bool:
-    """Ruling 48b: Dateien, die der Loop selbst schreibt (KETTEN.md, Doku-Pfade, alles unter docs/graph), sind nie
-    Belegziel -- ein Loop-Commit darf kein Signal fuer sich selbst erzeugen."""
-    return datei in doku_dateien(konfig) or datei == GRAPH_DIR or datei.startswith(GRAPH_DIR + "/")
+    """Ruling 48b: Dateien, die der Loop selbst schreibt (KETTEN.md, weitere Doku, Doku-Ziele, alles unter docs/graph),
+    sind nie Belegziel -- ein Loop-Commit darf kein Signal fuer sich selbst erzeugen. Doku-Ziele zaehlen nach Muster
+    (auch eine Datei, die es noch nicht gibt); nur-lesend-Dateien sind keine eigenen."""
+    return (datei in _feste_doku(konfig) or doku_ziel(konfig, datei) or datei == GRAPH_DIR
+            or datei.startswith(GRAPH_DIR + "/"))
+
+
+# Task 4: nie Doku-Ziel, egal welches Muster sie trifft (Index fuer den Drift-Waechter, Massnahmenliste)
+NIE_ZIEL = frozenset({"MASSNAHMEN.md", "README.md"})
+
+
+def muster_trifft(muster: str, datei: str) -> bool:
+    """Glob gegen einen repo-relativen POSIX-Pfad, je Pfadteil (`*` ueberspringt kein `/`), Gross-/Kleinschreibung
+    zaehlt; `**` steht fuer beliebig viele Teile."""
+    teile, ziel = [t for t in muster.strip("/").split("/") if t], [t for t in datei.split("/") if t]
+
+    def passt(i: int, j: int) -> bool:
+        if i == len(teile):
+            return j == len(ziel)
+        if teile[i] == "**":
+            return any(passt(i + 1, k) for k in range(j, len(ziel) + 1))
+        return j < len(ziel) and fnmatch.fnmatchcase(ziel[j], teile[i]) and passt(i + 1, j + 1)
+
+    return bool(teile) and passt(0, 0)
+
+
+def nur_lesend(konfig: Konfig, datei: str) -> bool:
+    """D7: die Datei trifft ein `doku_nur_lesen`-Muster (geprueft, nie geschrieben)."""
+    return any(muster_trifft(m, datei) for m in konfig.doku_nur_lesen)
+
+
+def doku_ziel(konfig: Konfig, datei: str) -> bool:
+    """Trifft ein `doku_ziele`-Muster, ist weder `MASSNAHMEN.md` noch `README.md` und nicht nur lesend."""
+    return (datei.rsplit("/", 1)[-1] not in NIE_ZIEL and any(muster_trifft(m, datei) for m in konfig.doku_ziele)
+            and not nur_lesend(konfig, datei))
+
+
+def _feste_doku(konfig: Konfig) -> list[str]:
+    return [d for d in dict.fromkeys([konfig.ketten_md, *konfig.weitere_doku]) if d]
+
+
+def _treffer(wurzel: Path, muster: Sequence[str]) -> list[str]:
+    """Repo-relative Dateien unter `wurzel`, die eines der Muster treffen (sortiert, ohne Doppelte)."""
+    gefunden: set[str] = set()
+    for m in muster:
+        try:
+            pfade = list(Path(wurzel).glob(m.strip("/")))
+        except (OSError, ValueError):
+            continue
+        for p in pfade:
+            try:
+                if p.is_file():
+                    gefunden.add(p.relative_to(wurzel).as_posix())
+            except (OSError, ValueError):
+                continue
+    return sorted(gefunden)
 
 
 def doku_dateien(konfig: Konfig) -> list[str]:
-    return list(dict.fromkeys([konfig.ketten_md, *konfig.weitere_doku]))
+    """Doku, die der Loop schreibt: `ketten_md`, dann `weitere_doku`, dann die Treffer der `doku_ziele` im Arbeitsbaum
+    (sortiert; ohne `MASSNAHMEN.md`/`README.md` und ohne nur-lesend-Dateien), ohne Doppelte."""
+    ziele = [d for d in _treffer(konfig.repo, konfig.doku_ziele) if doku_ziel(konfig, d)]
+    return list(dict.fromkeys([*_feste_doku(konfig), *ziele]))
+
+
+def nur_lesend_dateien(konfig: Konfig, wurzel: Path) -> list[str]:
+    """D7/Ruling T4-a: Treffer der `doku_nur_lesen`-Muster unter `wurzel` (dem Messbaum: committeter Stand, auch in
+    Submodulen), ohne Dateien, die der Loop selbst schreibt."""
+    return [d for d in _treffer(wurzel, konfig.doku_nur_lesen) if d not in _feste_doku(konfig)]
 
 
 def fremde_aenderungen(konfig: Konfig) -> list[str]:
     """Nicht committete Aenderungen an KETTEN.md, weiterer Doku oder irgendwo in docs/graph (Ruling 44: keine
-    Ausnahme mehr; der Loop hat dort zwischen seinen Commits keine eigenen offenen Dateien)."""
-    return umschreiben.fremde_aenderungen(konfig.repo, [*doku_dateien(konfig), GRAPH_DIR])
+    Ausnahme mehr; der Loop hat dort zwischen seinen Commits keine eigenen offenen Dateien). Damit wartet der ganze
+    Lauf. Die Doku-Ziele gehoeren nicht dazu (Ruling T4-b, `fremde_doku_ziele`)."""
+    return umschreiben.fremde_aenderungen(konfig.repo, [*_feste_doku(konfig), GRAPH_DIR])
+
+
+def fremde_doku_ziele(konfig: Konfig) -> list[str]:
+    """Ruling T4-b: Doku-Ziele mit nicht committeten (fremden) Aenderungen, auch neue, nicht versionierte Dateien. Sie
+    werden in diesem Lauf uebersprungen; der Rest des Laufs geht weiter."""
+    feste = set(_feste_doku(konfig))
+    ziele = [d for d in doku_dateien(konfig) if d not in feste]
+    return [d for d in umschreiben.fremde_aenderungen(konfig.repo, ziele) if d not in feste] if ziele else []
 
 
 def graph_text(graph: Graph, erzeugt: str) -> str:

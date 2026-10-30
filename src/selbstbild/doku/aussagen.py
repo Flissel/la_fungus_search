@@ -3,14 +3,16 @@
 Eine Aussage ist ein Absatz (durch Leerzeilen getrennt) oder eine Tabellenzeile ausserhalb markierter Bloecke
 (`<!-- graph:begin … -->` … `<!-- graph:end -->`, die gehoeren dem Renderer). Keine Aussagen sind:
 Ueberschriften, Frontmatter, Code-Bloecke (```/~~~, auch Mermaid), HTML-Kommentare, Markerzeilen,
-Trennlinien, Tabellenkoepfe und -trennzeilen sowie der Abschnitt `## Belege` / `### Belege` selbst.
+Trennlinien, Tabellenkoepfe und -trennzeilen sowie der Belege-Abschnitt selbst (`## Belege` / `### Belege`,
+`## 7. Belege`, `## Belege (Zusatz)`; Formen siehe `belege_formate`).
 
 Belege einer Aussage:
   - Backtick-Spannen mit Code-Stellen (`pfad:zeile[-zeile]`, Kurz-, Verzeichnis- und Ankerformen wie im Seed,
     `ketten_seed._aufloesen`); eine Kurzform `:n` hinter einem Pfad zaehlt nur, wenn die Datei so viele
     Zeilen hat (sonst ist es ein Port);
-  - Verweise `[Bn]` auf Zeilen des Abschnitts Belege (`[B3] pfad:zeile …`, `- [B3] …` oder Tabelle
-    `| B3 | pfad:zeile | … |`); unaufgeloeste Verweise werden still ignoriert.
+  - Verweise `[Bn]` auf Zeilen des Abschnitts Belege (`[B3] pfad:zeile …`, `- [B3] …`, Tabelle
+    `| B3 | pfad:zeile | … |` oder die Vorlagenzeile `- B3: datei pfad:zeile`); unaufgeloeste Verweise werden still
+    ignoriert. Backtick-Pfade einer Prosa-Liste im Abschnitt binden keine Aussage.
   Verankert wird wie im Seed mit `ketten_seed.stelle_verankern_mit_grund`; Namen und Belegtokens kommen aus
   der Aussage selbst (`ketten_seed.namen_und_tokens_aus_text`, Rulings 22/27/29). Gerenderte Anker-Spannen
   (`` `datei:zeile` `anker` ``) werden mit `render_anker_trennen` abgetrennt und zaehlen nie als Beleg.
@@ -32,6 +34,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 from . import anker
+from . import belege_formate as bf
 from . import ketten_seed as ks
 from .anker import Beleg
 from .konfig import Konfig
@@ -50,9 +53,6 @@ _ZAUN = re.compile(r"^(`{3,}|~{3,})")
 _TRENNLINIE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})$")
 _TABELLEN_TRENN = re.compile(r"^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$")
 _VERWEIS = re.compile(r"\[B(\d+)\]")
-_BELEGE_KOPF = re.compile(r"^(#{2,3})\s+Belege\s*$")
-_BELEG_ZEILE = re.compile(r"^(?:[-*+]\s+)?\[B(\d+)\]\s*:?\s*(.+)$")
-_BELEG_ZELLE = re.compile(r"^\[?B(\d+)\]?$")
 _HANDMARKE = re.compile(r"^<!--\s*handgepflegt\s*-->$")
 # Abkuerzungen, nach deren Punkt kein Satz endet (dazu: einzelne Buchstaben und Zahlen)
 _ABKUERZUNGEN = frozenset({
@@ -155,10 +155,10 @@ def _ist_trennzeile(zeile: str) -> bool:
     return bool(_TABELLEN_TRENN.match(zeile.strip())) and "-" in zeile
 
 
-def _einheiten(zeilen: list[str], gesperrt: set[int]) -> tuple[list[_Einheit], dict[str, str]]:
-    """Aussage-Einheiten und Eintraege des Abschnitts Belege (`B3` -> Text)."""
+def _einheiten(zeilen: list[str], gesperrt: set[int]) -> tuple[list[_Einheit], dict[int, bf.Eintrag]]:
+    """Aussage-Einheiten und nummerierte Eintraege des Abschnitts Belege (`belege_formate.eintrag`)."""
     einheiten: list[_Einheit] = []
-    belege: dict[str, str] = {}
+    belege: dict[int, bf.Eintrag] = {}
     stapel: list[tuple[int, str]] = []
     belege_ebene: int | None = None
     zaun: str | None = None
@@ -205,14 +205,16 @@ def _einheiten(zeilen: list[str], gesperrt: set[int]) -> tuple[list[_Einheit], d
             stapel.append((ebene, m.group(2)))
             if belege_ebene is not None and ebene <= belege_ebene:
                 belege_ebene = None
-            if _BELEGE_KOPF.match(klar):
+            if belege_ebene is None and bf.ist_belege_kopf(klar):
                 belege_ebene = ebene
             continue
         if not klar or _TRENNLINIE.match(klar):
             schliessen(i)
             continue
         if belege_ebene is not None:
-            _beleg_eintrag(klar, belege)
+            e = bf.eintrag(klar)
+            if e is not None:
+                belege.setdefault(e.nr, e)
             continue
         if klar.startswith("|"):
             schliessen(i)
@@ -226,27 +228,15 @@ def _einheiten(zeilen: list[str], gesperrt: set[int]) -> tuple[list[_Einheit], d
     return einheiten, belege
 
 
-def _beleg_eintrag(klar: str, belege: dict[str, str]) -> None:
-    if klar.startswith("|"):
-        if _ist_trennzeile(klar):
-            return
-        zellen = ks._zellen(klar)
-        m = _BELEG_ZELLE.match(zellen[0]) if zellen else None
-        if m:
-            belege.setdefault(f"B{m.group(1)}", " ".join(zellen[1:]))
-        return
-    m2 = _BELEG_ZEILE.match(klar)
-    if m2:
-        belege.setdefault(f"B{m2.group(1)}", m2.group(2))
-
-
 # ---------- Belege ----------
 
 class _Verankerer:
     def __init__(self, konfig: Konfig, manifeste: Mapping[str, "Manifest"],
-                 sql_defs: Mapping[str, "SqlDefinition"], commit: str) -> None:
+                 sql_defs: Mapping[str, "SqlDefinition"], commit: str,
+                 index_holer: Callable[[], Mapping[str, list[str]]] | None = None) -> None:
         self.konfig, self.manifeste, self.sql_defs, self.commit = konfig, manifeste, sql_defs, commit
-        self.index: Callable[[], Mapping[str, list[str]]] = ks._index_holer(konfig.repo, konfig, None)
+        self.index: Callable[[], Mapping[str, list[str]]] = (index_holer if index_holer is not None
+                                                             else ks._index_holer(konfig.repo, konfig, None))
         self.schwach = ks.schwache_tokens(konfig)
         self.bekannte: dict[str, str] = {}
         self.laengen: dict[str, int] = {}
@@ -279,20 +269,26 @@ class _Verankerer:
                 aus.append(st)
         return aus
 
-    def belege(self, text: str, belege_abschnitt: Mapping[str, str],
+    def belege(self, text: str, belege_abschnitt: Mapping[int, bf.Eintrag],
                datei: str, zeile: int, aid: str) -> tuple[tuple[Beleg, ...], tuple[Pruefpunkt, ...]]:
         ohne_anker, _ = ks.render_anker_trennen(text)
         namen, tokens = ks.namen_und_tokens_aus_text(text, schwach=self.schwach)
-        stellen = self.stellen(ohne_anker, ganz=False)
+        stellen = [(st, False) for st in self.stellen(ohne_anker, ganz=False)]
         for nr in _VERWEIS.findall(ohne_anker):
-            eintrag = belege_abschnitt.get(f"B{nr}")
-            if eintrag:
-                stellen.extend(self.stellen(ks.render_anker_trennen(eintrag)[0], ganz=True))
+            eintrag = belege_abschnitt.get(int(nr))
+            if eintrag is not None and eintrag.ziel:
+                quittung = eintrag.art == "datei"  # Vorlage: erklaerte Datei-Quittung
+                stellen.extend((st, quittung) for st in self.stellen(ks.render_anker_trennen(eintrag.ziel)[0],
+                                                                     ganz=True))
         belege: dict[tuple[str, str, str], Beleg] = {}
         pp: list[Pruefpunkt] = []
-        for st in stellen:
+        for st, quittung in stellen:
             v = ks.stelle_verankern_mit_grund(st, self.konfig, self.manifeste, self.sql_defs, self.commit,
                                               namen=namen, tokens=tokens)
+            if quittung and v.beleg is None and v.pruefpunkt == "anker_zu_grob" and st.pfad is not None:
+                # Task 4: eine `- B<n>: datei pfad:zeile`-Quittung bindet an die Datei, auch wo der feinere Anker zu
+                # grob waere (z. B. Zeile 1 einer YAML-Datei)
+                v = ks.Verankerung(ks._datei_beleg(st.pfad, st.start, self.konfig.repo, self.commit))
             if v.pruefpunkt is not None:
                 pp.append(Pruefpunkt(v.pruefpunkt, f"`{st.roh}` -> {st.pfad or '?'}: {v.text}", datei, zeile, aid))
             if v.beleg is not None:
@@ -308,18 +304,20 @@ def _datei_name(pfad: Path, repo: Path) -> str:
 
 
 def aussagen_lesen(pfad: Path, konfig: Konfig, manifeste: Mapping[str, "Manifest"],
-                   sql_defs: Mapping[str, "SqlDefinition"], commit: str, *, text: str | None = None) -> list[Aussage]:
+                   sql_defs: Mapping[str, "SqlDefinition"], commit: str, *, text: str | None = None,
+                   index_holer: Callable[[], Mapping[str, list[str]]] | None = None) -> list[Aussage]:
     """Aussagen der Datei in Reihenfolge, Belege neu verankert (siehe Moduldoku).
 
     `text`: Inhalt statt der Datei (z. B. der eingebettete Text vor dem Schreiben); `pfad` bestimmt dann nur die
-    Ids und Dateinamen."""
+    Ids und Dateinamen. `index_holer`: gemeinsamer Datei-Index (Dateiname -> Pfade) mehrerer Aufrufe im selben Lauf;
+    sonst baut jeder Aufruf ihn bei Bedarf selbst."""
     if text is None:
         text = Path(pfad).read_bytes().decode("utf-8")
     roh = _zeilen_mit_ende(text)
     zeilen = [_inhalt(z, i == 0) for i, z in enumerate(roh)]
     einheiten, belege_abschnitt = _einheiten(zeilen, _block_zeilen(text))
     datei = _datei_name(Path(pfad), konfig.repo)
-    verankerer = _Verankerer(konfig, manifeste, sql_defs, commit)
+    verankerer = _Verankerer(konfig, manifeste, sql_defs, commit, index_holer)
     aus: list[Aussage] = []
     gesehen: dict[str, tuple[int, int]] = {}  # id -> (Anzahl, erste Zeile)
     for e in einheiten:
