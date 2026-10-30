@@ -31,24 +31,41 @@ from selbstbild.doku import tick as tk
 # ---------- Hilfen ----------
 
 def _schnappschuss(wurzel: Path) -> dict[str, str]:
-    """Pfad -> sha256 der Bytes (Verzeichnisse als `<dir>`), ueber den ganzen Baum inkl. `.git`."""
+    """Pfad -> sha256 der Bytes (Verzeichnisse `<dir>`) und `st_mtime_ns`, ueber den ganzen Baum inkl. `.git`."""
     aus: dict[str, str] = {}
     for p in sorted(Path(wurzel).rglob("*")):
         rel = p.relative_to(wurzel).as_posix()
-        if p.is_dir():
-            aus[rel] = "<dir>"
-        else:
-            try:
-                aus[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
-            except OSError:
-                aus[rel] = "<unlesbar>"
+        try:
+            mtime = p.stat().st_mtime_ns
+            inhalt = "<dir>" if p.is_dir() else hashlib.sha256(p.read_bytes()).hexdigest()
+        except OSError:
+            mtime, inhalt = 0, "<unlesbar>"
+        aus[rel] = f"{inhalt}@{mtime}"
     return aus
 
 
 def _zustand(fx) -> dict[str, object]:
-    return {"repo": _schnappschuss(fx.repo), "lokal": _schnappschuss(fx.lokal),
-            "worktrees": _git(fx.repo, "worktree", "list", "--porcelain"),
-            "status": _git(fx.repo, "status", "--porcelain=v1", "--untracked-files=all")}
+    # die Beobachtung darf selbst nichts schreiben: `git status` frischt sonst den Index auf (racy-git)
+    vorher = os.environ.get("GIT_OPTIONAL_LOCKS")
+    os.environ["GIT_OPTIONAL_LOCKS"] = "0"
+    try:
+        worktrees = _git(fx.repo, "worktree", "list", "--porcelain")
+        status = _git(fx.repo, "status", "--porcelain=v1", "--untracked-files=all")
+    finally:
+        if vorher is None:
+            os.environ.pop("GIT_OPTIONAL_LOCKS", None)
+        else:
+            os.environ["GIT_OPTIONAL_LOCKS"] = vorher
+    return {"repo": _schnappschuss(fx.repo), "lokal": _schnappschuss(fx.lokal), "worktrees": worktrees,
+            "status": status}
+
+
+def _unveraendert(fx, vorher) -> None:
+    nachher = _zustand(fx)
+    diff = [f"{sek}:{k}" for sek in ("repo", "lokal") for k in sorted(set(vorher[sek]) | set(nachher[sek]))
+            if vorher[sek].get(k) != nachher[sek].get(k)]
+    assert not diff, diff
+    assert nachher["worktrees"] == vorher["worktrees"] and nachher["status"] == vorher["status"]
 
 
 def _alter_loop(fx) -> None:
@@ -136,7 +153,7 @@ def test_trocken_schreibt_nichts(fx, ohne_judge):
     assert erg.commit is None and erg.umgeschrieben == 0 and erg.pruefliste == 0
     assert erg.spaces == ["a", "b"]
     assert len(erg.graph_digest) == 64
-    assert _zustand(fx) == vorher  # Repo (inkl. .git), lokaler Ordner (Marker, Stand, Messbaum) unveraendert
+    _unveraendert(fx, vorher)  # Repo (inkl. .git), lokaler Ordner (Marker, Stand, Messbaum) unveraendert
     assert fx.marker.exists()
 
 
@@ -169,7 +186,7 @@ def test_trocken_messbaum_veraltet(fx, ohne_judge):
     vorher = _zustand(fx)
     erg = _trocken(fx)
     assert erg.uebersprungen == "messbaum_veraltet" and erg.graph_digest == "" and erg.llm_aufrufe == 0
-    assert _zustand(fx) == vorher
+    _unveraendert(fx, vorher)
     assert "messbaum-" in " ".join(vorher["lokal"])  # Messbaum steht noch auf dem alten Commit
 
 
@@ -188,7 +205,7 @@ def test_trocken_worktree_auf_falschem_commit_gilt_als_veraltet(fx):
     (gitdir / "HEAD").write_text("0" * 40 + "\n", encoding="utf-8")
     vorher = _zustand(fx)
     assert _trocken(fx).uebersprungen == "messbaum_veraltet"
-    assert _zustand(fx) == vorher
+    _unveraendert(fx, vorher)
 
 
 def test_trocken_frische_sperre_alter_loop_laeuft(fx):
@@ -199,7 +216,7 @@ def test_trocken_frische_sperre_alter_loop_laeuft(fx):
     vorher = _zustand(fx)
     erg = _trocken(fx)
     assert erg.uebersprungen == "alter_loop_laeuft" and erg.llm_aufrufe == 0
-    assert _zustand(fx) == vorher and sperre.read_text(encoding="utf-8") == "1234 0 abcd"
+    _unveraendert(fx, vorher) and sperre.read_text(encoding="utf-8") == "1234 0 abcd"
 
 
 def test_trocken_veraltete_sperre_zaehlt_nicht_und_bleibt(fx):
@@ -211,12 +228,14 @@ def test_trocken_veraltete_sperre_zaehlt_nicht_und_bleibt(fx):
     os.utime(sperre, (alt, alt))
     vorher = _zustand(fx)
     assert _trocken(fx).uebersprungen is None
-    assert sperre.exists() and _zustand(fx) == vorher  # nicht uebernommen, nicht entfernt
+    assert sperre.exists()  # nicht uebernommen, nicht entfernt
+    _unveraendert(fx, vorher)
 
 
 def test_vorhanden_lesend_aendert_nichts_und_liefert_den_messbaum(fx):
     _seed(fx)
-    assert messbaum.vorhanden_lesend(fx.konfig) is None
+    # der Seed hat den Messbaum vor seinem eigenen (Doku-)Commit angelegt: T3-c
+    assert messbaum.vorhanden_lesend(fx.konfig).hinweis == "messbaum_hinter_head_nur_eigene_dateien"
     echt = messbaum.bereitstellen(fx.konfig)
     vorher = _zustand(fx)
     mb = messbaum.vorhanden_lesend(fx.konfig)
@@ -259,7 +278,7 @@ def test_cli_trocken_gibt_json_auf_stdout(fx, ohne_judge, capsys):
     assert daten["signale"] >= 1 and daten["llm_aufrufe"] == 0 and daten["commit"] is None
     assert len(daten["graph_digest"]) == 64
     assert "Trockenlauf" not in aus.out and not (fx.repo / "logs").exists()
-    assert _zustand(fx) == vorher
+    _unveraendert(fx, vorher)
 
 
 def test_cli_trocken_gilt_auch_auf_der_universellen_vorgabe(tmp_path, capsys):
@@ -286,3 +305,137 @@ def test_cli_trocken_setzt_git_optional_locks_nur_waehrend_des_laufs(fx, monkeyp
     monkeypatch.setattr(tk, "unsaubere_dateien", spaeh)
     _trocken(fx)
     assert gesehen == ["0"] and "GIT_OPTIONAL_LOCKS" not in os.environ
+
+
+# ---------- Fix-Runde 1 ----------
+
+def _kopf_ergebnis(fx):
+    return json.loads(Path(fx.lokal / "VibeMind" / "doku_loop").joinpath(f"stand-{st.repo_schluessel(fx.repo)}.json")
+                      .read_text(encoding="utf-8"))
+
+
+def test_drossel_bleibt_nach_nicht_fortschreibendem_stand(fx):
+    """T3-b: dreckige KETTEN.md + neuer Commit -> `fremde_aenderungen` einmal; danach `kein_anstoss` bis zum
+    Intervall oder einem neuen Commit (der Stand merkt sich die gesehenen Koepfe, auch ohne fortzuschreiben)."""
+    _seed(fx)
+    _anstoss(fx)
+    _tick(fx)  # zieht den Stand nach dem Seed-Commit nach
+    _code_aenderung(fx, 1)
+    (fx.repo / KETTEN).write_bytes((fx.repo / KETTEN).read_bytes() + b"von Hand\n")
+    stand = st.stand_laden(fx.konfig)
+    t0 = datetime_nach(stand, minuten=1)
+    erste = _tick(fx, jetzt=t0)
+    assert erste.uebersprungen == f"fremde_aenderungen:{KETTEN}"
+    gesehen = st.stand_laden(fx.konfig)
+    assert gesehen.koepfe_gesehen == {"": _head(fx.repo)}
+    assert gesehen.letzter_commit_aussen != _head(fx.repo)  # nicht fortgeschrieben
+    for minuten in (1, 2, 6):
+        assert _tick(fx, jetzt=t0 + timedelta(minutes=minuten)).uebersprungen == "kein_anstoss"
+    _code_aenderung(fx, 2)  # neuer Commit stoesst wieder an
+    assert _tick(fx, jetzt=t0 + timedelta(minutes=7)).uebersprungen == f"fremde_aenderungen:{KETTEN}"
+    assert _tick(fx, jetzt=t0 + timedelta(minutes=8)).uebersprungen == "kein_anstoss"
+    # das Intervall greift weiterhin
+    assert _tick(fx, jetzt=t0 + timedelta(minutes=40)).uebersprungen == f"fremde_aenderungen:{KETTEN}"
+
+
+def test_stand_ohne_neues_feld_laedt_und_faellt_auf_die_zeiger_zurueck(fx):
+    alt = {"letzter_commit_aussen": "a" * 40, "letzter_tick": "2026-10-28T12:00:00+00:00", "lauf_nr": 3,
+           "unbekannter_schluessel": 1}
+    stand = st.Stand.from_dict(alt)
+    assert stand.koepfe_gesehen == {} and stand.letzter_commit_aussen == "a" * 40
+    assert "koepfe_gesehen" in stand.to_dict()
+    jetzt = datetime_nach(stand, minuten=1)
+    assert not tk.anstoss_noetig(fx.konfig, stand, jetzt, koepfe={"": "a" * 40})
+    assert tk.anstoss_noetig(fx.konfig, stand, jetzt, koepfe={"": "b" * 40})
+    neu = st.Stand.from_dict({**alt, "koepfe_gesehen": {"": "b" * 40}})
+    assert not tk.anstoss_noetig(fx.konfig, neu, jetzt, koepfe={"": "b" * 40})  # gesehen schlaegt den Zeiger
+    assert tk.anstoss_noetig(fx.konfig, neu, jetzt, koepfe={"": "a" * 40})
+
+
+def test_anstoss_koepfe_lazy_und_einmal(fx, monkeypatch):
+    _seed(fx)
+    _anstoss(fx)
+    _tick(fx)
+    aufrufe = {"koepfe": 0, "sub": 0}
+    echt_k, echt_s = tk.anstoss_koepfe, messbaum.submodul_koepfe
+
+    def koepfe(repo):
+        aufrufe["koepfe"] += 1
+        return echt_k(repo)
+
+    def sub(repo, *a, **kw):
+        aufrufe["sub"] += 1
+        return echt_s(repo, *a, **kw)
+
+    monkeypatch.setattr(tk, "anstoss_koepfe", koepfe)
+    monkeypatch.setattr(messbaum, "submodul_koepfe", sub)
+    stand = st.stand_laden(fx.konfig)
+    t0 = datetime_nach(stand, minuten=1)
+    _code_aenderung(fx, 1)
+    _tick(fx, jetzt=t0)  # HEAD bewegt: einmal gelesen, im Tick wiederverwendet
+    assert aufrufe == {"koepfe": 1, "sub": 1}
+    aufrufe.update(koepfe=0, sub=0)
+    _anstoss(fx)  # Marker: Anstoss ohne Git; der Tick liest die Koepfe selbst (einmal)
+    _tick(fx, jetzt=t0 + timedelta(minutes=1))
+    assert aufrufe["koepfe"] == 0 and aufrufe["sub"] == 1
+
+
+def test_trocken_messbaum_hinter_head_nur_eigene_dateien(fx, ohne_judge):
+    _seed(fx)
+    _alter_loop(fx)
+    a = _head(fx.repo)
+    graph = fx.repo / "docs/graph/graph.json"
+    graph.write_bytes(graph.read_bytes() + b"\n")
+    b = _commit(fx.repo, "docs(loop): eigener Commit", "docs/graph/graph.json")
+    vorher = _zustand(fx)
+    erg = _trocken(fx)
+    assert erg.uebersprungen is None and len(erg.graph_digest) == 64
+    assert erg.messbaum_commit == a != b and erg.hinweis == "messbaum_hinter_head_nur_eigene_dateien"
+    _unveraendert(fx, vorher)
+    # auch KETTEN.md zaehlt als eigene Datei
+    ketten = fx.repo / KETTEN
+    ketten.write_bytes(ketten.read_bytes() + b"\n")
+    _commit(fx.repo, "docs(loop): ketten", KETTEN)
+    assert _trocken(fx).hinweis == "messbaum_hinter_head_nur_eigene_dateien"
+    # ein Quellcode-Commit macht ihn veraltet
+    _code_aenderung(fx, 1)
+    erg = _trocken(fx)
+    assert erg.uebersprungen == "messbaum_veraltet" and erg.messbaum_commit == "" and erg.hinweis == ""
+    assert messbaum.vorhanden_lesend(fx.konfig) is None
+
+
+def test_trocken_gleicher_kopf_hat_keinen_hinweis(fx):
+    _seed(fx)
+    _alter_loop(fx)
+    erg = _trocken(fx)
+    assert erg.messbaum_commit == _head(fx.repo) and erg.hinweis == ""
+
+
+def test_trocken_meldet_fremde_aenderungen_lesend(fx, ohne_judge):
+    _seed(fx)
+    _alter_loop(fx)
+    ketten = fx.repo / KETTEN
+    ketten.write_bytes(ketten.read_bytes() + b"von Hand\n")
+    vorher = _zustand(fx)
+    erg = _trocken(fx)
+    assert erg.uebersprungen == f"fremde_aenderungen:{KETTEN}" and erg.llm_aufrufe == 0
+    _unveraendert(fx, vorher)
+
+
+def test_trocken_unerwartete_ausnahme_wird_ergebnis(fx, monkeypatch, capsys):
+    _seed(fx)
+    _alter_loop(fx)
+
+    def kaputt(*a, **kw):
+        raise RuntimeError("Dateiinhalt darf nicht in die Ausgabe")
+
+    monkeypatch.setattr(tk.bauen, "graph_bauen", kaputt)
+    vorher = _zustand(fx)
+    erg = _trocken(fx)
+    assert erg.uebersprungen == "tick_fehler:RuntimeError"
+    _unveraendert(fx, vorher)
+    w = {"manifest_bauer": FakeManifestBauer(), "jetzt": _jetzt}
+    assert cli.main(["--konfig", str(fx.konfig_pfad), "tick", "--trocken"], werkzeuge=w) == 0
+    aus = capsys.readouterr()
+    assert json.loads(aus.out)["uebersprungen"] == "tick_fehler:RuntimeError"
+    assert "Dateiinhalt" not in aus.out + aus.err

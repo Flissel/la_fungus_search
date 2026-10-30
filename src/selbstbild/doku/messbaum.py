@@ -68,6 +68,7 @@ class Messbaum:
     wurzel: Path
     commits: dict[str, str]  # repo-relativer Pfad ("" = aussen) -> ausgecheckter Commit
     nicht_messbar: tuple[str, ...]  # repo-relative Pfade nicht initialisierter Submodule
+    hinweis: str = ""  # nur `vorhanden_lesend`: `messbaum_hinter_head_nur_eigene_dateien` (T3-c)
 
 
 def messbaum_pfad(konfig: Konfig) -> Path:
@@ -391,13 +392,39 @@ def messbaum_status(konfig: Konfig) -> dict[str, object]:
             "entfernen_offen": _liste(daten, "entfernen_offen")}
 
 
+HINTER_HEAD = "messbaum_hinter_head_nur_eigene_dateien"
+
+
+def _nur_eigene_dateien(konfig: Konfig, von: str, timeout: int) -> bool:
+    """`git diff --name-only <von> HEAD` im aeusseren Repo nennt nur Dateien, die der Loop selbst schreibt (KETTEN.md,
+    weitere Doku, docs/graph/*). Rein lesend (`GIT_OPTIONAL_LOCKS=0`); jeder Fehler oder ein leerer Diff -> False."""
+    from .schreibvorgang import eigene_datei  # lokal: schreibvorgang importiert dieses Modul
+
+    try:
+        lauf = subprocess.run(["git", "-c", "core.quotepath=false", *OHNE_LFS, "-C", str(konfig.repo), "diff",
+                               "--name-only", "--no-renames", "-z", von, "HEAD"], capture_output=True,
+                              timeout=timeout, env={**_umgebung(), "GIT_OPTIONAL_LOCKS": "0"})
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if lauf.returncode != 0:
+        return False
+    pfade = [p for p in lauf.stdout.decode("utf-8", errors="replace").split("\0") if p]
+    return bool(pfade) and all(eigene_datei(konfig, p) for p in pfade)
+
+
 def vorhanden_lesend(konfig: Konfig, timeout: int = 60) -> Messbaum | None:
-    """Der vorhandene Messbaum, rein lesend (Trockenlauf, Ruling T3-a); `None`, wenn er nicht genau dem aktuellen
-    aeusseren HEAD und den Submodul-HEADs entspricht. Kein `worktree add`, kein Checkout, kein Schreiben: er gehoert
-    dem laufenden alten Loop. Geprueft wird der aufgezeichnete Zustand (`messbaum-<hash>.json`) und, dass jeder
-    Worktree wirklich auf seinem Commit steht (`HEAD` im Verwaltungsordner)."""
+    """Der vorhandene Messbaum, rein lesend (Trockenlauf, Ruling T3-a); `None`, wenn er nicht dem aktuellen Stand
+    entspricht. Kein `worktree add`, kein Checkout, kein Schreiben: er gehoert dem laufenden alten Loop. Geprueft wird
+    der aufgezeichnete Zustand (`messbaum-<hash>.json`) und, dass jeder Worktree wirklich auf seinem Commit steht
+    (`HEAD` im Verwaltungsordner).
+
+    Gleich ist er, wenn aussen und alle Submodul-Koepfe uebereinstimmen. T3-c: steht er nur hinter dem aeusseren
+    HEAD, und der Unterschied besteht ausschliesslich aus Dateien, die der Loop selbst schreibt (jeder Commit des
+    alten Loops ist so ein Kind), gilt er auch -- mit `hinweis=HINTER_HEAD`; `commits` nennt dann seinen Commit. Die
+    Submodul-Koepfe muessen immer gleich sein."""
     repo = Path(konfig.repo)
     wurzel = messbaum_pfad(konfig)
+    hinweis = ""
     try:
         _wurzel_pruefen(wurzel, repo)
         daten = _zustand_lesen(konfig)
@@ -410,8 +437,11 @@ def vorhanden_lesend(konfig: Konfig, timeout: int = 60) -> Messbaum | None:
             return None
         jetzt = {"": kopf, **submodul_koepfe(repo, timeout)}
         if aufgezeichnet != jetzt:
-            return None
-        for rel, commit in jetzt.items():
+            if ({k: v for k, v in aufgezeichnet.items() if k} != {k: v for k, v in jetzt.items() if k}
+                    or not aufgezeichnet.get("") or not _nur_eigene_dateien(konfig, aufgezeichnet[""], timeout)):
+                return None
+            hinweis = HINTER_HEAD
+        for rel, commit in aufgezeichnet.items():
             gitdir = _gitdir(wurzel / rel) if rel else _gitdir(wurzel)
             if gitdir is None or (gitdir / "HEAD").read_bytes().decode("utf-8").strip() != commit:
                 return None
@@ -419,4 +449,4 @@ def vorhanden_lesend(konfig: Konfig, timeout: int = 60) -> Messbaum | None:
         return None
     mess = dataclasses.replace(konfig, repo=wurzel,
                                waechter_zustandsdatei=str(repo / konfig.waechter_zustandsdatei))
-    return Messbaum(mess, wurzel, jetzt, tuple(_liste(daten, "nicht_messbar")))
+    return Messbaum(mess, wurzel, aufgezeichnet, tuple(_liste(daten, "nicht_messbar")), hinweis)

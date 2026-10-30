@@ -78,6 +78,10 @@ class Stand:
     submodul_commits: dict[str, str] = field(default_factory=dict)
     # Ruling 55a: erste Lesung eines geaenderten `gemessen.wert` je Hop (gilt erst bei der zweiten gleichen Lesung)
     gemessen_ausstehend: dict[str, str] = field(default_factory=dict)
+    # T3-b: aeusserer HEAD (`""`) und Submodul-Koepfe, die der letzte Lauf gesehen hat -- auch wenn er den Commit-Zeiger
+    # nicht fortgeschrieben hat. D6 vergleicht nur damit (sonst loeste ein haengender Zeiger alle 5 min einen Tick aus).
+    # Additiv: der alte Loop liest den Stand mit `d.get` und ignoriert das Feld; fehlt es, gelten die Zeiger.
+    koepfe_gesehen: dict[str, str] = field(default_factory=dict)
 
     @property
     def offene_spaces(self) -> list[str]:
@@ -101,7 +105,8 @@ class Stand:
         return cls(text("letzter_commit_aussen"), text("letzter_commit_sub"), text("letzter_tick"),
                    zuordnung("render_hashes"), int(nr) if isinstance(nr, int) else 0, zuordnung("hand_edit_gemeldet"),
                    [dict(s) for s in offen if isinstance(s, dict)] if isinstance(offen, list) else [],
-                   text("vollgraph_kennung"), zuordnung("submodul_commits"), zuordnung("gemessen_ausstehend"))
+                   text("vollgraph_kennung"), zuordnung("submodul_commits"), zuordnung("gemessen_ausstehend"),
+                   zuordnung("koepfe_gesehen"))
 
 
 def stand_pfad(konfig: Konfig) -> Path:
@@ -201,7 +206,10 @@ def _zeitstempel(text: str | None) -> float | None:
 
 def koepfe_weichen_ab(stand: Stand, koepfe: Mapping[str, str]) -> bool:
     """D6: `koepfe` (`""` = aeusserer HEAD, sonst repo-relativer Submodul-Pfad -> HEAD, wie `messbaum.Messbaum.commits`)
-    weichen von dem ab, was der Stand zuletzt verarbeitet hat. Ein Submodul, das der Stand nicht kennt, zaehlt."""
+    weichen von dem ab, was der Stand zuletzt gesehen hat (`koepfe_gesehen`; fehlt das Feld: den Commit-Zeigern).
+    Ein Submodul, das der Stand nicht kennt, zaehlt."""
+    if stand.koepfe_gesehen:  # T3-b: nur gegen das, was der letzte Lauf gesehen hat
+        return any(k and stand.koepfe_gesehen.get(rel) != k for rel, k in koepfe.items())
     aussen = koepfe.get("")
     if stand.letzter_commit_aussen is None:  # nie ein Commit verarbeitet (z. B. kein_seed): nur Intervall und Marker
         return False

@@ -159,6 +159,8 @@ class TickErgebnis:
     commit: str | None
     uebersprungen: str | None
     graph_digest: str = ""  # nur Trockenlauf: `digest_stabil` des schlanken Graphen (Task 11 vergleicht mit graph.json)
+    messbaum_commit: str = ""  # nur Trockenlauf: aeusserer Commit, auf dem tatsaechlich gemessen wurde
+    hinweis: str = ""  # nur Trockenlauf: z. B. `messbaum_hinter_head_nur_eigene_dateien` (T3-c)
 
 
 # ---------- Aenderungen ----------
@@ -207,9 +209,10 @@ ANSTOSS_GIT_TIMEOUT_S = 20
 
 
 def anstoss_koepfe(repo: Path) -> dict[str, str] | None:
-    """D6: aeusserer HEAD (`""`) und HEAD je initialisiertem Submodul (committeter Gitlink-Baum, dieselbe Quelle und
-    dieselben Namen wie der Messbaum und `Stand.submodul_commits`). Ein `git rev-parse` plus `ls-tree`/`rev-parse` je
-    Submodul, jeder Aufruf mit Timeout. Scheitert Git -> `None`: dann entscheiden Marker und Intervall allein."""
+    """D6: aeusserer HEAD (`""`) und der echte HEAD des Checkouts je initialisiertem Submodul (nicht der Gitlink-Pin;
+    die Gitlinks des committeten Baums dienen nur dazu, die Submodule zu finden). Dieselben Namen und Werte wie
+    `Messbaum.commits` und `Stand.submodul_commits`. Ein `git rev-parse` plus `ls-tree`/`rev-parse` je Submodul, jeder
+    Aufruf mit Timeout. Scheitert Git -> `None`: dann entscheiden Marker und Intervall allein."""
     try:
         aussen = messbaum._git_text(Path(repo), "rev-parse", "--verify", "-q", "HEAD^{commit}",
                                     timeout=ANSTOSS_GIT_TIMEOUT_S)
@@ -333,13 +336,17 @@ class _Lauf:
         self.render_noetig = False  # Task 17 M2: ein Revert hat Bloecke geaendert -> im selben Lauf neu rendern
         self.ausstehend: dict[str, str] | None = None  # Ruling 55a: None = unveraendert aus dem alten Stand
         self.trocken = False  # Trockenlauf: misst wie ein Tick, schreibt nichts (`trocken_laufen`)
+        self.koepfe: dict[str, str] | None = None  # D6: beim Anstoss gelesene Koepfe, im Tick wiederverwendet
+        self.gesehen: dict[str, str] | None = None  # T3-b: Koepfe, die dieser Lauf gesehen hat (kommen in den Stand)
+        self.messbaum_hinweis = ""
 
     # ----- Ergebnis und Stand -----
 
     def ergebnis(self, *, commit: str | None = None, uebersprungen: str | None = None,
-                 pruefliste: int = 0, graph_digest: str = "") -> TickErgebnis:
+                 pruefliste: int = 0, graph_digest: str = "", messbaum_commit: str = "",
+                 hinweis: str = "") -> TickErgebnis:
         return TickErgebnis(self.lauf, list(self.spaces), self.signale, self.llm_aufrufe, self.umgeschrieben,
-                            pruefliste, commit, uebersprungen, graph_digest)
+                            pruefliste, commit, uebersprungen, graph_digest, messbaum_commit, hinweis)
 
     def stand_speichern(self, *, fortschreiben: bool, render_hashes: Mapping[str, str] | None = None,
                         hand_edit: Mapping[str, str] | None = None,
@@ -355,6 +362,7 @@ class _Lauf:
             offene_signale=[dict(s) for s in (offene if offene is not None else alt.offene_signale)],
             vollgraph_kennung=self.vollgraph_kennung,
             submodul_commits=dict(self.sub_koepfe if fortschreiben else alt.submodul_commits),
+            koepfe_gesehen=dict(self.gesehen if self.gesehen is not None else alt.koepfe_gesehen),
             gemessen_ausstehend=dict(self.ausstehend if self.ausstehend is not None else alt.gemessen_ausstehend),
         ))
 
@@ -699,8 +707,7 @@ class _Lauf:
             marker = konfig.marker.exists()
         except OSError:
             marker = False
-        if not self.erzwingen and not anstoss_noetig(konfig, self.stand_alt, self.jetzt,
-                                                     koepfe=anstoss_koepfe(self.repo)):
+        if not self.erzwingen and not self._anstoss():
             self.melden(f"Anstoß: kein Marker, letzter Lauf jünger als {konfig.tick_minuten} min – übersprungen "
                         "(kein_anstoss)")
             return self.ergebnis(uebersprungen="kein_anstoss")
@@ -724,11 +731,19 @@ class _Lauf:
         self._urteile()
 
         # 2. Was ist zu tun?
-        kopf_aussen = kopf(self.repo)
-        if kopf_aussen is None:
-            raise TickFehler("kein Git-HEAD im Repo")
-        self.kopf_aussen, self.kopf_sub = kopf_aussen, submodul_kopf(self.repo) or ""
-        self.sub_koepfe = _koepfe(self.repo)
+        if self.rowboat_geaendert or self.render_noetig:  # ein Urteil kann committet haben: Koepfe neu lesen
+            self.koepfe = None
+        if self.koepfe is not None:  # beim Anstoss schon gelesen (D6): nicht noch einmal
+            kopf_aussen = self.koepfe[""]
+            self.kopf_aussen, self.kopf_sub = kopf_aussen, self.koepfe.get(SUBMODUL, "")
+            self.sub_koepfe = {rel: k for rel, k in self.koepfe.items() if rel}
+        else:
+            kopf_aussen = kopf(self.repo)
+            if kopf_aussen is None:
+                raise TickFehler("kein Git-HEAD im Repo")
+            self.kopf_aussen, self.kopf_sub = kopf_aussen, submodul_kopf(self.repo) or ""
+            self.sub_koepfe = _koepfe(self.repo)
+        self.gesehen = {"": self.kopf_aussen, **self.sub_koepfe}
         aussen, sub = geaenderte_dateien(self.repo, self.stand_alt, self.sub_koepfe)
         basis_roh = (self.repo / GRAPH_JSON).read_bytes()  # Item 1: dieselben Bytes sind die CAS-Basis beim Schreiben
         repo_graph = Graph.aus_text(basis_roh.decode("utf-8"))
@@ -811,7 +826,26 @@ class _Lauf:
             uebrig = [s for s in offene if isinstance(s.get("space"), str) and s["space"] not in spaces]
         return self._voll(basis, basis_roh, schlank(repo_graph), vorher, uebrig)
 
+    def _anstoss(self) -> bool:
+        """Marker und Intervall zuerst (ohne Git); erst wenn beide nicht anstossen, werden die Koepfe gelesen (D6)."""
+        konfig = self.konfig
+        if anstoss_noetig(konfig, self.stand_alt, self.jetzt):
+            return True
+        self.koepfe = anstoss_koepfe(self.repo)
+        if self.koepfe is not None:
+            self.gesehen = dict(self.koepfe)
+        return anstoss_noetig(konfig, self.stand_alt, self.jetzt, koepfe=self.koepfe)
+
     def trocken_laufen(self) -> TickErgebnis:
+        """Trockenlauf mit Fehlerbehandlung: eine unerwartete Ausnahme wird `tick_fehler:<Typ>` (nie der Text, er kann
+        Dateiinhalte zitieren), geschrieben wird dabei nichts."""
+        try:
+            return self._trocken_laufen()
+        except Exception as fehler:  # noqa: BLE001 - Ergebnis statt Traceback
+            self.melden(f"Trockenlauf: Fehler {type(fehler).__name__} in {_fehler_ort(fehler)}")
+            return self.ergebnis(uebersprungen=f"tick_fehler:{type(fehler).__name__}")
+
+    def _trocken_laufen(self) -> TickErgebnis:
         """Trockenlauf (Ruling T3-a/T3-b): misst alle Spaces im VORHANDENEN Messbaum und zaehlt die Signale, schreibt
         aber nichts. Weder Repo, Stand, Pruefliste, Urteils-Cache, Vollgraph, Marker, Sperre, Notizen noch Budget; der
         Messbaum wird nur gelesen (`messbaum.vorhanden_lesend`, nie `bereitstellen`), der Judge nie importiert.
@@ -827,12 +861,17 @@ class _Lauf:
         if not (self.repo / GRAPH_JSON).is_file():
             self.melden("Trockenlauf: kein docs/graph/graph.json (kein_seed)")
             return self.ergebnis(uebersprungen="kein_seed")
+        fremd = fremde_aenderungen(konfig)  # lesend wie im echten Tick
+        if fremd:
+            self.melden(f"Trockenlauf: fremde Änderungen an {len(fremd)} Datei(en) (fremde_aenderungen)")
+            return self.ergebnis(uebersprungen="fremde_aenderungen:" + ",".join(fremd))
         mb = messbaum.vorhanden_lesend(konfig)
         if mb is None:
             self.melden("Trockenlauf: kein Messbaum auf dem aktuellen Stand (messbaum_veraltet) – nichts angefasst")
             return self.ergebnis(uebersprungen="messbaum_veraltet")
         self.mess_konfig, self.mess_repo, self.nicht_messbar = mb.konfig, mb.wurzel, mb.nicht_messbar
         self.kopf_aussen = mb.commits[""]
+        self.messbaum_hinweis = mb.hinweis
         self.kopf_sub = submodul_kopf(self.repo) or ""
         self.sub_koepfe = {rel: k for rel, k in mb.commits.items() if rel}
         self.spaces = sorted(konfig.spaces)
@@ -994,7 +1033,8 @@ class _Lauf:
         # 7. Rendern
         render_hashes, hand_edit = self._rendern(graph, texte)
         if self.trocken:  # nichts schreiben: weder Vollgraph noch Pruefliste noch Stand noch Commit
-            return self.ergebnis(graph_digest=schlank(graph).digest_stabil())
+            return self.ergebnis(graph_digest=schlank(graph).digest_stabil(), messbaum_commit=self.kopf_aussen,
+                                 hinweis=self.messbaum_hinweis)
         # Ruling 49: voller Graph lokal; seine Hops/Aussagen ueberlagert beim naechsten Lauf der Repo-Graph
         kennung = vollgraph_kennung(self.kopf_aussen, self.kopf_sub, self.lauf)
         try:
