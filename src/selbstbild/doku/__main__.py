@@ -50,21 +50,25 @@ Werkzeuge = Mapping[str, Any]
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="doku-loop", description="Doku-Loop: KETTEN.md aus dem Datenfluss-Graphen")
-    p.add_argument("--konfig", help="Pfad zu config/doku_loop.yaml (Standard: die des Repos)")
+    p = argparse.ArgumentParser(prog="selbstbild doku", description="Doku-Loop: KETTEN.md aus dem Datenfluss-Graphen")
+    p.add_argument("--konfig", help="alte Konfigurationsdatei config/doku_loop.yaml (statt der Regeldatei)")
+    # `<befehl> [<wurzel>] [--konfig <pfad>]`: beides hinter dem Befehl; SUPPRESS laesst einen Wert vor dem Befehl stehen
+    gemeinsam = argparse.ArgumentParser(add_help=False)
+    gemeinsam.add_argument("wurzel", nargs="?", help="Repo-Wurzel mit selbstbild.yaml (Abschnitt doku:)")
+    gemeinsam.add_argument("--konfig", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     unter = p.add_subparsers(dest="befehl", required=True)
-    t = unter.add_parser("tick", help="ein Lauf")
+    t = unter.add_parser("tick", parents=[gemeinsam], help="ein Lauf")
     t.add_argument("--erzwingen", action="store_true", help="ohne Anstoss laufen und alle Spaces bauen")
     t.add_argument("--ohne-llm", action="store_true", help="Signale nur in die Pruefliste, kein Judge")
-    unter.add_parser("seed", help="Graph-Seed aus KETTEN.md (committet)")
-    m = unter.add_parser("messen", help="Beleg-Drift und Seed-Deckung messen (nur lesend)")
+    unter.add_parser("seed", parents=[gemeinsam], help="Graph-Seed aus KETTEN.md (committet)")
+    m = unter.add_parser("messen", parents=[gemeinsam], help="Beleg-Drift und Seed-Deckung messen (nur lesend)")
     m.add_argument("--json", action="store_true")
     m.add_argument("--details", action="store_true", help="jede Fundstelle einzeln")
-    r = unter.add_parser("render", help="KETTEN.md aus graph.json neu rendern")
+    r = unter.add_parser("render", parents=[gemeinsam], help="KETTEN.md aus graph.json neu rendern")
     r.add_argument("--schreiben", action="store_true", help="schreiben und committen")
-    unter.add_parser("graph-schlank", help="docs/graph/graph.json verschlanken (committet)")
-    unter.add_parser("dienste-seed", help="fehlende Eintraege in config/dienste.yaml ergaenzen")
-    unter.add_parser("status", help="Stand, Pruefliste, Budget")
+    unter.add_parser("graph-schlank", parents=[gemeinsam], help="docs/graph/graph.json verschlanken (committet)")
+    unter.add_parser("dienste-seed", parents=[gemeinsam], help="fehlende Eintraege in config/dienste.yaml ergaenzen")
+    unter.add_parser("status", parents=[gemeinsam], help="Stand, Pruefliste, Budget")
     return p
 
 
@@ -317,6 +321,21 @@ BEFEHLE: dict[str, Callable[[Konfig, argparse.Namespace, Werkzeuge], int]] = {
 }
 
 
+def _konfig_aufloesen(args: argparse.Namespace) -> tuple[Konfig, str]:
+    """Quelle der Konfiguration: `--konfig` (alter Lader), sonst `<wurzel>`, sonst `SELBSTBILD_VIBEMIND`
+    (jeweils die Regeldatei). Kein stiller Rueckfall auf den Arbeitsordner."""
+    if args.konfig:
+        return konfig_modul.laden(Path(args.konfig)), f"alte Datei {Path(args.konfig).resolve()}"
+    if args.wurzel:
+        wurzel = Path(args.wurzel)
+        return konfig_modul.aus_regeln(wurzel), f"selbstbild.yaml (Abschnitt doku) in {wurzel.resolve()}"
+    env = os.environ.get("SELBSTBILD_VIBEMIND")
+    if env:
+        return konfig_modul.aus_regeln(Path(env)), f"selbstbild.yaml (Abschnitt doku) in {Path(env).resolve()} (SELBSTBILD_VIBEMIND)"
+    raise KonfigFehler("keine Konfigurationsquelle: <wurzel> angeben, --konfig <pfad> setzen oder "
+                       "SELBSTBILD_VIBEMIND auf die Repo-Wurzel zeigen lassen")
+
+
 def main(argv: list[str] | None = None, *, werkzeuge: Werkzeuge | None = None) -> int:
     args = _parser().parse_args(argv)
     for strom in (sys.stdout, sys.stderr):
@@ -327,7 +346,8 @@ def main(argv: list[str] | None = None, *, werkzeuge: Werkzeuge | None = None) -
             pass
     w = dict(werkzeuge or {})
     try:
-        konfig = konfig_modul.laden(Path(args.konfig) if args.konfig else None)
+        konfig, quelle = _konfig_aufloesen(args)
+        print(f"Konfig: {quelle}; Repo {konfig.repo}", file=sys.stderr)
     except (KonfigFehler, OSError, yaml.YAMLError, KeyError, TypeError, ValueError) as fehler:
         print(f"Konfigfehler: {_kurz(fehler)}", file=sys.stderr)
         return 2

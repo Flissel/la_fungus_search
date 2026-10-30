@@ -315,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-v", "--ausfuehrlich", action="store_true", help="Fortschritt nach stderr")
     befehle = p.add_subparsers(dest="befehl", required=True)
     befehle.add_parser("doku", help="Doku-Loop: doku <tick|seed|messen|render|graph-schlank|dienste-seed|status> "
-                                    "[--konfig <pfad>] ... (siehe `doku --help`)")
+                                    "[<wurzel>] [--konfig <pfad>] (siehe `doku --help`)")
     v = befehle.add_parser("vermessen", help="Commit vermessen, Bericht als JSON")
     v.add_argument("wurzel", type=Path)
     v.add_argument("--commit", default="HEAD")

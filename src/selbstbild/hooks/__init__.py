@@ -94,6 +94,8 @@ def regeln_lesen(yaml_text: str) -> dict:
 
     Kann nur Skalare, Flow-Listen (`[a, b]`) und Block-Listen. Alles andere (Anker, Mehrzeiler, verschachtelte
     Strukturen innerhalb der Regeln) fuehrt zu `{}` und damit zu keiner Regelzeile im Hook.
+    Unbekannte Schluessel im Einzug 0 (z. B. der Abschnitt `doku:`) werden samt allem Eingerueckten uebersprungen:
+    verschachtelte Zuordnungen, Listen (auch ohne Einzug), Quotes, `%VAR%`, Kommentare, Blockskalare.
     """
     try:
         name: str | None = None
@@ -102,16 +104,20 @@ def regeln_lesen(yaml_text: str) -> dict:
         im_struktur = False
         akt: dict | None = None
         offen: str | None = None  # Schluessel einer Block-Liste
+        fremd = False  # steht im Einzug 0 unter einem Schluessel, den dieser Leser nicht kennt (z. B. `doku:`)
         for zeile in yaml_text.splitlines():
             if not zeile.strip() or zeile.lstrip().startswith("#"):
                 continue
             einzug = len(zeile) - len(zeile.lstrip(" "))
             inhalt = zeile.strip()
             if einzug == 0:
+                if fremd and (inhalt.startswith(("- ", "]", "}")) or inhalt in ("-", "...")):
+                    continue  # Block-Liste ohne Einzug, Ende einer mehrzeiligen Flow-Liste, Dokumentende
                 im_struktur = False
-                m = re.match(r"([A-Za-z_]+):(?:\s+(.*))?$", inhalt)
+                m = re.match(r"([A-Za-z_][\w.-]*):(?:\s+(.*))?$", inhalt)
                 if m is None:
                     raise _Unbekannt
+                fremd = m.group(1) not in ("name", "max_dateigroesse_kb", "struktur")
                 if m.group(1) == "name" and m.group(2):
                     name = _skalar(m.group(2))
                 elif m.group(1) == "max_dateigroesse_kb" and m.group(2):

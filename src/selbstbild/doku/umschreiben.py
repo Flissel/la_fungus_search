@@ -435,16 +435,23 @@ def _auswerten(ausgabe: str) -> _Auswertung:
     return _Auswertung(fehler, roh, koepfe, summe_dok, summe_fehl)
 
 
-def drift_fehler(repo: Path, torwaechter: Sequence[str] = STANDARD_TORWAECHTER) -> set[DriftFehler]:
+def drift_fehler(repo: Path, torwaechter: Sequence[str] | None = None) -> set[DriftFehler]:
     """Fehler des Drift-Waechters (Exit 1) als Menge von `(dokument, meldung)`; Exit 0 -> leer.
 
     Kopfzeilen mit ihren Zaehlern fallen weg; gleiche Meldungen in verschiedenen Dokumenten
     bleiben getrennt. Absturz, Timeout, unbekannter Exit-Code oder eine Ausgabe, die nicht zur
     Summenzeile passt (Dokumente oder Fehler) -> `TorwaechterFehler`.
+
+    `torwaechter=None` = der Standardbefehl (mit dem aktuellen `WAECHTER_SKRIPT`); `()` = kein Torwaechter; sonst
+    gilt der Befehl wortwoertlich (Interpreter, Skript), ein Eintrag oder eine Zeichenkette ist ein Fehler.
     """
+    if torwaechter is None:
+        torwaechter = (STANDARD_TORWAECHTER[0], WAECHTER_SKRIPT)
     if not torwaechter:
         return set()  # leere Befehlsliste = kein Torwaechter (D4)
-    skript = Path(WAECHTER_SKRIPT if torwaechter is STANDARD_TORWAECHTER else torwaechter[1])
+    if isinstance(torwaechter, str) or len(torwaechter) < 2:
+        raise TorwaechterFehler("Waechter: Befehl braucht Interpreter und Skript (mindestens zwei Eintraege)")
+    skript = Path(torwaechter[1])
     if not skript.is_absolute():
         skript = repo / skript
     if not skript.is_file():
@@ -472,7 +479,8 @@ def drift_fehler(repo: Path, torwaechter: Sequence[str] = STANDARD_TORWAECHTER) 
 
 def drift_fuer(konfig: object) -> Callable[[Path], set[DriftFehler]]:
     """`drift_fehler` mit dem Torwaechter aus der Konfiguration (`konfig.torwaechter`)."""
-    befehl = tuple(getattr(konfig, "torwaechter", STANDARD_TORWAECHTER))
+    roh = getattr(konfig, "torwaechter", STANDARD_TORWAECHTER)
+    befehl = roh if isinstance(roh, str) else tuple(roh)  # eine Zeichenkette nicht in Buchstaben zerlegen
     return lambda repo: drift_fehler(repo, befehl)
 
 

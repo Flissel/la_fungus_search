@@ -1,6 +1,8 @@
 """Regeldatei `selbstbild.yaml`: Laden und Validieren."""
 from __future__ import annotations
 
+from typing import Any
+
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -51,6 +53,8 @@ class Regeln(BaseModel):
     issue_ziel: IssueZiel = Field(default_factory=IssueZiel)
     dienste: str | None = None
     max_dateigroesse_kb: int = 512
+    # Doku-Loop (Stufe 4): Schluessel und Werte prueft erst `selbstbild.doku.konfig.aus_regeln`
+    doku: dict[str, Any] | None = None
 
 
 def regeln_laden(text: str | None) -> Regeln:
