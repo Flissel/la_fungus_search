@@ -10,10 +10,13 @@ from typing import Any
 
 import yaml
 
+
 def _standard_pfad() -> Path:
     """Ohne --konfig: `config/doku_loop.yaml` unter `SELBSTBILD_VIBEMIND`, sonst unter dem Arbeitsordner."""
     wurzel = os.environ.get("SELBSTBILD_VIBEMIND")
     return (Path(wurzel) if wurzel else Path.cwd()) / "config" / "doku_loop.yaml"
+
+
 STANDARD_AUSSCHLUSS_NAMEN = (
     ".git", ".venv", "venv", "env", "node_modules", "site-packages", "__pycache__", "dist", "build",
     ".fungus_cache", ".mypy_cache", ".pytest_cache", ".tox", ".worktrees",
@@ -170,7 +173,6 @@ def _aus_roh(roh: dict[str, Any], repo: Path, *, relativ: bool) -> Konfig:
         p = _pfad(wert)
         return repo / p if relativ and not p.is_absolute() else p
 
-
     spaces: dict[str, SpaceKonfig] = {}
     for name, eintrag in dict(_brauche(roh, "spaces")).items():
         if not isinstance(eintrag, dict):
@@ -241,23 +243,46 @@ def _standard_konfig(wurzel: Path, regeln: Any) -> Konfig:
     )
 
 
-def aus_regeln(wurzel: Path) -> Konfig:
-    """Konfiguration aus `<wurzel>/selbstbild.yaml`, Abschnitt `doku:` (Arbeitsbaum). `Konfig.repo` ist `wurzel`.
+QUELLE_DOKU = "selbstbild.yaml (Abschnitt doku)"
+QUELLE_OHNE_DOKU = "universelle Vorgabe (selbstbild.yaml ohne doku:)"
+QUELLE_OHNE_DATEI = "universelle Vorgabe (keine selbstbild.yaml)"
 
-    Ohne Abschnitt (oder ohne Datei) gilt die universelle Vorgabe. Unbekannte Schluessel unter `doku:` sind ein
-    `KonfigFehler` (Tippfehler duerfen nicht still durchgehen)."""
+
+def ist_vorgabe(quelle: str) -> bool:
+    return quelle.startswith("universelle Vorgabe")
+
+
+def aus_regeln_mit_quelle(wurzel: Path) -> tuple[Konfig, str]:
+    """Wie `aus_regeln`, dazu die Quelle: `QUELLE_DOKU`, `QUELLE_OHNE_DOKU` oder `QUELLE_OHNE_DATEI`."""
     from ..regeln import REGELDATEI, regeln_laden
 
-    wurzel = Path(wurzel).resolve()
+    wurzel = Path(wurzel)
+    if not wurzel.is_dir():
+        raise KonfigFehler("Wurzel ist kein Verzeichnis (Tippfehler im Pfad oder in SELBSTBILD_VIBEMIND?)")
+    wurzel = wurzel.resolve()
     datei = wurzel / REGELDATEI
     text = datei.read_text(encoding="utf-8") if datei.is_file() else None
     try:
         regeln = regeln_laden(text)
     except ValueError as fehler:  # pydantic.ValidationError ist ein ValueError
-        raise KonfigFehler(f"Regeldatei ungueltig: {type(fehler).__name__}") from None
+        fehlerliste = getattr(fehler, "errors", None)
+        ort = ".".join(map(str, fehlerliste()[0].get("loc", ()))) if callable(fehlerliste) and fehlerliste() else ""
+        raise KonfigFehler(f"Regeldatei ungueltig: {type(fehler).__name__}" + (f" bei {ort}" if ort else "")) from None
     if regeln.doku is None:
-        return _standard_konfig(wurzel, regeln)
+        return _standard_konfig(wurzel, regeln), (QUELLE_OHNE_DOKU if text is not None else QUELLE_OHNE_DATEI)
     unbekannt = sorted(map(str, set(regeln.doku) - DOKU_SCHLUESSEL))
     if unbekannt:
         raise KonfigFehler(f"Unbekannte Schluessel unter doku: {', '.join(unbekannt)}")
-    return _aus_roh(regeln.doku, wurzel, relativ=True)
+    return _aus_roh(regeln.doku, wurzel, relativ=True), QUELLE_DOKU
+
+
+def aus_regeln(wurzel: Path) -> Konfig:
+    """Konfiguration aus `<wurzel>/selbstbild.yaml`, Abschnitt `doku:` (Arbeitsbaum). `Konfig.repo` ist `wurzel`.
+
+    `wurzel` muss ein Verzeichnis sein (sonst `KonfigFehler`). Ohne Abschnitt oder ohne Datei gilt die universelle
+    Vorgabe (der Kern laeuft auch ohne Regeldatei). Unbekannte Schluessel unter `doku:` sind ein `KonfigFehler`.
+
+    Die Vorgaben unterscheiden sich: ohne Abschnitt sind `doku_ziele` die `doku_pfade` der Regeln und
+    `torwaechter` ist `()`; mit Abschnitt, aber ohne den Schluessel, ist `doku_ziele` `()` und `torwaechter` der
+    alte Standard. Leere Pfade (`ketten_md`, `waechter_zustandsdatei` = `""`) bedeuten: aus."""
+    return aus_regeln_mit_quelle(wurzel)[0]

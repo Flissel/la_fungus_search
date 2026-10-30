@@ -447,9 +447,11 @@ def drift_fehler(repo: Path, torwaechter: Sequence[str] | None = None) -> set[Dr
     """
     if torwaechter is None:
         torwaechter = (STANDARD_TORWAECHTER[0], WAECHTER_SKRIPT)
+    if isinstance(torwaechter, str):  # vor der Leere-Pruefung: "" ist kein "kein Torwaechter"
+        raise TorwaechterFehler("Waechter: Befehl muss eine Liste sein, keine Zeichenkette")
     if not torwaechter:
         return set()  # leere Befehlsliste = kein Torwaechter (D4)
-    if isinstance(torwaechter, str) or len(torwaechter) < 2:
+    if len(torwaechter) < 2:
         raise TorwaechterFehler("Waechter: Befehl braucht Interpreter und Skript (mindestens zwei Eintraege)")
     skript = Path(torwaechter[1])
     if not skript.is_absolute():

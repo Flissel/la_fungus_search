@@ -59,6 +59,8 @@ def _parser() -> argparse.ArgumentParser:
     unter = p.add_subparsers(dest="befehl", required=True)
     t = unter.add_parser("tick", parents=[gemeinsam], help="ein Lauf")
     t.add_argument("--erzwingen", action="store_true", help="ohne Anstoss laufen und alle Spaces bauen")
+    t.add_argument("--erlaube-vorgabe", action="store_true",
+                   help="tick auch auf der universellen Vorgabe ohne Torwaechter erlauben")
     t.add_argument("--ohne-llm", action="store_true", help="Signale nur in die Pruefliste, kein Judge")
     unter.add_parser("seed", parents=[gemeinsam], help="Graph-Seed aus KETTEN.md (committet)")
     m = unter.add_parser("messen", parents=[gemeinsam], help="Beleg-Drift und Seed-Deckung messen (nur lesend)")
@@ -326,12 +328,12 @@ def _konfig_aufloesen(args: argparse.Namespace) -> tuple[Konfig, str]:
     (jeweils die Regeldatei). Kein stiller Rueckfall auf den Arbeitsordner."""
     if args.konfig:
         return konfig_modul.laden(Path(args.konfig)), f"alte Datei {Path(args.konfig).resolve()}"
-    if args.wurzel:
-        wurzel = Path(args.wurzel)
-        return konfig_modul.aus_regeln(wurzel), f"selbstbild.yaml (Abschnitt doku) in {wurzel.resolve()}"
     env = os.environ.get("SELBSTBILD_VIBEMIND")
-    if env:
-        return konfig_modul.aus_regeln(Path(env)), f"selbstbild.yaml (Abschnitt doku) in {Path(env).resolve()} (SELBSTBILD_VIBEMIND)"
+    wurzel = Path(args.wurzel) if args.wurzel else Path(env) if env else None
+    if wurzel is not None:
+        konfig, art = konfig_modul.aus_regeln_mit_quelle(wurzel)
+        herkunft = "" if args.wurzel else " (SELBSTBILD_VIBEMIND)"
+        return konfig, f"{art} in {wurzel.resolve()}{herkunft}"
     raise KonfigFehler("keine Konfigurationsquelle: <wurzel> angeben, --konfig <pfad> setzen oder "
                        "SELBSTBILD_VIBEMIND auf die Repo-Wurzel zeigen lassen")
 
@@ -348,6 +350,10 @@ def main(argv: list[str] | None = None, *, werkzeuge: Werkzeuge | None = None) -
     try:
         konfig, quelle = _konfig_aufloesen(args)
         print(f"Konfig: {quelle}; Repo {konfig.repo}", file=sys.stderr)
+        if (args.befehl == "tick" and konfig_modul.ist_vorgabe(quelle) and not konfig.torwaechter
+                and not args.erlaube_vorgabe):
+            raise KonfigFehler("tick auf der universellen Vorgabe ohne Torwaechter ist gesperrt "
+                               "(falsche Wurzel? sonst mit --erlaube-vorgabe)")
     except (KonfigFehler, OSError, yaml.YAMLError, KeyError, TypeError, ValueError) as fehler:
         print(f"Konfigfehler: {_kurz(fehler)}", file=sys.stderr)
         return 2

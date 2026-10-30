@@ -105,7 +105,8 @@ def regeln_lesen(yaml_text: str) -> dict:
         akt: dict | None = None
         offen: str | None = None  # Schluessel einer Block-Liste
         fremd = False  # steht im Einzug 0 unter einem Schluessel, den dieser Leser nicht kennt (z. B. `doku:`)
-        for zeile in yaml_text.splitlines():
+        # nur LF trennt Zeilen (wie in YAML); splitlines() zerlegte auch an U+2028, NEL, VT, FF
+        for zeile in (z.rstrip("\r") for z in yaml_text.split("\n")):
             if not zeile.strip() or zeile.lstrip().startswith("#"):
                 continue
             einzug = len(zeile) - len(zeile.lstrip(" "))

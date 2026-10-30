@@ -218,3 +218,65 @@ def test_cli_kaputte_regeln_exit_2(tmp_path, stub, capsys):
     r = _repo(tmp_path, _vorlage() + "tippfehler: 1\n")
     assert cli.main(["status", str(r)]) == 2
     assert "tippfehler" in capsys.readouterr().err
+
+
+# ---- Fix round 1: keine stille Vorgabe bei falscher Wurzel ----
+
+def test_nicht_vorhandene_wurzel_wirft(tmp_path):
+    with pytest.raises(KonfigFehler, match="Verzeichnis"):
+        aus_regeln(tmp_path / "gibt-es-nicht")
+    datei = tmp_path / "datei"
+    datei.write_text("x", encoding="utf-8")
+    with pytest.raises(KonfigFehler, match="Verzeichnis"):
+        aus_regeln(datei)
+
+
+def test_quellzeile_drei_faelle(tmp_path, stub, capsys):
+    mit = _repo(tmp_path / "a")
+    ohne_doku = _repo(tmp_path / "b", "")
+    (tmp_path / "c").mkdir()
+    for wurzel, text in ((mit, "selbstbild.yaml (Abschnitt doku)"),
+                         (ohne_doku, "universelle Vorgabe (selbstbild.yaml ohne doku:)"),
+                         (tmp_path / "c", "universelle Vorgabe (keine selbstbild.yaml)")):
+        assert cli.main(["status", str(wurzel)]) == 0
+        assert text in capsys.readouterr().err
+
+
+def test_cli_falsche_wurzel_und_falsche_umgebung_exit_2(tmp_path, stub, monkeypatch, capsys):
+    assert cli.main(["status", str(tmp_path / "tippfehler")]) == 2
+    monkeypatch.setenv("SELBSTBILD_VIBEMIND", str(tmp_path / "tippfehler"))
+    assert cli.main(["status"]) == 2
+    assert stub == [] and "Verzeichnis" in capsys.readouterr().err
+
+
+def test_tick_auf_universeller_vorgabe_braucht_flag(tmp_path, monkeypatch, capsys):
+    gesehen: list[Konfig] = []
+    monkeypatch.setitem(cli.BEFEHLE, "tick", lambda k, a, w: gesehen.append(k) or 0)
+    monkeypatch.delenv("SELBSTBILD_VIBEMIND", raising=False)
+    (tmp_path / "leer").mkdir()
+    r = _repo(tmp_path / "x", "")
+    for wurzel in (tmp_path / "leer", r):
+        assert cli.main(["tick", str(wurzel)]) == 2
+        assert "--erlaube-vorgabe" in capsys.readouterr().err
+    assert gesehen == []
+    assert cli.main(["tick", str(r), "--erlaube-vorgabe"]) == 0 and len(gesehen) == 1
+    # eine echte doku:-Konfiguration braucht das Flag nicht
+    assert cli.main(["tick", str(_repo(tmp_path / "y"))]) == 0
+
+
+def test_status_auf_vorgabe_laeuft_ohne_flag(tmp_path, stub):
+    assert cli.main(["status", str(_repo(tmp_path / "z", ""))]) == 0
+
+
+def test_validierungsfehler_nennt_feldpfad_ohne_inhalt(tmp_path):
+    r = tmp_path / "v"
+    r.mkdir()
+    (r / "selbstbild.yaml").write_text("max_dateigroesse_kb: geheimer-wert\n", encoding="utf-8")
+    with pytest.raises(KonfigFehler) as e:
+        aus_regeln(r)
+    assert "max_dateigroesse_kb" in str(e.value) and "geheimer-wert" not in str(e.value)
+
+
+def test_drift_fehler_leere_zeichenkette_ist_kein_torwaechter(tmp_path):
+    with pytest.raises(umschreiben.TorwaechterFehler):
+        umschreiben.drift_fehler(tmp_path, "")

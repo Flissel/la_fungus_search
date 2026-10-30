@@ -169,3 +169,12 @@ def test_echte_aussendatei_wenn_vorhanden():
     assert [r["art"] for r in regeln_lesen(text)["struktur"]] == ["kein_space_im_root", "space"]
     assert [r.art for r in regeln_laden(text).struktur] == ["kein_space_im_root", "space"]
     assert pruefen(Path(wurzel)) == ()
+
+
+@pytest.mark.parametrize("trenner", ["\u2028", "\u2029", "\x85", "\x0b", "\x0c", "\x1c"])
+def test_unicode_zeilentrenner_in_quote_lassen_die_regeln_stehen(trenner):
+    extra = f'fremd:\n  a: "x{trenner}yz ohne doppelpunkt"\n  b: 1\n'
+    erwartet = regeln_lesen(AUSSEN)
+    assert erwartet
+    assert regeln_lesen(extra + AUSSEN) == erwartet
+    assert regeln_lesen(AUSSEN.rstrip("\n") + "\n" + extra) == erwartet
