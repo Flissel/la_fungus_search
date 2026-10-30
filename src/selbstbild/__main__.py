@@ -1,4 +1,4 @@
-"""CLI: `python -m selbstbild vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|pruefen|suche-messen <wurzel> ...`."""
+"""CLI: `python -m selbstbild doku|vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|pruefen|suche-messen <wurzel> ...`."""
 from __future__ import annotations
 
 import argparse
@@ -300,10 +300,22 @@ def _hooks(args: argparse.Namespace) -> int:
     return 0
 
 
+def _doku(rest: list[str]) -> int:
+    from selbstbild.doku.__main__ import main as doku_main
+
+    return doku_main(rest)
+
+
 def main(argv: list[str] | None = None) -> int:
+    roh = list(sys.argv[1:] if argv is None else argv)
+    ohne_v = [a for a in roh if a not in ("-v", "--ausfuehrlich")]
+    if ohne_v[:1] == ["doku"]:  # Doku-Loop: der Rest geht unveraendert an dessen eigenes argparse
+        return _doku(roh[roh.index("doku") + 1:])
     p = argparse.ArgumentParser(prog="selbstbild", description="Vermisst ein Git-Repo als Graph.")
     p.add_argument("-v", "--ausfuehrlich", action="store_true", help="Fortschritt nach stderr")
     befehle = p.add_subparsers(dest="befehl", required=True)
+    befehle.add_parser("doku", help="Doku-Loop: doku <tick|seed|messen|render|graph-schlank|dienste-seed|status> "
+                                    "[--konfig <pfad>] ... (siehe `doku --help`)")
     v = befehle.add_parser("vermessen", help="Commit vermessen, Bericht als JSON")
     v.add_argument("wurzel", type=Path)
     v.add_argument("--commit", default="HEAD")

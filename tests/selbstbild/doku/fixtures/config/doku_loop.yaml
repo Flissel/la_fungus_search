@@ -1,0 +1,85 @@
+# Doku-Loop: haelt docs/spaces/KETTEN.md aus einem deterministischen Datenfluss-Graphen frisch.
+# Pfade sind repo-relativ, ausser sie sind ausdruecklich absolut. %VAR% wird beim Laden aufgeloest.
+
+spaces:
+  marketing:
+    wurzel: vibemind-os/spaces/marketing
+    mcp_muster: werkzeuge
+  sales-claw:
+    wurzel: vibemind-os/spaces/sales-claw
+    mcp_muster: werkzeuge
+  brain:
+    wurzel: vibemind-os/brain
+    mcp_muster: decorator
+
+# Ausschluss beim Durchlaufen, VOR dem Betreten (ein toter Symlink in node_modules wuerfe sonst rglob um).
+ausschluss_namen:
+  - .git
+  - .venv
+  - venv
+  - env
+  - node_modules
+  - site-packages
+  - __pycache__
+  - dist
+  - build
+  - .fungus_cache
+  - .mypy_cache
+  - .pytest_cache
+  - .tox
+  - .worktrees
+# Pfad-Suffixe (Segmente), gelten ab jeder Wurzel.
+ausschluss_pfade:
+  - voice/python/spaces
+  - spaces/captain_cook/hermes-agent
+
+ketten_md: docs/spaces/KETTEN.md
+# Bewusst leer (Spec C.3): in dieser Version schreibt der Loop nur KETTEN.md und docs/graph/.
+# Spaeter kommen die Abschnitte "Datenverarbeitung" der docs/spaces/0xx_*.md hinzu;
+# MASSNAHMEN.md und README.md sind nie Umschreibe-Ziele.
+weitere_doku: []
+
+# Nur diese Compose-Dateien; nie .vibemind-stack-rendered-*.yml, nie partial-*.yml.
+compose_live:
+  - infra/swarm/vibemind-stack.yml
+  - vibemind-os/spaces/sales-claw/docker-compose.yml
+  - vibemind-os/spaces/learning/deployment/compose.yml
+
+# SQL-Definitionen stehen verstreut (supabase/migrations, spaces/*/db, ...): ganzes Repo durchsuchen,
+# der Ausschluss (ausschluss_namen/-pfade) greift beim Durchlaufen.
+sql_wurzeln:
+  - .
+
+dienste_yaml: config/dienste.yaml
+
+waechter_zustandsdatei: logs/ketten-waechter-zustand.json
+# Ketten-Waechter-Pruefung -> Ketten (nach docs/spaces/KETTEN.md, Teil A), je Eintrag der gedeckte Hop.
+# Ruling 55b: statt einer ganzen Kette (`K11`) darf ein einzelner Hop stehen (`K11/7`); die Uebersicht fasst dann
+# nur die Hops mit Messung zusammen.
+waechter_zuordnung:
+  laura: [K6]                # pruefe_laura: Waechter -> Laura (VM) GET /healthz, K6 Hop 4
+  laura-dienste: [K6]        # pruefe_laura_dienste: Laura-Strecke (Dienste hinter dem Export), K6
+  katalog: [K6]              # pruefe_katalog_frisch: Videokatalog-Export laeuft, K6 Katalog-Export
+  bruecken: [K7]             # pruefe_bruecken: Ollama/Shim/Qdrant von der VM erreichbar, Rowboat-Wissensquelle K7
+  rowboat-index: [K7]        # pruefe_rowboat_index: Rowboat/Mongo indexiert, K7
+  marketing: [K1, K2]        # Marketing-Sidecar :8130, K1 Versandauftrag und K2 Newsletter-Freigabe
+  marketing-waechter: [K1]   # Lebenszeichen des Marketing-Waechters (Dienste fuer K1)
+  openfang-agent: [K4]       # pruefe_openfang_agent: Brain -> OpenFang-Subscription-Agent, K4
+  issue_weg: [K11/7]         # pruefe_issue_weg: Schluesselweg VM->PC (POST /api/credentials/issue), nur K11 Hop 7
+  auftrags-ausfuehrer: [K4]  # pruefe_auftrags_ausfuehrer: Lebenszeichen des Ausfuehrers, K4 coding_task
+
+tick_minuten: 30
+# Final-Fix C1: geschrieben und committet wird nur auf diesem Branch (leer = jeder Branch); nie auf detached HEAD
+# oder waehrend Rebase/Merge/Cherry-Pick/Revert/Bisect.
+zweig: codex/vibemind-ops-baseline
+marker: "%LOCALAPPDATA%/VibeMind/doku_loop/anstoss"
+agent: doku-loop
+judge_modell: sonnet
+claude_bin: "%USERPROFILE%/.local/bin/claude.exe"
+
+# Final-Fix I4: Rowboat-Notizen (Doku/) erst nach Deploy von vibemind-os 1aac875c nach vibemind-betrieb einschalten
+# (vorher gehoert Doku/ noch dem Spiegel der VM). Urteile aus rowboat_urteile werden trotzdem gelesen.
+rowboat_notizen_aktiv: true
+rowboat_wissen: C:/Users/User/.rowboat/knowledge
+rowboat_notizen: Doku
+rowboat_urteile: Doku-Urteile/Urteile.md
