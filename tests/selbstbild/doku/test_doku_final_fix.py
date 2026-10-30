@@ -64,9 +64,9 @@ def test_i4_rowboat_notizen_per_schalter_aus(fx, monkeypatch, capsys):
 
 
 @braucht_vm
-def test_i4_echte_konfig_hat_die_notizen_aus():
+def test_i4_echte_konfig_hat_die_notizen_an():
     k = vm_laden()
-    assert k.rowboat_notizen_aktiv is False
+    assert k.rowboat_notizen_aktiv is True  # seit 5896c834 eingeschaltet
     assert "1aac875c" in (REPO / "config" / "doku_loop.yaml").read_text(encoding="utf-8")
 
 

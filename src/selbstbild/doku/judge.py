@@ -247,10 +247,13 @@ def budget_laden(konfig: Konfig) -> tuple[Any | None, str | None]:
         sys.modules[name] = modul  # dataclasses braucht das Modul waehrend des Ladens
         try:
             spec.loader.exec_module(modul)
+        except (Exception, SystemExit):  # noqa: BLE001 - jeder Importfehler heisst: kein LLM (KeyboardInterrupt nicht)
+            sys.modules.pop(name, None)
+            return None, "budget:modul_fehlt"
         except BaseException:
             sys.modules.pop(name, None)
             raise
-    except Exception:  # noqa: BLE001 - jeder Importfehler heisst: kein LLM
+    except Exception:  # noqa: BLE001
         return None, "budget:modul_fehlt"
     _BUDGET_MODULE[schluessel] = modul
     return modul, None

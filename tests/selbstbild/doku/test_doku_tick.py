@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import re
+
 import pytest
 import yaml
 
@@ -1707,7 +1709,8 @@ def test_c2_unerwartete_ausnahme_wird_pruefpunkt_und_haelt_den_zeiger(fx, monkey
     assert stand.letzter_commit_aussen == alt.letzter_commit_aussen  # Marker-Verbrauch ist kein Fortschritt
     assert stand.lauf_nr == alt.lauf_nr + 1 and stand.letzter_tick != alt.letzter_tick
     fehler = [p for p in _pruefliste(fx)["offen"] if p["art"] == "tick_fehler"]
-    assert len(fehler) == 1 and "TypeError" in fehler[0]["text"] and "tick.py:" in fehler[0]["text"]
+    assert len(fehler) == 1 and "TypeError" in fehler[0]["text"]
+    assert re.search(r"(?<!\w)tick\.py:\d+", fehler[0]["text"]), fehler[0]["text"]  # Paketrahmen, nicht test_doku_tick.py
     assert "GEHEIM" not in fehler[0]["text"]
     _anstoss(fx)
     w = {"budget": FakeBudget(), "laufzeit": FakeLaufzeit(), "drift": lambda r: set(),

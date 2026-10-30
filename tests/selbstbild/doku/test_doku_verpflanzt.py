@@ -83,3 +83,40 @@ def test_doku_konfig_vorgaben_fuer_budget_und_torwaechter():
     k = konfig_modul.laden(VORLAGE)
     assert k.budget_modul == "scripts/claude_budget.py"
     assert k.torwaechter == (".venv/Scripts/python.exe", "scripts/docs_drift_waechter.py")
+
+
+def test_doku_fehler_ort_nimmt_nur_rahmen_des_pakets(tmp_path):
+    """Der innerste Rahmen liegt in der Testdatei (unter tests/selbstbild/doku/): `_fehler_ort` darf ihn nicht als
+    Paketrahmen werten, sondern muss den innersten Rahmen unter src/selbstbild/doku nehmen."""
+    from types import SimpleNamespace
+
+    from selbstbild.doku import tick as tk
+
+    def kaputt(*a, **kw):
+        raise TypeError("GEHEIM")
+
+    budget = SimpleNamespace(pruefen=lambda agent, jetzt=None: SimpleNamespace(erlaubt=True, grund="ok"),
+                             buchen=lambda *a, **kw: None)
+    k = konfig_modul.laden(VORLAGE)
+    k = type(k)(**{**k.__dict__, "repo": tmp_path})
+    try:
+        judge.befragen(_frage(), k, laufzeit=kaputt, budget=budget)
+    except TypeError as e:
+        ort = tk._fehler_ort(e)
+    else:
+        pytest.fail("TypeError erwartet")
+    assert ort.startswith("judge.py:"), ort
+
+
+@pytest.mark.parametrize("quelltext", ["raise SystemExit(3)\n", "raise RuntimeError('x')\n"])
+def test_doku_budget_modul_systemexit_und_fehler_sind_modul_fehlt(tmp_path, quelltext):
+    import sys
+
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "claude_budget.py").write_text(quelltext, encoding="utf-8")
+    k = konfig_modul.laden(VORLAGE)
+    k = type(k)(**{**k.__dict__, "repo": tmp_path})
+    assert judge.budget_laden(k) == (None, "budget:modul_fehlt")
+    assert not [n for n in sys.modules if n.startswith("selbstbild_doku_budget_") and sys.modules[n] is None]
+    pfad = str(tmp_path / "scripts" / "claude_budget.py")
+    assert pfad not in judge._BUDGET_MODULE

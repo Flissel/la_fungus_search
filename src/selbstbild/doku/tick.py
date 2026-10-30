@@ -126,10 +126,18 @@ OFFENE_BAUPUNKTE = ("waechter_veraltet",)  # Bau-Pruefpunkte, die in `offen` sta
 KOPF_GRUENDE = ("kopf_detached", "rebase_laeuft", "merge_laeuft", "falscher_zweig")
 
 
+def _im_paket(dateiname: str, paket: Path) -> bool:
+    try:
+        return Path(dateiname).resolve().is_relative_to(paket)
+    except (OSError, ValueError):
+        return False
+
+
 def _fehler_ort(fehler: BaseException) -> str:
     """`datei.py:zeile funktion` des innersten Rahmens im Paket selbstbild.doku (sonst des innersten ueberhaupt)."""
     rahmen = traceback.extract_tb(fehler.__traceback__)
-    eigene = [r for r in rahmen if "doku" in Path(r.filename).parts]
+    paket = Path(__file__).resolve().parent
+    eigene = [r for r in rahmen if _im_paket(r.filename, paket)]
     r = (eigene or rahmen or [None])[-1]
     return f"{Path(r.filename).name}:{r.lineno} {r.name}" if r is not None else "?"
 

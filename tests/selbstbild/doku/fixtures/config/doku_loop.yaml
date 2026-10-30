@@ -72,7 +72,7 @@ tick_minuten: 30
 # Final-Fix C1: geschrieben und committet wird nur auf diesem Branch (leer = jeder Branch); nie auf detached HEAD
 # oder waehrend Rebase/Merge/Cherry-Pick/Revert/Bisect.
 zweig: codex/vibemind-ops-baseline
-marker: "%LOCALAPPDATA%/VibeMind/doku_loop/anstoss"
+marker: "Z:/selbstbild-test-sentinel/doku_loop/anstoss"  # Sentinel: existiert nicht, Tests ueberschreiben ihn
 agent: doku-loop
 judge_modell: sonnet
 claude_bin: "%USERPROFILE%/.local/bin/claude.exe"
@@ -80,6 +80,6 @@ claude_bin: "%USERPROFILE%/.local/bin/claude.exe"
 # Final-Fix I4: Rowboat-Notizen (Doku/) erst nach Deploy von vibemind-os 1aac875c nach vibemind-betrieb einschalten
 # (vorher gehoert Doku/ noch dem Spiegel der VM). Urteile aus rowboat_urteile werden trotzdem gelesen.
 rowboat_notizen_aktiv: true
-rowboat_wissen: C:/Users/User/.rowboat/knowledge
+rowboat_wissen: Z:/selbstbild-test-sentinel/knowledge  # Sentinel: existiert nicht
 rowboat_notizen: Doku
 rowboat_urteile: Doku-Urteile/Urteile.md
