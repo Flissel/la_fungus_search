@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -140,22 +140,33 @@ class Graph:
         """Unabhaengig von Einfuegereihenfolge und Zeitstempel."""
         return hashlib.sha256(_kanonisch(self._inhalt()).encode("utf-8")).hexdigest()
 
-    def digest_stabil(self, *, ohne_dateien: Collection[str] = ()) -> str:
+    def digest_stabil(self, *, ohne_dateien: Collection[str] = (),
+                      still: Callable[[Mapping[str, object], str | None], bool] | None = None) -> str:
         """Wie `digest`, aber ohne fluechtige Felder (Ruling 45, C.9.5): `Beleg.commit` und jeder Schluessel `zeit`
         (z. B. `zustand.gemessen.zeit` aus der Aenderungszeit der Waechter-Datei). Eine neue Messung oder ein neuer
         HEAD ohne Codeaenderung aendert diesen Digest nicht; der Tick committet nur, wenn er sich aendert.
 
         `ohne_dateien` (Ruling 48a): Knoten mit `datei` darin und Kanten mit einem Beleg darin zaehlen nicht; so
-        erzeugen nicht committete Aenderungen keinen Commit."""
+        erzeugen nicht committete Aenderungen keinen Commit.
+
+        `still(beleg, datei)` (Ruling T4-c3): fuer jeden Beleg einer `belegt_durch`-Kante, deren Ausgangsknoten die
+        Doku-Datei `datei` traegt; wahr -> sein `digest` zaehlt nicht (nicht signaltragende Ganzdatei-Anker: ihre
+        Nachfuehrung allein ist kein Commit, sie faehrt mit dem naechsten faelligen Commit mit)."""
         inhalt = self._inhalt()
         if ohne_dateien:
             weg = set(ohne_dateien)
             inhalt["knoten"] = [k for k in inhalt["knoten"] if k.get("datei") not in weg]  # type: ignore[union-attr]
             inhalt["kanten"] = [k for k in inhalt["kanten"]  # type: ignore[union-attr]
                                 if not any(b["file"] in weg for b in k["belege"])]
+        datei_von = ({k["id"]: k.get("datei") for k in inhalt["knoten"]}  # type: ignore[union-attr]
+                     if still is not None else {})
         for k in inhalt["kanten"]:  # type: ignore[union-attr]
+            doc = datei_von.get(k["von"]) if still is not None and k["art"] == "belegt_durch" else None
             for b in k["belege"]:
+                ohne_digest = doc is not None and still is not None and still(b, doc)  # vor dem Entfernen pruefen
                 b.pop("commit", None)
+                if ohne_digest:
+                    b.pop("digest", None)
         return hashlib.sha256(_kanonisch(_ohne_zeit(inhalt)).encode("utf-8")).hexdigest()
 
     def speichern(self, pfad: Path, erzeugt: str, *, zusatz: Mapping[str, object] | None = None) -> None:

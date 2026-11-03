@@ -1448,6 +1448,17 @@ class _Lauf:
                     "messbar")
         return None
 
+    def _beleg_still(self, b: Mapping[str, object], doc: str | None) -> bool:
+        """Ruling T4-c3: zaehlt der `digest` dieses Belegs einer Aussage in `doc` NICHT fuer die Commit-Entscheidung?
+        Genau dann, wenn er nach `signal_traegt` kein Judge-Signal traegt (nur Doku-Ziele und nur-lesend-Dateien;
+        KETTEN.md und alle signaltragenden Anker zaehlen wie bisher). Unlesbar -> zaehlt."""
+        if not doc:
+            return False
+        try:
+            return not signal_traegt(Beleg.from_dict(dict(b)), doc, self.konfig)
+        except (KeyError, TypeError, ValueError):
+            return False
+
     def _offen_traegt(self, s: Mapping[str, Any]) -> bool:
         """Ruling T4-c2: traegt dieses gespeicherte offene Signal ein Judge-Signal? Kaputte Eintraege: ja (wie bisher
         verwirft `_offene_fragen` sie, der naechste Neubau findet das Signal wieder)."""
@@ -1590,8 +1601,9 @@ class _Lauf:
         if self.trocken:  # nichts schreiben: weder Vollgraph noch Pruefliste noch Stand noch Commit
             self.seiten_bereit = plan_vollstaendig
             self._seiten_trocken(graph)
-            return self.ergebnis(graph_digest=schlank(graph).digest_stabil(), messbaum_commit=self.kopf_aussen,
-                                 hinweis=self.messbaum_hinweis)
+            # Ruling T4-c3: derselbe Massstab wie die Commit-Entscheidung unten
+            return self.ergebnis(graph_digest=schlank(graph).digest_stabil(still=self._beleg_still),
+                                 messbaum_commit=self.kopf_aussen, hinweis=self.messbaum_hinweis)
         # Ruling 49: voller Graph lokal; seine Hops/Aussagen ueberlagert beim naechsten Lauf der Repo-Graph
         kennung = vollgraph_kennung(self.kopf_aussen, self.kopf_sub, self.lauf)
         try:
@@ -1613,8 +1625,10 @@ class _Lauf:
                        if neu.encode("utf-8") != roh]
         # Ruling 48a: Unterschiede, die nur aus nicht committeten Dateien kommen, zaehlen nicht
         neu_schlank = schlank(graph)
-        graph_geaendert = neu_schlank.digest_stabil(ohne_dateien=self.unsauber) != alt_schlank.digest_stabil(
-            ohne_dateien=self.unsauber)
+        # Ruling T4-c3: der nachgefuehrte Digest nicht signaltragender Ganzdatei-Anker (z. B. WORKBOARD.md) ist allein
+        # kein Grund fuer einen Commit; er steht im lokalen Vollgraph und faehrt mit dem naechsten Commit mit
+        graph_geaendert = neu_schlank.digest_stabil(ohne_dateien=self.unsauber, still=self._beleg_still) \
+            != alt_schlank.digest_stabil(ohne_dateien=self.unsauber, still=self._beleg_still)
         if graph_geaendert:  # Item 1: CAS gegen die Bytes, aus denen die Basis geladen wurde
             aenderungen.append(Aenderung(GRAPH_JSON, basis_roh, graph_text(neu_schlank, self.jetzt.isoformat())))
         if not aenderungen and not self.umgeschrieben:

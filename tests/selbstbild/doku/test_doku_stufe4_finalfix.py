@@ -284,8 +284,13 @@ def test_t4c2_workboard_aenderung_ohne_judge_ein_pruefpunkt(fx):
     assert lauf.aufrufe == [] and erg.llm_aufrufe == 0 and budget.pruefungen == [] and erg.signale == 0
     (punkt,) = _wb_punkte(fx)
     assert "3 Aussage" in punkt["text"]
-    nachher = _wb_belege(fx)
-    assert all(nachher[k] != vorher[k] for k in vorher)  # Digest still nachgefuehrt
+    # Digest still nachgefuehrt -- seit T4-c3 im lokalen Vollgraph (kein eigener Commit), graph.json bleibt
+    assert _wb_belege(fx) == vorher and erg.commit is None
+    voll = tk.vollgraph_laden(fx.konfig, tk.stand_laden(fx.konfig).vollgraph_kennung)
+    assert voll is not None
+    neu = {e.von: sorted(b.digest for b in e.belege if b.file == WB) for e in voll.graph.kanten.values()
+           if e.art == "belegt_durch" and e.von in vorher}
+    assert set(neu) == set(vorher) and all(neu[k] != sorted(b[4] for b in vorher[k]) for k in vorher)
 
 
 def test_t4c2_offenes_signal_im_stand_ohne_aufruf_erledigt(fx):
@@ -359,6 +364,75 @@ def test_t4c2_ketten_md_ganzdatei_anker_signalisiert_weiter(fx):
     lauf = FakeLaufzeit(_urteil("noch_wahr"), _urteil("noch_wahr"))
     erg = _tick(fx, laufzeit=lauf)
     assert erg.llm_aufrufe == 2  # die KETTEN-Aussage fragt den Judge wie bisher; die drei Doku-Ziele nicht
+
+
+# ---------- Ruling T4-c3: Nachfuehrung nicht signaltragender Datei-Anker ohne Commit ----------
+
+def test_t4c3_workboard_aenderung_ohne_commit_und_ruhe_danach(fx):
+    from test_doku_tick import _anstoss
+
+    _workboard_ziele(fx)
+    _wb_aendern(fx, 1)
+    kopf = _head(fx.repo)
+    _anstoss(fx)
+    lauf = FakeLaufzeit()
+    erg = _tick(fx, laufzeit=lauf)
+    assert erg.llm_aufrufe == 0 and lauf.aufrufe == [] and erg.commit is None and _head(fx.repo) == kopf
+    assert len(_wb_punkte(fx)) == 1 and _status(fx.repo) == []
+    stand = tk.stand_laden(fx.konfig)
+    assert stand.letzter_commit_aussen == kopf  # Commit-Zeiger fortgeschrieben: die Aenderung ist verarbeitet
+    # naechster Lauf: nichts zu tun
+    _anstoss(fx)
+    lauf2 = FakeLaufzeit()
+    erg2 = _tick(fx, laufzeit=lauf2)
+    assert erg2.uebersprungen == "keine_aenderung" and lauf2.aufrufe == [] and erg2.commit is None
+    assert len(_wb_punkte(fx)) == 1 and _head(fx.repo) == kopf
+
+
+def test_t4c3_symbol_anker_signalisiert_und_committet_weiter(fx):
+    _start(fx)  # Umbenennung von `senden` (Symbol-Anker der KETTEN-Aussage)
+    erg = _tick(fx, laufzeit=FakeLaufzeit(_urteil(), _urteil()))
+    assert erg.llm_aufrufe == 2 and erg.umgeschrieben == 1 and erg.commit == _head(fx.repo)
+
+
+def test_t4c3_ketten_datei_anker_wie_bisher(fx):
+    from test_doku_tick import KETTEN, _anstoss, _commit, _schreib, _text
+
+    _workboard_ziele(fx)
+    _schreib(fx.repo, KETTEN, _text(fx) + "\nAlle Sessions koordinieren sich ueber `WORKBOARD.md:5` im Repo.\n")
+    _commit(fx.repo, "ketten", KETTEN)
+    _anstoss(fx)
+    assert _tick(fx, erzwingen=True).llm_aufrufe == 0
+    kopf = _wb_aendern(fx, 2)
+    _anstoss(fx)
+    erg = _tick(fx, laufzeit=FakeLaufzeit(_urteil("noch_wahr"), _urteil("noch_wahr")))
+    assert erg.llm_aufrufe == 2  # KETTEN fragt den Judge wie bisher ...
+    assert erg.commit is not None and erg.commit != kopf  # ... und sein nachgefuehrter Beleg wird committet
+
+
+def test_t4c3_digest_stabil_ignoriert_nur_den_digest_stiller_belege():
+    from selbstbild.doku.graph import Kante, Knoten, kante_id
+
+    def graph(digest_still, digest_laut):
+        g = Graph({}, {})
+        g.knoten_hinzu(Knoten("aussage:d#1", "aussage", "x", datei="docs/spaces/001_x.md"))
+        g.knoten_hinzu(Knoten("modul:WORKBOARD.md", "modul", "WORKBOARD.md", datei="WORKBOARD.md"))
+        g.knoten_hinzu(Knoten("modul:a.py", "modul", "a.py", datei="a.py"))
+        g.kante_hinzu(Kante(kante_id("belegt_durch", "aussage:d#1", "modul:WORKBOARD.md"), "belegt_durch",
+                            "aussage:d#1", "modul:WORKBOARD.md", "extraktor",
+                            (Beleg("datei", WB, "", digest_still, "c", 3),)))
+        g.kante_hinzu(Kante(kante_id("belegt_durch", "aussage:d#1", "modul:a.py"), "belegt_durch",
+                            "aussage:d#1", "modul:a.py", "extraktor",
+                            (Beleg("symbol", "a.py", "a.f", digest_laut, "c", 3),)))
+        return g
+
+    def still(b, doc):
+        return doc == "docs/spaces/001_x.md" and b["art"] == "datei"
+
+    a, b, c = graph("1" * 64, "2" * 64), graph("9" * 64, "2" * 64), graph("1" * 64, "8" * 64)
+    assert a.digest_stabil(still=still) == b.digest_stabil(still=still)  # nur der stille Digest anders
+    assert a.digest_stabil(still=still) != c.digest_stabil(still=still)  # der Symbol-Digest zaehlt weiter
+    assert a.digest_stabil() != b.digest_stabil()  # ohne Pruefer wie bisher
 
 
 # ---------- C2b: ein Lauf nur wegen der Erstbefuellung baut alle Spaces ----------
