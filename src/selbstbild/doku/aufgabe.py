@@ -1188,7 +1188,11 @@ def _zurueck_echt(konfig: Konfig, backend: Backend, alt: Aktion, setzen: bool, s
             nachher.mkdir(parents=True, exist_ok=True)
             os.replace(ordner / ALT_DATEI, nachher / ALT_DATEI)
         except OSError as e:
-            aus(f"Hinweis: {ALT_DATEI} nicht verschoben ({type(e).__name__}); der Rückweg ist trotzdem fertig")
+            # Final-Fix I3: solange die Datei liegt, verweigert scripts\doku-loop.cmd jeden `tick` (Exit 2)
+            aus(f"Fehler: {ALT_DATEI} nicht verschoben ({type(e).__name__}); Aufgabe, Zustand, Seiten und Graph sind "
+                f"zurück, aber scripts\\doku-loop.cmd verweigert jeden tick, solange {ordner / ALT_DATEI} liegt – "
+                f"von Hand nach {nachher} verschieben")
+            return 1
     aus(f"seiten-fehlversuche-* behalten; {ALT_DATEI} liegt in {nachher.name}")
     aus("Fertig: Aufgabe, Zustand, Seiten und Graph auf den alten Loop zurückgesetzt")
     return 0

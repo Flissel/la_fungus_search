@@ -9,6 +9,8 @@ import re
 
 import pytest
 
+from doku_vm import braucht_vm as braucht_vm_i3  # liest scripts/doku-loop.cmd des echten aeusseren Repos
+
 from selbstbild.doku import judge as jg
 from selbstbild.doku import schluessel as sl
 from selbstbild.doku import tick as tk
@@ -413,6 +415,116 @@ def test_m1_rueckweg_pruefen_trocken_und_echt(umg_aussagen, monkeypatch):
     g = alt_mod.Graph.aus_text(graph.read_text(encoding="utf-8"))
     assert {k.datei for k in g.knoten.values() if k.typ == "aussage"} == {KETTEN_DOC}
     assert u.git.git("show", "--name-only", "--format=", "HEAD").splitlines() == ["docs/graph/graph.json"]
+
+
+# ---------- I3: der alte Einstieg verweigert `tick` nach der Umschaltung ----------
+
+FAKE_MAIN = ("import sys\n"
+             "print('FAKE-DOKU-LOOP ' + ' '.join(sys.argv[1:]))\n"
+             "sys.exit(0)\n")
+
+
+@pytest.fixture()
+def alter_einstieg(tmp_path):
+    """Kopie von `scripts/doku-loop.cmd` (echtes aeusseres Repo) in einem Temp-Baum: `..\\.venv\\Scripts\\python.exe`
+    ist der venv-Starter dieses Repos, `doku_loop` ein Fake-Paket, das nur seine Argumente druckt -- der echte alte
+    Loop laeuft nie, der echte Zustand wird nie gelesen (eigenes LOCALAPPDATA)."""
+    import shutil
+    import sys
+    from pathlib import Path
+
+    from doku_vm import REPO
+
+    wurzel = tmp_path / "aussen"
+    (wurzel / "scripts" / "doku_loop").mkdir(parents=True)
+    shutil.copyfile(REPO / "scripts" / "doku-loop.cmd", wurzel / "scripts" / "doku-loop.cmd")
+    (wurzel / "scripts" / "doku_loop" / "__init__.py").write_text("", encoding="utf-8")
+    (wurzel / "scripts" / "doku_loop" / "__main__.py").write_text(FAKE_MAIN, encoding="utf-8")
+    venv = Path(sys.executable).resolve().parents[1]
+    (wurzel / ".venv" / "Scripts").mkdir(parents=True)
+    shutil.copyfile(venv / "Scripts" / "python.exe", wurzel / ".venv" / "Scripts" / "python.exe")
+    shutil.copyfile(venv / "pyvenv.cfg", wurzel / ".venv" / "pyvenv.cfg")
+    lokal = tmp_path / "lokal"
+    (lokal / "VibeMind" / "doku_loop").mkdir(parents=True)
+    return wurzel, lokal
+
+
+def _cmd(wurzel, lokal, *args):
+    import os
+    import subprocess
+
+    env = {k: v for k, v in os.environ.items() if k.upper() not in ("LOCALAPPDATA", "PYTHONPATH")}
+    env["LOCALAPPDATA"] = str(lokal)
+    p = subprocess.run(["cmd", "/c", str(wurzel / "scripts" / "doku-loop.cmd"), *args], capture_output=True,
+                       text=True, env=env, cwd=str(wurzel), timeout=60, stdin=subprocess.DEVNULL)
+    return p.returncode, p.stdout + p.stderr
+
+
+def _umgeschaltet(lokal):
+    (lokal / "VibeMind" / "doku_loop" / "aufgabe-alt.json").write_text('{"aktion": {}}\n', encoding="utf-8")
+
+
+@braucht_vm_i3
+def test_i3_vor_der_umschaltung_laeuft_der_alte_einstieg_normal(alter_einstieg):
+    wurzel, lokal = alter_einstieg
+    assert _cmd(wurzel, lokal, "tick") == (0, "FAKE-DOKU-LOOP tick\n")
+    assert _cmd(wurzel, lokal, "tick", "--erzwingen") == (0, "FAKE-DOKU-LOOP tick --erzwingen\n")
+    assert _cmd(wurzel, lokal, "status") == (0, "FAKE-DOKU-LOOP status\n")
+
+
+@braucht_vm_i3
+def test_i3_nach_der_umschaltung_verweigert_tick(alter_einstieg):
+    wurzel, lokal = alter_einstieg
+    _umgeschaltet(lokal)
+    rc, aus = _cmd(wurzel, lokal, "tick")
+    assert rc == 2 and "FAKE-DOKU-LOOP" not in aus
+    assert aus.strip() == ("abgeloest durch selbstbild.doku - erst 'python -m selbstbild doku aufgabe <wurzel> "
+                           "--zurueck'")
+    rc, aus = _cmd(wurzel, lokal, "--konfig", "x.yaml", "tick", "--erzwingen")
+    assert rc == 2 and "FAKE-DOKU-LOOP" not in aus
+    # andere Unterbefehle bleiben erlaubt; `--trotzdem` laesst tick durch und wird nicht weitergereicht
+    assert _cmd(wurzel, lokal, "status") == (0, "FAKE-DOKU-LOOP status\n")
+    assert _cmd(wurzel, lokal, "messen", "--json") == (0, "FAKE-DOKU-LOOP messen --json\n")
+    assert _cmd(wurzel, lokal, "tick", "--trotzdem") == (0, "FAKE-DOKU-LOOP tick\n")
+    assert _cmd(wurzel, lokal, "tick", "--trotzdem", "--ohne-llm") == (0, "FAKE-DOKU-LOOP tick --ohne-llm\n")
+
+
+def test_i3_rueckweg_raeumt_den_marker_weg_sonst_fehler(umg, monkeypatch):
+    """`--zurueck` verschiebt `aufgabe-alt.json` in den Nachher-Ordner (danach laeuft der alte Einstieg normal);
+    scheitert genau das, endet der Rueckweg mit Exit 1 und sagt, dass der alte Einstieg sonst jeden tick verweigert."""
+    import os
+    from pathlib import Path
+
+    from selbstbild.doku import aufgabe as ag
+    from test_doku_aufgabe import _um, _zu
+
+    u = umg
+    assert _um(u)[0] == 0 and (u.ordner / ag.ALT_DATEI).is_file()
+    echt = os.replace
+
+    def ersetzen(a, b):
+        if Path(a).name == ag.ALT_DATEI:
+            raise PermissionError("gesperrt")
+        return echt(a, b)
+
+    monkeypatch.setattr(ag.os, "replace", ersetzen)
+    rc, text = _zu(u)
+    assert rc == 1 and (u.ordner / ag.ALT_DATEI).is_file()
+    assert "verweigert" in text and "doku-loop.cmd" in text and "Fertig" not in text
+    monkeypatch.setattr(ag.os, "replace", echt)
+
+
+def test_i3_rueckweg_verschiebt_den_marker(umg):
+    from selbstbild.doku import aufgabe as ag
+    from test_doku_aufgabe import _um, _zu
+
+    u = umg
+    assert _um(u)[0] == 0
+    rc, text = _zu(u)
+    assert rc == 0, text
+    assert not (u.ordner / ag.ALT_DATEI).exists()
+    (nachher,) = [p for p in u.ordner.parent.iterdir() if p.name.startswith("doku_loop-nachher-")]
+    assert (nachher / ag.ALT_DATEI).is_file()
 
 
 # ---------- I5: Struktur-Hinweise in Pruefliste.md gruppiert ----------

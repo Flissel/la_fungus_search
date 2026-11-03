@@ -1587,7 +1587,11 @@ def test_cli_dienste_seed_ergaenzt_nur_fehlende(fx, capsys):
 def test_cmd_einstieg():
     text = (REPO / "scripts" / "doku-loop.cmd").read_text(encoding="utf-8")
     assert "PYTHONPATH=%~dp0" in text
-    assert '"%~dp0..\\.venv\\Scripts\\python.exe" -m doku_loop %*' in text
+    # Final-Fix I3: die Argumente laufen einzeln durch (ohne `--trotzdem`), nicht mehr als `%*`; der Ordner des
+    # Skripts wird vor dem ersten `shift` gemerkt (shift verschiebt auch %0)
+    assert 'set "HIER=%~dp0"' in text
+    assert '"%HIER%..\\.venv\\Scripts\\python.exe" -m doku_loop%ARGS%' in text
+    assert "aufgabe-alt.json" in text and "exit /b 2" in text
     assert ">>" not in text  # Umleitung ins Log macht die Aufgabe, nicht der Einstieg
 
 
