@@ -126,7 +126,7 @@ from .stand import (
     urteil_holen, urteil_merken, urteile_kuerzen, vollgraph_kennung, vollgraph_laden, vollgraph_pfad,
     vollgraph_schreiben, vollgraph_verwerfen,
 )
-from .schluessel import schwaerzen
+from .schluessel import schluessel_muster, schwaerzen
 from .typen import Pruefpunkt
 
 if TYPE_CHECKING:
@@ -1777,9 +1777,17 @@ class _Lauf:
         """Der gemeinsame Schreibweg fuer `veraltet` (echtes Signal und Erstbefuellung): von unten nach oben ersetzen,
         neue Id, Belege mit dem gewaehlten Anker vorn (Quelle `llm`), Ledger-Eintrag; CAS, Torwaechter und pathspec-
         Commit folgen in `_voll`. `nur_lesend` (D7): nie ersetzen, Pruefpunkt `nur_lesend_veraltet` mit dem Vorschlag.
-        Rueckgabe (neuer Text, [(alte Id, neue Id)] der ausgefuehrten Ersetzungen)."""
+        Final-Fix C1: ein Ersatztext mit Schluessel-Verdacht (auch aus dem Urteils-Cache) wird nie geschrieben, der
+        Pruefpunkt `ersetzen_abgelehnt` nennt nur das Muster. Rueckgabe (neuer Text, [(alte Id, neue Id)] der ausgefuehrten Ersetzungen)."""
         getan: list[tuple[str, str]] = []
         for a, neuer_text, gewaehlt, belege in sorted(ersetzungen, key=lambda e: e[0].zeile_start, reverse=True):
+            muster = schluessel_muster(neuer_text)
+            if muster is not None:  # Final-Fix C1, zweite Linie hinter `judge.antwort_parsen`: nie in die Doku
+                self.offen.append(Pruefpunkt(
+                    "ersetzen_abgelehnt", f"Ersatztext sieht nach einem Schlüssel aus (Muster: {muster}); nicht "
+                    "geschrieben", a.datei, a.zeile_start, a.id))
+                aussage_speichern(graph, a, belege, "extraktor")
+                continue
             if nur_lesend:  # D7: nie ersetzen; der Vorschlag geht in die Pruefliste, die Belege werden nachgefuehrt
                 self.offen.append(Pruefpunkt(
                     "nur_lesend_veraltet", schwaerzen(f"Urteil veraltet ({gewaehlt.art} {gewaehlt.anker or '-'} in "

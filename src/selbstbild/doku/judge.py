@@ -47,6 +47,7 @@ from . import ketten_seed as ks
 from .anker import Beleg
 from .aussagen import Aussage
 from .konfig import Konfig
+from .schluessel import sieht_aus_wie_schluessel
 
 URTEILE = ("noch_wahr", "veraltet", "unklar")
 FRAGETYPEN = ("signal", "erstpruefung")  # signal: nach einer Aenderung; erstpruefung: einmalig gegen den heutigen Code
@@ -207,7 +208,8 @@ def antwort_parsen(roh: str, erlaubte_anker: Sequence[str], *, aussage: Aussage 
     `veraltet` braucht einen nicht leeren `neuer_text` und einen `beleg_anker` aus `erlaubte_anker`. Mit
     `aussage` muss `neuer_text` ausserdem hoechstens doppelt so lang sein wie `aussage.text` und die
     Strukturregeln von `aussagen.aussage_ersetzen` erfuellen (`aussagen.ersatz_pruefen`), damit eine Antwort,
-    die spaeter abgelehnt wuerde, schon hier als ungueltig zaehlt. Bei `noch_wahr`/`unklar` werden
+    die spaeter abgelehnt wuerde, schon hier als ungueltig zaehlt. Final-Fix C1: ein `neuer_text`, der nach einem
+    Schluessel aussieht (`schluessel.sieht_aus_wie_schluessel`), ist ungueltig. Bei `noch_wahr`/`unklar` werden
     `neuer_text` und `beleg_anker` verworfen.
     """
     beginn = roh.find("{")
@@ -230,6 +232,10 @@ def antwort_parsen(roh: str, erlaubte_anker: Sequence[str], *, aussage: Aussage 
     if text is None or not text.strip() or anker not in erlaubte_anker:
         return None
     text = text.strip()
+    # Final-Fix C1: der Ersatztext landet in committeter Doku -- sieht er nach einem Schluessel aus, ist die Antwort
+    # ungueltig (gebucht als `fehler`, Pruefpunkt nur mit dem Grund, nie mit dem Text)
+    if sieht_aus_wie_schluessel(text):
+        return None
     if aussage is not None:
         if len(text) > 2 * len(aussage.text):
             return None

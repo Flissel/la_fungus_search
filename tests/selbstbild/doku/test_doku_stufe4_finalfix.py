@@ -4,11 +4,24 @@ Alle Schluessel in diesen Tests sind synthetisch (Wiederholungen von Buchstaben/
 gehen gegen das `git init`-Fixture aus `test_doku_tick.py` unter tmp_path; Judge, Budget und Torwaechter sind Fakes.
 """
 
+import json
 import re
 
 import pytest
 
+from selbstbild.doku import judge as jg
 from selbstbild.doku import schluessel as sl
+from selbstbild.doku import tick as tk
+from selbstbild.doku.anker import Beleg
+from selbstbild.doku.aussagen import Aussage
+from selbstbild.doku.graph import Graph
+from test_doku_erstbefuellung import D1, Abo, _aussage_im_prompt, _nachtlauf  # noqa: E402
+from test_doku_erstbefuellung import NOCH_WAHR as ERST_NOCH_WAHR  # noqa: E402
+from test_doku_erstbefuellung import _start as _erst_start  # noqa: E402
+from test_doku_erstbefuellung import _veraltet  # noqa: E402
+from test_doku_tick import (  # noqa: E402,F401  (Fixture `fx`)
+    AUSSAGE, FakeBudget, FakeLaufzeit, FakeManifestBauer, _head, _jetzt, _start, _status, _text, _tick, _urteil, fx,
+)
 
 # synthetische Fake-Werte (keine echten Schluessel)
 GHP = "ghp_" + "A1b2C3d4E5" * 3 + "F6g7H8"  # 36 Zeichen nach dem Praefix
@@ -70,3 +83,77 @@ def test_i2_telegram_bot_token():
 def test_i2_namen_ohne_wertteile():
     for name, _ in sl.SCHLUESSEL_MUSTER:
         assert not re.search(r"sk-|ghp_|xox|AKIA|eyJ|\d{8}:", name)
+
+
+# ---------- C1: der Ersatztext des LLM geht durch den Schluessel-Filter ----------
+
+MIT_SCHLUESSEL = f"Der Client ruft `schicken` in `sp/a/client.py:7` mit {GHP} auf."
+
+
+def _lokal_text(fx):
+    """Alles, was der Loop lokal schreibt (Stand, Pruefliste, Cache, Ledger-Vermerke), als ein Text."""
+    teile = []
+    for p in sorted(fx.lokal.rglob("*")):
+        if p.is_file():
+            teile.append(p.read_bytes().decode("utf-8", errors="replace"))
+    return "\n".join(teile)
+
+
+def test_c1_antwort_parsen_verwirft_schluessel_im_ersatztext():
+    a = Aussage("d.md#1", "d.md", "X", 3, 3, AUSSAGE, ())
+    roh = _urteil(text=MIT_SCHLUESSEL)
+    assert jg.antwort_parsen(roh, ["client.schicken"], aussage=a) is None
+    assert jg.antwort_parsen(roh, ["client.schicken"]) is None  # auch ohne Aussage
+    sauber = jg.antwort_parsen(_urteil(), ["client.schicken"], aussage=a)
+    assert sauber is not None and sauber.urteil == "veraltet"
+
+
+def test_c1_signal_veraltet_mit_schluessel_schreibt_und_committet_nichts(fx):
+    _start(fx)
+    kopf = _head(fx.repo)
+    zeilen: list[str] = []
+    lauf, budget = FakeLaufzeit(_urteil(text=MIT_SCHLUESSEL), _urteil(text=MIT_SCHLUESSEL)), FakeBudget()
+    erg = _tick(fx, laufzeit=lauf, budget=budget, melden=zeilen.append)
+    assert erg.umgeschrieben == 0 and erg.llm_aufrufe == 1  # die erste Antwort ist schon ungueltig
+    assert budget.buchungen == [("doku-loop", "fehler")]
+    assert AUSSAGE in _text(fx) and GHP not in _text(fx)
+    assert erg.commit is None or GHP not in (fx.repo / "docs/graph/graph.json").read_text(encoding="utf-8")
+    assert not (fx.repo / "docs/graph/ledger.jsonl").exists()
+    assert GHP not in _lokal_text(fx) and not any(GHP in z for z in zeilen)
+    offen = tk.pruefliste_laden(fx.konfig)["offen"]
+    assert any(p["art"] == "judge_ungueltig" for p in offen)
+    assert _status(fx.repo) == [] and (_head(fx.repo) == kopf or erg.commit is not None)
+
+
+def test_c1_ersetzen_lehnt_schluessel_ab_und_nennt_nur_das_muster(fx):
+    lauf = tk._Lauf(fx.konfig, jetzt=_jetzt(), erzwingen=False, laufzeit=FakeLaufzeit(), ohne_llm=False, budget=None,
+                    drift=lambda r: set(), manifest_bauer=FakeManifestBauer(), nach_tick=None, melden=lambda z: None)
+    lauf.lauf = "2026-11-03T01:00:00#1"
+    b = Beleg("symbol", "sp/a/client.py", "client.senden", "d" * 64, "c", 7)
+    text = f"# K\n\n{AUSSAGE}\n"
+    a = Aussage("docs/spaces/KETTEN.md#a", "docs/spaces/KETTEN.md", "K", 3, 3, AUSSAGE, (b,))
+    graph = Graph({}, {})
+    for nur_lesend in (False, True):
+        lauf.offen = []
+        neu, getan = lauf._ersetzen(graph, text, [(a, MIT_SCHLUESSEL, b, [b])], nur_lesend=nur_lesend)
+        assert neu == text and getan == [] and lauf.umgeschrieben == 0 and lauf.ledger == []
+        (pp,) = lauf.offen
+        assert pp.art == "ersetzen_abgelehnt" and GHP not in pp.text and "ghp_" not in pp.text
+        assert "GitHub-Token (klassisch)" in pp.text and pp.aussage_id == a.id
+        assert "aussage:docs/spaces/KETTEN.md#a" in graph.knoten  # Belege bleiben gemerkt
+
+
+def test_c1_erstbefuellung_veraltet_mit_schluessel(fx):
+    _erst_start(fx)
+    doku = fx.repo / "docs/spaces/001_e1.md"
+    vorher, kopf = doku.read_bytes(), _head(fx.repo)
+    abo = Abo(lambda p: _veraltet(D1.replace("Eins", GHP), "client.helfer") if _aussage_im_prompt(p) == D1
+              else ERST_NOCH_WAHR)
+    zeilen: list[str] = []
+    erg = _nachtlauf(fx, laufzeit=abo, melden=zeilen.append)
+    assert erg.umgeschrieben == 0 and doku.read_bytes() == vorher
+    assert erg.commit is None and _head(fx.repo) == kopf and _status(fx.repo) == []
+    assert GHP not in _lokal_text(fx) and not any(GHP in z for z in zeilen)
+    offen = tk.pruefliste_laden(fx.konfig)["offen"]
+    assert any(p["art"] == "judge_ungueltig" and p["datei"] == "docs/spaces/001_e1.md" for p in offen)
+    assert all(GHP not in json.dumps(p, ensure_ascii=False) for p in offen)
