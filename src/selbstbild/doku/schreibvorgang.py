@@ -185,14 +185,24 @@ def unsaubere_dateien(repo: Path) -> frozenset[str]:
 def eigene_datei(konfig: Konfig, datei: str) -> bool:
     """Ruling 48b: Dateien, die der Loop selbst schreibt (KETTEN.md, weitere Doku, Doku-Ziele, alles unter docs/graph),
     sind nie Belegziel -- ein Loop-Commit darf kein Signal fuer sich selbst erzeugen. Doku-Ziele zaehlen nach Muster
-    (auch eine Datei, die es noch nicht gibt); nur-lesend-Dateien sind keine eigenen."""
+    (auch eine Datei, die es noch nicht gibt); nur-lesend-Dateien sind keine eigenen. Task 6: auch der Index
+    `docs/spaces/README.md`, sobald generierte Space-Dokus moeglich sind (Block `neue-spaces`)."""
     schl = pfad_schluessel(konfig.repo, datei)
     return (schl in {pfad_schluessel(konfig.repo, d) for d in _feste_doku(konfig)} or doku_ziel(konfig, datei)
-            or datei == GRAPH_DIR or datei.startswith(GRAPH_DIR + "/"))
+            or datei == GRAPH_DIR or datei.startswith(GRAPH_DIR + "/")
+            or (schl == pfad_schluessel(konfig.repo, NEUE_SPACES_README) and neue_spaces_aktiv(konfig)))
 
 
 # Task 4: nie Doku-Ziel, egal welches Muster sie trifft (Index fuer den Drift-Waechter, Massnahmenliste)
 NIE_ZIEL = frozenset({"MASSNAHMEN.md", "README.md"})
+# Task 6 (D9): der Index der Space-Doku; der Loop schreibt darin nur den Block `neue-spaces` (neue_spaces.py)
+NEUE_SPACES_README = "docs/spaces/README.md"
+
+
+def neue_spaces_aktiv(konfig: Konfig) -> bool:
+    """Task 6: generierte Space-Dokus (`docs/spaces/<NNN>_<name>.md`) gibt es nur, wenn sie Doku-Ziele waeren --
+    dann rendert jeder spaetere Lauf ihre Bloecke wie bei jeder anderen Doku."""
+    return doku_ziel(konfig, "docs/spaces/000_neu.md")
 
 
 @functools.lru_cache(maxsize=64)
@@ -438,6 +448,8 @@ def _schreiben_committen(repo: Path, alle: Sequence[Aenderung], betreff: str, la
     geschrieben: dict[str, tuple[bytes | None, bytes]] = {}
     try:
         for a in alle:
+            if a.alt is None and (repo / a.datei).exists():  # Task 6: neue Datei -> CAS heisst "gibt es noch nicht"
+                raise umschreiben.FremdeAenderung(f"{a.datei}: existiert inzwischen (sollte neu angelegt werden)")
             umschreiben.schreiben(repo, a.datei, a.neu, erwartet_alt=a.alt if a.alt is not None else b"")
             geschrieben[a.datei] = (a.alt, a.neu.encode("utf-8"))
     except (OSError, umschreiben.FremdeAenderung, ValueError) as fehler:

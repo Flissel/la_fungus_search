@@ -59,9 +59,13 @@ def test_doku_dateien_reihenfolge_ausschluss_und_eigene(fx):
                                   "docs/spaces/002_b.md"]
     assert sv.eigene_datei(k, "docs/spaces/001_a.md") and sv.eigene_datei(k, "docs/modules/01_m.md")
     assert sv.eigene_datei(k, "docs/spaces/009_noch_nicht_da.md")  # Muster, nicht Dateisystem
-    for nein in ("docs/spaces/README.md", "docs/modules/MASSNAHMEN.md", "docs/spaces/003_nur.md",
+    for nein in ("docs/modules/README.md", "docs/modules/MASSNAHMEN.md", "docs/spaces/003_nur.md",
                  "docs/spaces/agentfarm/contract.md", "docs/spaces/0x/tief.md", "sp/a/client.py"):
         assert not sv.eigene_datei(k, nein), nein
+    # Task 6: der Index docs/spaces/README.md bekommt den Block `neue-spaces` vom Loop (eigene Datei, nie Belegziel),
+    # sobald generierte Space-Dokus Doku-Ziele waeren; ein Doku-Ziel wird er trotzdem nie (siehe doku_dateien oben)
+    assert sv.eigene_datei(k, "docs/spaces/README.md")
+    assert not sv.eigene_datei(dataclasses.replace(k, doku_ziele=("docs/modules/*.md",)), "docs/spaces/README.md")
     # ohne Ziele wie bisher; eine leere `ketten_md` (Vorgabe ohne Abschnitt) kommt nicht in die Liste
     assert sv.doku_dateien(dataclasses.replace(k, doku_ziele=(), doku_nur_lesen=())) == [KETTEN, "docs/extra.md"]
     assert sv.doku_dateien(dataclasses.replace(k, ketten_md="", weitere_doku=(), doku_ziele=())) == []

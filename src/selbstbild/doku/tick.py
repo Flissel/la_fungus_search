@@ -63,6 +63,12 @@ Stufe 4, Task 5 (D8): nach der Aussagen-Pruefung liest `_ereignisse` die Space-E
 `ereignisse <space>`; `_rendern` behandelt KETTEN.md und alle anderen Doku-Dateien mit demselben Hand-Edit-Schutz
 (Render-Hashes anderer Dateien unter `<datei>#<block>`). Ein Commit an einer Ereignis-Quelle stoesst wie ein Doku-Commit
 einen Lauf ohne Neubau an. Kein Judge: Events tragen keine gemerkten Aussage-Belege.
+
+Stufe 4, Task 6 (D9): vor den Events erkennt `_neue_spaces` im Messbaum Space-Ordner ohne Doku (`neue_spaces`) und legt
+je einen `docs/spaces/<NNN>_<name>.md` nur aus markierten Bloecken an, dazu eine Zeile im Block `neue-spaces` der
+`docs/spaces/README.md` (sonst nie Schreibziel). Bereits generierte Dokus (Block `steckbrief <space>`) werden wie jede
+Doku neu gerendert; fehlt ihr Ordner, bleiben sie stehen (`space_doku_ohne_space`). Ein Commit unter einem Space-Ordner
+ohne Doku oder mit generierter Doku stoesst einen Lauf ohne Neubau an. Neue Dateien: CAS = "gibt es noch nicht".
 """
 
 from __future__ import annotations
@@ -83,6 +89,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import anker, bauen, ketten_seed, korpus, messbaum, render_ereignisse, render_ketten, rowboat, umschreiben
+from . import neue_spaces as neue_spaces_mod
 from . import aussagen as au
 from . import waechter
 from .anker import Beleg
@@ -96,10 +103,10 @@ from .pruefliste import (
     beleg_nicht_messbar, beleg_untracked, neue_offene, pruefliste_ergaenzen, pruefliste_laden, pruefliste_pfad,
 )
 from .schreibvorgang import (
-    GRAPH_DIR, GRAPH_JSON, LEDGER, SUBMODUL, Aenderung, Ausgang, doku_dateien, doku_ziel, eigene_datei,
-    fremde_aenderungen, fremde_doku_ziele, git, graph_text, halbschreibung_aufraeumen, hat_submodul, kopf, kopf_pruefen,
-    ledger_commit_von, nur_lesend, nur_lesend_dateien, pfad_schluessel, schreiben_pruefen_committen, submodul_kopf,
-    unsaubere_dateien, versionierte_dateien,
+    GRAPH_DIR, GRAPH_JSON, LEDGER, NEUE_SPACES_README, SUBMODUL, Aenderung, Ausgang, doku_dateien, doku_ziel,
+    eigene_datei, fremde_aenderungen, fremde_doku_ziele, git, graph_text, halbschreibung_aufraeumen, hat_submodul, kopf,
+    kopf_pruefen, ledger_commit_von, muster_trifft, neue_spaces_aktiv, nur_lesend, nur_lesend_dateien, ohne_gross_klein,
+    pfad_schluessel, schreiben_pruefen_committen, submodul_kopf, unsaubere_dateien, versionierte_dateien,
 )
 from .seed_befehl import RenderBericht, SchlankBericht, SeedErgebnis, graph_schlank, neu_rendern, seed, seed_deckung
 from .stand import (
@@ -186,6 +193,8 @@ class TickErgebnis:
     aussagen_neu: int = 0  # Belege erstmals gemerkt (Quelle `extraktor`, ohne LLM)
     doku_uebersprungen: list[str] = dataclasses.field(default_factory=list)  # Ruling T4-b: fremd geaenderte Ziele
     ereignisse: int = 0  # Task 5: Space-Events (Space, Name) aus den Quellen im Messbaum
+    neue_spaces: list[str] = dataclasses.field(default_factory=list)  # Task 6: Space-Ordner ohne Doku (Messbaum)
+    neue_dateien: list[str] = dataclasses.field(default_factory=list)  # Task 6: angelegte (trocken: geplante) Dokus
 
 
 # ---------- Aenderungen ----------
@@ -279,9 +288,10 @@ EREIGNIS_BLOCK_ARTEN = frozenset({"block_entfernt", "block_ohne_quelle"})
 
 
 def ereignis_punkt(eintrag: Mapping[str, object]) -> bool:
-    """Ein Struktur-Eintrag der Pruefliste, den der naechste `_voll`-Lauf ersetzt (siehe `EREIGNIS_ARTEN`)."""
+    """Ein Struktur-Eintrag der Pruefliste, den der naechste `_voll`-Lauf ersetzt (siehe `EREIGNIS_ARTEN`; Task 6:
+    auch die Arten aus `neue_spaces.ARTEN`)."""
     art = eintrag.get("art")
-    if art in EREIGNIS_ARTEN:
+    if art in EREIGNIS_ARTEN or art in neue_spaces_mod.ARTEN:
         return True
     return art in EREIGNIS_BLOCK_ARTEN and str(eintrag.get("aussage_id") or "").startswith(
         render_ereignisse.BLOCK_PRAEFIX)
@@ -433,6 +443,15 @@ class _Lauf:
         # Task 5: Events-Bloecke je Doku-Datei (Blockname -> Inhalt) und Zahl der Events
         self.ereignis_bloecke: dict[str, dict[str, str]] = {}
         self.n_ereignisse = 0
+        self.evs: list[ereignisse_ex.Ereignis] = []
+        self.ev_praefixe: set[str] = set()
+        self.ev_pp: list[Pruefpunkt] = []
+        # Task 6: neue Space-Dokus
+        self.neue_spaces: list[str] = []
+        self.neu_angelegt: list[str] = []  # in diesem Lauf angelegte (trocken: geplante) Doku-Dateien
+        self.generiert_bloecke: dict[str, dict[str, str]] = {}  # generierte Doku -> Blockname -> Inhalt (LF)
+        self.readme_roh: bytes | None = None  # CAS-Basis von docs/spaces/README.md (None = fehlt)
+        self.readme: render_ketten.RenderErgebnis | None = None  # gerenderter Block `neue-spaces`
 
     # ----- Ergebnis und Stand -----
 
@@ -443,7 +462,8 @@ class _Lauf:
                             pruefliste, commit, uebersprungen, graph_digest, messbaum_commit, hinweis,
                             doku_gelesen=self.doku_gelesen, nur_lesend_gelesen=self.nur_lesend_gelesen,
                             aussagen=self.n_aussagen, aussagen_belegt=self.n_belegt, aussagen_neu=self.n_neu,
-                            doku_uebersprungen=list(self.doku_fremd_ziele), ereignisse=self.n_ereignisse)
+                            doku_uebersprungen=list(self.doku_fremd_ziele), ereignisse=self.n_ereignisse,
+                            neue_spaces=list(self.neue_spaces), neue_dateien=list(self.neu_angelegt))
 
     def stand_speichern(self, *, fortschreiben: bool, render_hashes: Mapping[str, str] | None = None,
                         hand_edit: Mapping[str, str] | None = None,
@@ -866,6 +886,9 @@ class _Lauf:
         quellen_bekannt = frozenset(b.file for e in basis.kanten.values() if e.art == "ereignis_von" for b in e.belege)
         ereignis_geaendert = [p for p in geaendert if ereignis_quelle(konfig, p, quellen_bekannt)]
         doku_geaendert += [p for p in ereignis_geaendert if p not in doku_geaendert]
+        # Task 6: ein Commit unter einem Space-Ordner ohne Doku oder mit generierter Doku -> Lauf ohne Neubau
+        space_geaendert = self._space_anstoss(geaendert)
+        doku_geaendert += [p for p in space_geaendert if p not in doku_geaendert]
         offene = list(self.stand_alt.offene_signale) if self.stand_alt else []
         self.spaces = spaces
 
@@ -874,7 +897,8 @@ class _Lauf:
 
         self.melden(f"Änderungen: {zahl(aussen)} Dateien außen, {zahl(sub)} im Submodul -> Spaces: "
                     f"{', '.join(spaces) or 'keine'}; Beleg-Dateien außerhalb: {len(belegdateien)}; "
-                    f"Doku geändert: {len(doku_geaendert)} (Ereignis-Quellen {len(ereignis_geaendert)}); "
+                    f"Doku geändert: {len(doku_geaendert)} (Ereignis-Quellen {len(ereignis_geaendert)}, "
+                    f"Space-Ordner {len(space_geaendert)}); "
                     f"offene Signale: {len(offene)}")
         if not spaces and not belegdateien and not offene and not self.render_noetig and not doku_geaendert:
             self.stand_speichern(fortschreiben=True)
@@ -928,6 +952,40 @@ class _Lauf:
         else:
             uebrig = [s for s in offene if isinstance(s.get("space"), str) and s["space"] not in spaces]
         return self._voll(basis, basis_roh, schlank(repo_graph), vorher, uebrig)
+
+    def _space_anstoss(self, geaendert: Sequence[str]) -> list[str]:
+        """Task 6: geaenderte Dateien unter einem Space-Ordner (`ort` der Space-Regeln), der keine Doku hat oder eine
+        generierte (Block `steckbrief`). Regeln und Doku werden dafuer im Arbeitsbaum gelesen -- nur fuer die Frage, ob
+        angestossen wird; erkannt und gemessen wird im Messbaum."""
+        konfig = self.konfig
+        if not geaendert or not neue_spaces_aktiv(konfig):
+            return []
+        orte = neue_spaces_mod.space_orte(self.repo)
+        ic = ohne_gross_klein(self.repo)
+        je_ordner: dict[str, list[str]] = {}
+        for p in geaendert:
+            teile = p.split("/")
+            for ort in orte:
+                n = len(ort.split("/"))
+                if len(teile) > n and muster_trifft(ort, "/".join(teile[:n]), ignorecase=ic):
+                    je_ordner.setdefault(teile[n - 1], []).append(p)
+        je_ordner = {n: ps for n, ps in je_ordner.items() if not n.startswith("_") and n != "__pycache__"}
+        if not je_ordner:
+            return []
+        zuordnung = ereignisse_ex.space_dokumente_zuordnen(list(je_ordner), konfig.space_dokumente,
+                                                           doku_dateien(konfig))
+        treffer: list[str] = []
+        for name, pfade in sorted(je_ordner.items()):
+            doc = zuordnung.get(space_schluessel(name))
+            if doc is not None:
+                try:
+                    text = (self.repo / doc).read_bytes().decode("utf-8", errors="replace")
+                except OSError:
+                    text = ""
+                if neue_spaces_mod.generierter_space(text) is None:
+                    continue  # handgeschriebene Doku: Sache von Task 4/5
+            treffer.extend(pfade)
+        return treffer
 
     def _anstoss(self) -> bool:
         """Marker und Intervall zuerst (ohne Git); erst wenn beide nicht anstossen, werden die Koepfe gelesen (D6)."""
@@ -1033,6 +1091,11 @@ class _Lauf:
                 self.doku_roh[doc] = (self.repo / doc).read_bytes()
             except OSError:
                 pass
+        if neue_spaces_aktiv(self.konfig):  # Task 6: CAS-Basis des Index (nur Block `neue-spaces`)
+            try:
+                self.readme_roh = (self.repo / NEUE_SPACES_README).read_bytes()
+            except OSError:
+                self.readme_roh = None
 
     def _deadline(self) -> bool:
         """I7a: nach `tick_deadline_min` Laufzeit keine neuen Judge-Fragen mehr (die Signale bleiben offen)."""
@@ -1178,7 +1241,10 @@ class _Lauf:
         self.melden(f"Belege: {self.signale} Signal(e) (Hops {hop_signale}, Aussagen {aussagen_signale}); "
                     f"Judge {self.llm_aufrufe} Aufruf(e), {self.umgeschrieben} umgeschrieben")
 
-        # 6b. Space-Events (Task 5, D8): aus dem Messbaum, deterministisch, kein Judge
+        # 6b. Space-Events (Task 5, D8): aus dem Messbaum, deterministisch, kein Judge; vorher (Task 6, D9) neue
+        # Space-Dokus anlegen und generierte Dokus mit Inhalt versorgen (sie brauchen die Events)
+        self._ereignisse_lesen()
+        self._neue_spaces(texte)
         self._ereignisse(graph, texte)
 
         # 7. Rendern
@@ -1201,7 +1267,10 @@ class _Lauf:
         # 8. Commit nur bei echter Aenderung (Ruling 45b; Ruling 49: nur der schlanke Graph zaehlt)
         offene = [*uebrig, *self.offene_signale]
         voll = set(self.spaces) == set(konfig.spaces)
-        aenderungen = [Aenderung(doc, roh, neu) for doc, (roh, neu) in texte.items() if neu.encode("utf-8") != roh]
+        # Task 6: neu angelegte Dateien (und ein fehlender Index) mit CAS "gibt es noch nicht"
+        ohne_alt = {*self.neu_angelegt, *([NEUE_SPACES_README] if self.readme_roh is None else [])}
+        aenderungen = [Aenderung(doc, None if doc in ohne_alt else roh, neu) for doc, (roh, neu) in texte.items()
+                       if neu.encode("utf-8") != roh]
         # Ruling 48a: Unterschiede, die nur aus nicht committeten Dateien kommen, zaehlen nicht
         neu_schlank = schlank(graph)
         graph_geaendert = neu_schlank.digest_stabil(ohne_dateien=self.unsauber) != alt_schlank.digest_stabil(
@@ -1219,7 +1288,9 @@ class _Lauf:
         m = neue_offene(konfig, self.offen)
         betreff = f"docs(loop): {', '.join(self.spaces) or 'Belege'} – {self.umgeschrieben} Aussagen nachgeführt, " \
                   f"{m} in Prüfliste"
-        aus: Ausgang = schreiben_pruefen_committen(repo, aenderungen, betreff, self.lauf, vorher=vorher,
+        if self.neu_angelegt:
+            betreff += f"; neue Space-Doku {', '.join(self.neu_angelegt)}"
+        aus: Ausgang =schreiben_pruefen_committen(repo, aenderungen, betreff, self.lauf, vorher=vorher,
                                                    drift=self.drift, ledger=self.ledger, melden=self.melden,
                                                    pp_datei=konfig.ketten_md, zweig=konfig.zweig,
                                                    vermerk=schreibvermerk_pfad(konfig))
@@ -1496,21 +1567,150 @@ class _Lauf:
         aussage_speichern(graph, a, erneuert, "llm" if antwort.urteil == "noch_wahr" else "extraktor")
         return None
 
-    def _ereignisse(self, graph: Graph, texte: Mapping[str, tuple[bytes, str]]) -> None:
-        """Task 5 (D8): Events aus den Quellen im Messbaum lesen (T5-a, committeter Stand), als `ereignis`-Knoten in den
-        Graph, je zugeordneter Doku-Datei ein Block je Space, Abgleich in die Pruefliste (`struktur`). Ohne Quellen
-        werden nur alte Ereignis-Knoten entfernt."""
+    # ----- neue Space-Dokus (Task 6, D9) -----
+
+    def _neue_spaces(self, texte: dict[str, tuple[bytes, str]]) -> None:
+        """Space-Ordner im Messbaum erkennen; generierte Dokus mit Bloecken versorgen (fehlt ihr Ordner: Bloecke bleiben,
+        `space_doku_ohne_space`); fuer Spaces ohne Doku `docs/spaces/<NNN>_<name>.md` anlegen (in `texte`, alt = b"")
+        und den Index-Block `neue-spaces` rendern. Wartet, solange die README fremde Aenderungen hat oder ihr Block die
+        neue Datei nicht verlinken kann (Hand-Edit, entfernt) -- sonst blockierte der Torwaechter jeden Commit."""
         konfig = self.konfig
-        evs: list[ereignisse_ex.Ereignis] = []
+        if not neue_spaces_aktiv(konfig):
+            return
         pp: list[Pruefpunkt] = []
-        praefixe: set[str] = set()
-        if konfig.ereignisse:
-            evs = ereignisse_ex.ereignisse_lesen(self.mess_konfig, self.mess_repo, praefixe=praefixe, pruefpunkte=pp)
+        ordner = neue_spaces_mod.space_ordner(self.mess_repo, unter_repos=(*self.sub_koepfe, *self.nicht_messbar))
+        je_key = {space_schluessel(n): (n, rel) for n, rel in ordner.items()}
+        dateien = doku_dateien(konfig)
+        self.neue_spaces = neue_spaces_mod.neue_spaces(konfig, None, self.mess_repo, dateien=dateien, ordner=ordner)
+        for doc, (_, text) in sorted(texte.items()):  # 1. vorhandene generierte Dokus
+            key = neue_spaces_mod.generierter_space(text)
+            if key is None:
+                continue
+            inhalt = None
+            if key in je_key:
+                inhalt = self._space_bloecke(*je_key[key], pp)
+            else:
+                pp.append(Pruefpunkt("space_doku_ohne_space", f"{doc}: generierte Doku, aber kein Space-Ordner `{key}` "
+                                     "mehr im committeten Stand; die Datei bleibt (Löschen nur von Hand)", doc, None,
+                                     f"space:{key}"))
+            if inhalt is None:  # Bloecke bleiben, wie sie sind
+                inhalt = {b: x.inhalt.replace("\r\n", "\n") for b, x in render_ketten.bloecke_finden(text).items()
+                          if b.startswith((*neue_spaces_mod.GENERIERT, neue_spaces_mod.EREIGNISSE))}
+            self.generiert_bloecke[doc] = inhalt
+        readme_fremd = bool(umschreiben.fremde_aenderungen(self.repo, [NEUE_SPACES_README]))
+        if self.neue_spaces and readme_fremd:
+            pp.append(self._wartet(f"{NEUE_SPACES_README} hat nicht committete fremde Änderungen"))
+        elif self.neue_spaces:  # 2. neue Dokus
+            vorhanden = {d for d in (*dateien, *self.versioniert) if d.startswith(neue_spaces_mod.ORDNER + "/")}
+            vorhanden |= {p.name for p in (self.repo / neue_spaces_mod.ORDNER).glob("*.md")}
+            for name, doc in neue_spaces_mod.dateien_planen(self.neue_spaces, vorhanden, pp):
+                inhalt = self._space_bloecke(name, ordner[name], pp)
+                if inhalt is None:
+                    continue
+                if (self.repo / doc).exists():  # nie ueberschreiben
+                    pp.append(self._wartet(f"{doc} existiert schon"))
+                    continue
+                nummer = int(doc.rsplit("/", 1)[-1].split("_", 1)[0])
+                texte[doc] = (b"", neue_spaces_mod.generierte_rendern(neue_spaces_mod.geruest(name, nummer), inhalt,
+                                                                      {}, doc).text)
+                self.generiert_bloecke[doc] = inhalt
+                self.neu_angelegt.append(doc)
+        if not readme_fremd:  # 3. Index
+            self._readme(texte, pp)
+        self.struktur.extend(pp)
+        self.melden(f"Neue Spaces: {len(ordner)} Space-Ordner, ohne Doku {', '.join(self.neue_spaces) or 'keine'}; "
+                    f"angelegt {', '.join(self.neu_angelegt) or 'nichts'}; generierte Dokus {len(self.generiert_bloecke)}")
+
+    def _wartet(self, grund: str) -> Pruefpunkt:
+        return Pruefpunkt("space_doku_wartet", f"{grund}; neue Space-Doku für {', '.join(self.neue_spaces)} wartet",
+                          NEUE_SPACES_README, None, "space_doku_wartet")
+
+    def _readme(self, texte: dict[str, tuple[bytes, str]], pp: list[Pruefpunkt]) -> None:
+        """Block `neue-spaces` mit einer Zeile je generierter Doku (auch fremd geaendert ausgelassene: die Datei gibt es).
+        Kann er eine neu angelegte Datei nicht verlinken, werden die neuen Dateien in diesem Lauf verworfen."""
+        alt = self.stand_alt or Stand()
+        praefix = f"{NEUE_SPACES_README}#"
+        alte = {k[len(praefix):]: v for k, v in alt.render_hashes.items() if k.startswith(praefix)}
+        text = (self.readme_roh or b"").decode("utf-8")
+
+        def eintraege() -> list[tuple[str, str]]:
+            aus: list[tuple[str, str]] = []
+            for doc in sorted({*doku_dateien(self.konfig), *self.neu_angelegt}):
+                if not doc.startswith(neue_spaces_mod.ORDNER + "/") or doc.count("/") != 2:
+                    continue
+                try:
+                    inhalt = texte[doc][1] if doc in texte else (self.repo / doc).read_bytes().decode("utf-8", "replace")
+                except OSError:
+                    continue
+                key = neue_spaces_mod.generierter_space(inhalt)
+                if key is not None:
+                    kopf = inhalt.lstrip("﻿").split("\n", 1)[0].strip()
+                    teile = kopf.split(" ", 2)
+                    aus.append((doc, teile[2] if len(teile) == 3 and teile[0] == "#" else key))
+            return aus
+
+        liste = eintraege()
+        if not liste and neue_spaces_mod.README_BLOCK not in render_ketten.bloecke_finden(text) \
+                and neue_spaces_mod.README_BLOCK not in alte:
+            return
+        res = neue_spaces_mod.readme_rendern(text, liste, alte)
+        if [d for d in self.neu_angelegt if not neue_spaces_mod.im_index(res.text, d)]:
+            pp.append(self._wartet(f"Block `{neue_spaces_mod.README_BLOCK}` in {NEUE_SPACES_README} ist von Hand "
+                                   "geändert oder entfernt und kann die neue Datei nicht verlinken"))
+            for doc in self.neu_angelegt:
+                texte.pop(doc, None)
+                self.generiert_bloecke.pop(doc, None)
+            self.neu_angelegt = []
+            res = neue_spaces_mod.readme_rendern(text, eintraege(), alte)
+        self.readme = res
+
+    def _space_bloecke(self, name: str, ort: str, pp: list[Pruefpunkt]) -> dict[str, str] | None:
+        """Bloecke einer generierten Doku: Graph nur dieses Space (`bauen.graph_bauen`, Messbaum), Events, Stand. Ein
+        Fehler wird `space_doku_fehler` (nur der Typ) und die Doku in diesem Lauf nicht (neu) gerendert."""
+        try:
+            mess = self.mess_konfig
+            # MCP-Muster eines konfigurierten Space mit diesem Ordner, sonst `decorator` (`@mcp.tool`)
+            muster = next((s.mcp_muster for s in mess.spaces.values() if s.wurzel.strip("/") == ort), "decorator")
+            sk = SpaceKonfig(name, ort, muster)
+            k = dataclasses.replace(mess, spaces={sk.name: sk})
+            manifest = self.manifest_bauer(sk, k, self.commit_fuer(ort + "/"))
+            graph, bau_pp = bauen.graph_bauen(k, [sk.name], None, {sk.name: manifest}, sql_defs=self.sql_defs,
+                                              commit_aussen=self.kopf_aussen, commit_sub=self.kopf_sub)
+            pp.extend(p for p in bau_pp if p.art in ("extraktor_fehler", "datensatz_fehler"))
+            inhalt = neue_spaces_mod.bloecke(sk.name, graph, self.evs, ort=ort, stand=self._stand(ort))
+        except Exception as fehler:  # noqa: BLE001 - ein Space darf den Lauf nicht umwerfen
+            pp.append(Pruefpunkt("space_doku_fehler", f"{name}: {type(fehler).__name__} in {_fehler_ort(fehler)}; "
+                                 "Space-Doku in diesem Lauf nicht gerendert", None, None, f"space:{space_schluessel(name)}"))
+            return None
+        return inhalt
+
+    def _stand(self, ort: str) -> str:
+        """`<repo>@<sha7>`: Repo, in dem der Space liegt (Submodul-Pfad bzw. Name des aeusseren Repos), und der letzte
+        Commit am Ordner bis zum gemessenen Commit (aendert sich nur, wenn sich der Space aendert)."""
+        sub = self._submodul_von(ort + "/")
+        wo, pfad, name = (self.repo, ort, self.repo.name) if sub is None else (self.repo / sub, ort[len(sub) + 1:], sub)
+        commit = self.commit_fuer(ort + "/")
+        sha = (git(wo, "log", "-1", "--format=%H", commit, "--", pfad) or "").strip() if commit else ""
+        return f"{name}@{(sha or commit)[:7]}"
+
+    def _ereignisse_lesen(self) -> None:
+        """Task 5: Events aus den Quellen im Messbaum lesen (T5-a, committeter Stand); einmal je Lauf."""
+        self.evs, self.ev_praefixe, self.ev_pp = [], set(), []
+        if self.konfig.ereignisse:
+            self.evs = ereignisse_ex.ereignisse_lesen(self.mess_konfig, self.mess_repo, praefixe=self.ev_praefixe,
+                                                      pruefpunkte=self.ev_pp)
+
+    def _ereignisse(self, graph: Graph, texte: Mapping[str, tuple[bytes, str]]) -> None:
+        """Task 5 (D8): die gelesenen Events (`_ereignisse_lesen`) als `ereignis`-Knoten in den Graph, je zugeordneter
+        Doku-Datei ein Block je Space (Task 6: auch die in diesem Lauf angelegten), Abgleich in die Pruefliste
+        (`struktur`). Ohne Quellen werden nur alte Ereignis-Knoten entfernt."""
+        konfig = self.konfig
+        evs, pp, praefixe = self.evs, list(self.ev_pp), self.ev_praefixe
         bauen.ereignisse_einbauen(graph, evs)
         if not konfig.ereignisse:
             return
         zuordnung = ereignisse_ex.space_dokumente_zuordnen([e.space for e in evs], konfig.space_dokumente,
-                                                           doku_dateien(konfig), pruefpunkte=pp)
+                                                           [*doku_dateien(konfig), *self.neu_angelegt], pruefpunkte=pp)
         bloecke: dict[str, dict[str, str]] = {}
         for key, doc in sorted(zuordnung.items()):
             bloecke.setdefault(doc, {})[render_ereignisse.block_name(key)] = render_ereignisse.ereignisse_rendern(
@@ -1537,18 +1737,27 @@ class _Lauf:
         md = self.konfig.ketten_md
         hashes, hand_edit = dict(alt.render_hashes), dict(alt.hand_edit_gemeldet)
         n_bloecke = geaendert = neu_hand = 0
-        for doc in list(texte):
-            roh, text = texte[doc]
+        readme = [NEUE_SPACES_README] if self.readme is not None else []
+        for doc in [*texte, *readme]:
             praefix = "" if doc == md else f"{doc}#"
 
             def eigen(k: str, praefix: str = praefix) -> bool:
                 return k.startswith(praefix) if praefix else not _doku_schluessel(k)
 
             alte = {k[len(praefix):]: v for k, v in alt.render_hashes.items() if eigen(k)}
-            if doc == md:
+            if doc in readme and self.readme is not None:  # Task 6: in `_neue_spaces` gerendert (nur `neue-spaces`)
+                roh = self.readme_roh or b""
+                text = roh.decode("utf-8")
+                res = self.readme
+            elif doc == md:
+                roh, text = texte[doc]
                 res = render_ketten.rendern(text, graph, alte, datei=md)
             else:
-                inhalt = self.ereignis_bloecke.get(doc, {})
+                roh, text = texte[doc]
+                # Task 6: Bloecke generierter Dokus (nur vorhandene; Events rendert Task 5, sonst der Platzhalter)
+                vorhanden = render_ketten.bloecke_finden(text)
+                inhalt = {**{b: v for b, v in self.generiert_bloecke.get(doc, {}).items() if b in vorhanden},
+                          **self.ereignis_bloecke.get(doc, {})}
                 if not inhalt and not alte and "graph:" not in text:
                     continue
                 res = render_ereignisse.doku_rendern(text, inhalt, alte, datei=doc)
