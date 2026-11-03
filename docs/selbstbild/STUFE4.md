@@ -5,6 +5,9 @@ Task 1 bis 10, la_fungus `main` @ `4de58f4`. Für diese Abnahme wurde **kein Cod
 (`C:\Users\User\Desktop\Vibemind_V1`, Zweig `codex/vibemind-ops-baseline`) am Commit `23bd42ba`, Messbaum `4048bc83`
 (nur loop-eigene Dateien dahinter, T3-c).
 
+**Nachtrag Final-Fix-Welle (03.11.2026):** Nach dem Final-Review kam eine Fix-Welle; der Abschnitt
+„Final-Fix-Welle“ unten listet sie. Schritt 2 beschreibt jetzt den Ablauf von Teil B.
+
 **Teil B ist offen.** Die Umschaltung der Windows-Aufgabe, der erste echte Tick, die Ruhe-Messung, das Schreiben
 der Rowboat-Seiten und die erste Nacht der Erstbefüllung kommen erst nach dem Final-Review, einer Fix-Welle und dem
 OK des Users. Bis dahin schreibt nur der alte Loop (`scripts\doku-loop.cmd`).
@@ -163,18 +166,48 @@ Alle Diffs fügen nur ein (0 entfernte Zeilen): eine Überschrift `## Events (ge
 Seiten im Zustand `neu`. Schätzung: 532 × 2 + 40 = 1 104 Aufrufe, bei 150/Tag **mindestens 8 Nächte**. Task 7 hatte
 451 geschätzt; die Näherung damals kannte nicht alle Space-Manifeste.
 
-## Schritt 2: Umschaltung – offen (Teil B, nur mit User-OK)
+## Schritt 2: Umschaltung – Ablauf Teil B (nur mit User-OK)
 
-Nicht ausgeführt. Ablauf nach dem OK:
-1. Controller zeigt `aufgabe --umschalten --trocken` und den WORKBOARD-Eintrag für `cc-doku-loop` („abgelöst durch
-   selbstbild.doku“, nur die eigene Zeile gestaget).
-2. `aufgabe --umschalten`: sichert `%LOCALAPPDATA%\VibeMind\doku_loop\` (ohne `messbaum-*`) nach
-   `doku_loop-sicherung-<zeit>`, merkt die alte Aktion in `aufgabe-alt.json`, setzt die neue Aktion
-   (`conhost.exe --headless cmd /c ""…\.venv-selbstbild\Scripts\python.exe" -m selbstbild doku tick
+Nicht ausgeführt. **Der erste Inhalt kommt am Tag, erzwungen und ohne LLM** (Final-Review C2, Teil a): Ohne
+`--erzwingen` täte der erste ungezwungene Tick nichts, weil sich seit dem letzten Lauf des alten Loops kein Code
+geändert hat. Der erste Inhalt käme dann erst nachts mit der Erstbefüllung. Ablauf nach dem OK, in dieser Reihenfolge:
+
+1. **Am Tag** (außerhalb 00:00–06:00) und mit **≥ 3 GB freiem Commit** (`FreeVirtualMemory`): Der Controller setzt den
+   WORKBOARD-Eintrag für `cc-doku-loop` („abgelöst durch selbstbild.doku“, nur die eigene Zeile gestaget) und zeigt
+   `aufgabe --umschalten --trocken`. Dann `aufgabe --umschalten`. Es sichert `%LOCALAPPDATA%\VibeMind\doku_loop\`
+   (ohne `messbaum-*`) nach `doku_loop-sicherung-<zeit>`, merkt die alte Aktion in `aufgabe-alt.json`, setzt die neue
+   Aktion (`conhost.exe --headless cmd /c ""…\.venv-selbstbild\Scripts\python.exe" -m selbstbild doku tick
    "C:\Users\User\Desktop\Vibemind_V1" >> "…\logs\doku-loop.log" 2>&1"`) und liest sie zurück. Trigger, Limits und
-   Principal bleiben.
-3. Erster echter Tick: erwartet `llm_aufrufe == 0` und ein Commit nur mit den Blöcken aus Schritt 1 plus `graph.json`
-   und `021_sales.md`/README-Block. Diff kommt hierher.
+   Principal bleiben. Ab jetzt verweigert `scripts\doku-loop.cmd tick` mit Exit 2 (Final-Fix I3).
+2. **Sofort** den ersten Lauf von Hand, erzwungen:
+   `python -m selbstbild doku tick C:\Users\User\Desktop\Vibemind_V1 --erzwingen`. Am Tag ist die Erstbefüllung nicht
+   fällig, ohne Signal fragt der Lauf kein LLM. Erwartet: `llm_aufrufe 0`, genau ein Commit.
+3. **Diesen einen Commit prüfen** (`git show --stat HEAD`):
+   - 13 Events-Blöcke in 12 Dokus (Tabelle in Schritt 1), nur eingefügt, CRLF bleibt in `004_desktop.md` und
+     `018_video.md`;
+   - `docs/spaces/021_sales.md` neu, dazu eine Zeile im README-Block `neue-spaces`;
+   - `docs/graph/graph.json`: Größe notieren (Trockenlauf: +1 294 Aussagen, +2 071 `belegt_durch`, +144 Events;
+     M5: nur beobachten);
+   - keine weitere Datei, `KETTEN.md` unverändert.
+4. **Rowboat prüfen** (`C:\Users\User\.rowboat\knowledge\Doku\`): `Index.md` neu, `Prüfliste.md` (Struktur-Hinweise
+   nach Art und Datei gruppiert, I5), `Mitbauen/Neuen Space erstellen mit Claude Code.md`, `Zustand.md`. Im Log
+   `Seiten: … 0 Aufruf(e)` – keine erzählte Seite am Tag, kein LLM.
+5. `aufgabe --pruefen` zeigt Aktion `neu`, die Sicherung, `aufgabe-alt.json` vorhanden, Sperre frei.
+6. Erst dann die Aufgabe laufen lassen (alle 5 min; Anstoß bei Marker, bewegtem HEAD oder nach 30 min).
+
+Weicht Schritt 3 oder 4 ab: `aufgabe --zurueck --trocken`, dann `aufgabe --zurueck` (Schritt 9).
+
+**Was der User danach erwarten soll:**
+- Nachts (00:00–06:00), solange die Erstbefüllung läuft, Commits `docs(loop): Erstbefüllung – N Aussagen nachgeführt,
+  M in Prüfliste` in `docs/spaces/` und `docs/modules/`. Ein Commit entsteht nur bei einem Urteil `veraltet` mit
+  gültigem Ersatz oder bei geändertem stabilen Digest. Jeder Lauf, den nur die Erstbefüllung auslöst, baut alle Spaces
+  (C2b), höchstens alle 30 min und nur, solange das Tagesbudget von `selbstbild-erstbefuellung` reicht.
+- Etwa 3 erzählte Rowboat-Seiten je Lauf (`rowboat_seiten_je_lauf: 3`), nachts nach den Aussagen; eine Seite wird nur
+  gefragt, wenn bis zur Deadline noch ein ganzer Aufruf passt (M3).
+- Eine lange erste `Prüfliste.md` (rund 500 Struktur-Hinweise), gruppiert nach Art und Datei mit Summen und höchstens
+  drei Beispielen je Datei (I5).
+- **Mindestens 8 Nächte**, bis die Erstbefüllung fertig ist (532 Aussagen × 2 + 40 Seiten ≈ 1 104 Aufrufe bei 150/Tag).
+  Danach gilt wieder `doku-loop` mit 30/Tag.
 
 ## Schritt 3: Ruhe – offen (Teil B)
 
@@ -336,6 +369,10 @@ je Muster, nie Werte. JSON zusätzlich entschlüsselt (`\u`-Escapes).
 | Prüfpunkte, Seitenplan und Log des Trockenlaufs | 3 | 0 |
 | **gesamt** | **183** | **0** (alle 7 Muster: `sk-…`, `ghp_…`, `github_pat_`, `AKIA…`, `xox[bp]-`, JWT, PEM) |
 
+Nachtrag Final-Fix I1/I2: Seit der Fix-Welle gibt es 9 Muster (PEM bis zur END-Zeile, `sk-` mit `-`/`_`, neu
+Telegram-Bot-Token). Ein neuer lesender Lauf über 40 Doku-Dateien von VibeMind (`docs/spaces`, `docs/modules`,
+`graph.json`, Space-READMEs) ergab 0 Treffer.
+
 **Hash-Probe mit echten Werten (startet der User selbst).** Sie nutzt `scripts/secret_probe.py` aus Stufe 1 (Werte
 nur im Speicher, roh und JSON-escaped, nur Namen und Zähler, Exit 0 / 1 Treffer / 2 nicht prüfbar), hier über die
 Ausgaben der Stufe 4 statt über `graph.sqlite`:
@@ -392,7 +429,12 @@ Was `--zurueck` tut (hält `tick.lock` die ganze Zeit; frische Sperre → Exit 2
 3. **Graph:** Knoten- und Kantenarten, die der alte Loop nicht kennt (`ereignis`, `ereignis_von`), werden aus
    `docs/graph/graph.json` entfernt und in einem eigenen Commit committet (**T10-d**, Betreff
    `docs(loop): Rueckweg – Knotenarten des neuen Loops entfernt`). Fremde Änderung an `graph.json` → Exit 2 vorher.
-4. **Aufgabe zuletzt:** alte Aktion setzen und zurücklesen; `aufgabe-alt.json` wandert nach `nachher`.
+   Seit Final-Fix M1 entfernt dieser Schritt auch jede Aussage, deren Datei nicht im Doku-Satz des alten Loops liegt
+   (`ketten_md` + `weitere_doku` aus `config/doku_loop.yaml`, sonst nur KETTEN.md), samt Kanten und dadurch
+   verwaisten Modulen. `--pruefen` und `--trocken` nennen die Zahlen.
+4. **Aufgabe zuletzt:** alte Aktion setzen und zurücklesen; `aufgabe-alt.json` wandert nach `nachher`. Erst dann
+   läuft `scripts\doku-loop.cmd tick` wieder. Scheitert genau dieses Verschieben, endet `--zurueck` mit Exit 1 und
+   nennt die Datei, die von Hand verschoben werden muss.
 
 Jeder Schritt ist wiederholbar. Ein erneutes `--umschalten` legt die archivierten Seiten zurück (0 Aufrufe). Kosten
 des Rückwegs: Der Fortschritt der Erstbefüllung geht verloren (der Urteils-Cache begrenzt die Kosten). Zwischen einem
@@ -423,7 +465,45 @@ Volle Suite (`-W error`, `--basetemp C:/Users/User/AppData/Local/Temp/selbstbild
 **1 577 passed, 34 skipped, 0 failed** in 800 s (19:41:43–19:55:04, freier Commit vorher und nachher 5,90 GB). Das ist
 die Basis nach Task 10 (1 577/34). Dazu `test_doku_neue_spaces.py` einzeln: 19 passed.
 
+**Nach der Final-Fix-Welle** (la_fungus `8f5f240`, gleicher Aufruf, ohne `SELBSTBILD_VIBEMIND`): **1 602 passed,
+36 skipped, 0 failed** in 529 s (20:48:52–20:57:41, freier Commit vorher 5,1 GB). Die zwei zusätzlichen Skips sind
+die `.cmd`-Tests (I3); sie brauchen das echte äußere Repo und liefen mit `SELBSTBILD_VIBEMIND` grün.
+
+**Trockenlauf nach der Fix-Welle** (21:00, 100 s, freier Commit 6,6 GB): Mein äußerer Commit `8ca7c497` (nur
+`scripts/doku-loop.cmd`) liegt hinter dem Messbaum `4048bc83`. Diese Datei gehört nicht dem Loop, deshalb meldet der
+einfache Trockenlauf `messbaum_veraltet`, bis der alte Loop wieder baut; nach der Umschaltung stellt der erste echte
+Lauf seinen Messbaum selbst bereit. Gelaufen ist deshalb derselbe Trockenlauf mit einer Ausnahme nur im Speicher: Die
+T3-c-Prüfung lässt zusätzlich genau diese eine Datei zu. Sie liegt unter keiner Space-Wurzel und ist kein Beleg.
+Ergebnis wie in Teil A: `graph_digest e2740853…84d4`, 0 Signale, 0 LLM-Aufrufe, kein Commit, 532 Aussagen offen,
+40 Seiten fällig, 144 Events, `021_sales.md` geplant. Notizen: 4 statt 3 würden geschrieben, denn `Prüfliste.md`
+erscheint jetzt gruppiert (I5). Lokaler Ordner und `knowledge\Doku` blieben unverändert.
+
+## Final-Fix-Welle (Ruling FINAL-a)
+
+Nach dem Final-Review („With fixes“) kam eine Fix-Welle, jede mit Test (zuerst rot). Die Tests stehen in
+`tests/selbstbild/doku/test_doku_stufe4_finalfix.py`.
+
+| Punkt | Änderung |
+|---|---|
+| C1 | `judge.antwort_parsen` verwirft einen `neuer_text` mit Schlüssel-Verdacht (Ergebnis `ungueltig`, gebucht als `fehler`). `tick._ersetzen` ist die zweite Linie, auch für Antworten aus dem Urteils-Cache. Sein Prüfpunkt `ersetzen_abgelehnt` nennt nur das Muster. Gilt für Signal und Erstbefüllung. |
+| C2a | Ablauf Teil B mit erzwungenem ersten Lauf am Tag (Schritt 2). |
+| C2b | Ein Lauf, den nur die Erstbefüllung auslöst, baut alle Spaces. Sonst würden neue Aussagen ohne Space-Manifeste verankert, also ohne Symbol-Anker, und nie erstgeprüft. Betreff `docs(loop): Erstbefüllung – …`. |
+| I1 | PEM-Muster bis zur END-Zeile oder zum Textende; erkannt und geschwärzt wird der ganze Schlüssel. |
+| I2 | `sk-` auch mit `-`/`_` im Wert (`sk-ant-api03-…`, `sk-proj-…`), links mit Wortgrenze gegen Treffer in Fließtext; neues Muster Telegram-Bot-Token. 9 Muster, 0 Treffer in 40 Doku-Dateien von VibeMind. |
+| I3 | `scripts\doku-loop.cmd` (äußeres Repo) verweigert `tick` mit Exit 2, solange `aufgabe-alt.json` liegt. `--trotzdem` lässt den Lauf zu, andere Unterbefehle bleiben erlaubt. `--zurueck` endet mit Exit 1, wenn es die Datei nicht verschieben kann. |
+| I4 | `doku_ziel_fremd` erscheint einmal je Datei, nicht einmal je fremdem Inhalt. |
+| I5 | `Prüfliste.md` gruppiert die Struktur-Hinweise nach Art und Datei; 500 Hinweise ergeben rund 50 Zeilen. Beispieltexte werden vor dem Kürzen geschwärzt. Das Zustandsformat bleibt. |
+| M1 | Der Rückweg entfernt Aussagen außerhalb des alten Doku-Satzes (Schritt 9). |
+| M3 | Das Notizen-Manifest wird nach jeder geschriebenen Notiz gespeichert, außer bei der Übernahme ohne Manifest. Eine erzählte Seite wird nur gefragt, wenn noch `judge.TIMEOUT_S` + 30 s bis zur Deadline bleiben. |
+| M4 | Die Budget-Vorprüfung der Erstbefüllung läuft erst nach dem Anstoß. Ruhige 5-Minuten-Aufrufe laden das Budget-Modul nicht. |
+
+Geparkt: M2 (Zeilen in unsauberen Dateien nachführen), M5 (Größe von `graph.json` beobachten).
+
 ## Bekannte Grenzen und offene Punkte
+
+- **Universell nur auf Konfig-Ebene (M6, offen).** Der Loop ist über `selbstbild.yaml` (`doku:`) für andere Repos
+  konfigurierbar. Ein Repo ohne `KETTEN.md` und ohne `docs/graph/graph.json` endet heute aber mit `kein_seed`: Es
+  gibt keinen Weg zum ersten Graph ohne den Ketten-Seed. Das ist ein Punkt für eine spätere Stufe.
 
 - **Teil B offen:** Umschaltung (User-OK), erster echter Tick mit Diff, Ruhe über 10 Ticks, Rowboat-Seiten geschrieben,
   erste Nacht der Erstbefüllung, Hash-Probe mit den geschriebenen Seiten.
@@ -433,10 +513,11 @@ die Basis nach Task 10 (1 577/34). Dazu `test_doku_neue_spaces.py` einzeln: 19 p
 - **Prüfliste wächst stark.** Der Trockenlauf hat 500 `struktur`-Punkte statt heute 15: `beleg_unsicher` 369,
   `anker_zu_grob` 78, `ereignis_*`/`space_ohne_doku` 33, `env_unbekannt` 12, `aussage_id_doppelt` 8. Dazu 17 offene
   (`beleg_unsauber` 15, `beleg_untracked` 2 – fremde Arbeit im Submodul). Das wird in `Prüfliste.md` und `Zustand.md`
-  sichtbar.
+  sichtbar. Die Struktur-Hinweise zeigt `Prüfliste.md` seit I5 gruppiert.
 - **Erstbefüllung länger als geschätzt:** 532 offene Aussagen statt 451, mit den Seiten etwa 1 104 Aufrufe, mindestens
   8 Nächte.
 - **Trockenlauf dauert jetzt 155–165 s** (Task 3: 52 s), wegen 29 Doku-Dateien, 9 nur-lesend-Dateien und der Events.
-  Der echte Tick liest die Doku nur bei Anstoß. Im Erstbefüllungs-Fenster liest aber jeder Lauf alle Dokus
-  (Task-7-Bericht), auch wenn das Tagesbudget schon verbraucht ist.
+  Der echte Tick liest die Doku nur bei Anstoß. Im Erstbefüllungs-Fenster liest jeder angestoßene Lauf alle Dokus und
+  baut seit C2b alle Spaces. Ist das Tagesbudget schon verbraucht (lesende Vorprüfung, nach dem Anstoß, M4), entfällt
+  beides.
 - `021_sales.md` nennt als Datum ein Commit-Datum des Stands (2026-08-17), nicht das Laufdatum.
