@@ -570,7 +570,8 @@ def test_pruefliste_zurueck_nur_an_der_spitze_und_mit_zurueckgenommene(tmp_path)
     assert "## Umschreibungen des Loops (0)" in pl
     assert "## Angewandte Urteile (1)" in pl and "· zurueck · Lauf" in pl and "c" * 10 in pl
     assert f"mit zurückgenommen: `{e1.aussage_id}`, `{e2.aussage_id}`" in pl
-    assert "## Struktur-Hinweise (1)" in pl and "- anker_unsicher: zu grob (`docs/spaces/KETTEN.md:3`)" in pl
+    assert "## Struktur-Hinweise (1)" in pl and "### anker_unsicher (1 in 1 Datei(en))" in pl
+    assert "- `docs/spaces/KETTEN.md` (1): Zeile 3: zu grob" in pl  # Final-Fix I5: gruppiert nach Art -> Datei
 
 
 def test_notiz_kopie_und_bearbeitung_bleiben_stehen(tmp_path):

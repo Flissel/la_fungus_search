@@ -75,7 +75,10 @@ URTEIL_ARTEN = ("ok", "zurueck", "korrektur")
 PRUEFLISTE_NAME = "Prüfliste"
 INDEX_NAME = "Index"
 VERBOTEN_ORDNER = "kanal"  # knowledge/Kanal/ (Telegram) wird nie gelesen
-STRUKTUR_MAX = 200  # Struktur-Hinweise in der Pruefliste (Rest nur gezaehlt)
+# Final-Fix I5: Struktur-Hinweise der Pruefliste gruppiert nach Art -> Datei (Rest nur gezaehlt)
+STRUKTUR_DATEIEN_MAX = 10  # Dateien je Art
+STRUKTUR_BEISPIELE = 3  # Beispiele je Datei
+STRUKTUR_TEXT_MAX = 140  # Zeichen je Beispiel
 ANGEWANDT_MAX = 50  # angewandte Urteile in der Pruefliste (neueste zuerst)
 _GEMESSEN = {"laeuft": "läuft", "bricht": "bricht", "keine_probe": "keine Probe"}
 
@@ -540,14 +543,37 @@ def _pruefliste_notiz(ordner: str, punkte: Sequence[Mapping[str, object]], ledge
         zeilen.append("Noch keine.")
     zeilen += ["", f"## Struktur-Hinweise ({len(struktur)})", "",
                "Verankerungs-, Bau- und Render-Hinweise; sie brauchen kein Urteil.", ""]
-    for p in struktur[:STRUKTUR_MAX]:
-        ort = str(p.get("datei") or "—") + (f":{p['zeile']}" if p.get("zeile") else "")
-        zeilen.append(f"- {p.get('art')}: {' '.join(str(p.get('text') or '').split())} ({_code(ort)})")
-    if len(struktur) > STRUKTUR_MAX:
-        zeilen.append(f"- … und {len(struktur) - STRUKTUR_MAX} weitere")
+    zeilen += _struktur_gruppiert(struktur)
     if not struktur:
         zeilen.append("Keine.")
     return _Notiz(rel, "\n".join(zeilen) + "\n")
+
+
+def _struktur_gruppiert(struktur: Sequence[Mapping[str, object]]) -> list[str]:
+    """Final-Fix I5 (nur Darstellung, das Zustandsformat bleibt): je Art eine Ueberschrift mit Summe, darunter je
+    Datei eine Zeile mit Zahl und hoechstens `STRUKTUR_BEISPIELE` Beispielen; je Art hoechstens `STRUKTUR_DATEIEN_MAX`
+    Dateien (die meisten Hinweise zuerst), der Rest als eine Zeile mit Datei- und Hinweiszahl."""
+    je_art: dict[str, dict[str, list[Mapping[str, object]]]] = {}
+    for p in struktur:
+        je_art.setdefault(str(p.get("art")), {}).setdefault(str(p.get("datei") or "—"), []).append(p)
+    zeilen: list[str] = []
+    for art, je_datei in sorted(je_art.items(), key=lambda kv: (-sum(map(len, kv[1].values())), kv[0])):
+        dateien = sorted(je_datei.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        zeilen += [f"### {art} ({sum(len(v) for _, v in dateien)} in {len(dateien)} Datei(en))", ""]
+        for datei, punkte in dateien[:STRUKTUR_DATEIEN_MAX]:
+            beispiele = []
+            for p in punkte[:STRUKTUR_BEISPIELE]:
+                # erst schwaerzen, dann kuerzen: ein angeschnittener Schluessel traefe kein Muster mehr
+                text = schwaerzen(" ".join(str(p.get("text") or "").split()))
+                text = text if len(text) <= STRUKTUR_TEXT_MAX else text[:STRUKTUR_TEXT_MAX - 1] + "…"
+                beispiele.append((f"Zeile {p['zeile']}: " if p.get("zeile") else "") + text)
+            mehr = " · …" if len(punkte) > STRUKTUR_BEISPIELE else ""
+            zeilen.append(f"- {_code(datei)} ({len(punkte)}): {' · '.join(beispiele)}{mehr}")
+        rest = dateien[STRUKTUR_DATEIEN_MAX:]
+        if rest:
+            zeilen.append(f"- … und {len(rest)} weitere Datei(en) mit {sum(len(v) for _, v in rest)} Hinweis(en)")
+        zeilen.append("")
+    return zeilen
 
 
 # ---------- Manifest der geschriebenen Notizen (lokal) ----------

@@ -223,3 +223,59 @@ def test_i4_doku_ziel_fremd_drei_inhalte_ein_eintrag(fx):
     assert len(punkte) == 1 and punkte[0]["datei"] == "docs/spaces/001_x.md"
     assert punkte[0]["aussage_id"] == "docs/spaces/001_x.md"
 
+
+# ---------- I5: Struktur-Hinweise in Pruefliste.md gruppiert ----------
+
+def _pl_notiz(struktur, punkte=()):
+    from selbstbild.doku import rowboat as rb
+    return rb._pruefliste_notiz("Doku", list(punkte), [], commits={}, spitzen={}, vermerke=[], struktur=struktur,
+                                lauf="2026-11-03T01:00:00#7", urteile_datei="Doku-Urteile/Urteile.md").text
+
+
+def _struktur_500():
+    arten = {"anker_unsicher": 260, "beleg_unsicher": 140, "env_unbekannt": 70, "symbol_mehrdeutig": 30}
+    aus = []
+    for art, n in arten.items():
+        for i in range(n):
+            datei = f"docs/spaces/{i % 23:03d}_space.md" if art != "env_unbekannt" else "docs/spaces/KETTEN.md"
+            aus.append({"art": art, "text": f"Hinweis {art} Nummer {i} mit etwas Text", "datei": datei,
+                        "zeile": 10 + i, "aussage_id": None, "lauf": "x"})
+    return aus, arten
+
+
+def test_i5_struktur_gruppiert_nach_art_und_datei():
+    struktur, arten = _struktur_500()
+    offen = [{"art": "judge_unklar", "text": "unklar", "datei": "docs/spaces/KETTEN.md", "zeile": 5,
+              "aussage_id": "docs/spaces/KETTEN.md#K#1", "lauf": "2026-11-03T01:00:00#7"}]
+    text = _pl_notiz(struktur, offen)
+    abschnitt = text.split("## Struktur-Hinweise", 1)[1]
+    zeilen = abschnitt.splitlines()
+    assert len(zeilen) < 150, len(zeilen)
+    assert zeilen[0] == " (500)"
+    for art, n in arten.items():
+        assert f"### {art} ({n}" in abschnitt, art
+    # Summen je Art stimmen auch ueber die Dateizeilen (gezeigte + "weitere Dateien")
+    for art, n in arten.items():
+        teil = abschnitt.split(f"### {art} (", 1)[1].split("\n### ", 1)[0]
+        gezeigt = sum(int(m) for m in re.findall(r"^- `[^`]+` \((\d+)\)", teil, re.M))
+        rest = sum(int(m) for m in re.findall(r"weitere Datei\(en\) mit (\d+) Hinweis", teil))
+        assert gezeigt + rest == n, art
+    # hoechstens 3 Beispiele je Datei
+    for z in zeilen:
+        if z.startswith("- `"):
+            assert z.count("Zeile ") <= 3, z
+    # die offenen Punkte bleiben, wie sie sind
+    assert "### judge_unklar: docs/spaces/KETTEN.md#K#1" in text
+
+
+def test_i5_wenig_struktur_bleibt_lesbar_und_geschwaerzt():
+    struktur = [{"art": "anker_unsicher", "text": "zu grob", "datei": "docs/spaces/KETTEN.md", "zeile": 3,
+                 "aussage_id": None}]
+    text = _pl_notiz(struktur)
+    assert "## Struktur-Hinweise (1)" in text and "### anker_unsicher (1 in 1 Datei(en))" in text
+    assert "- `docs/spaces/KETTEN.md` (1): Zeile 3: zu grob" in text
+    assert "Keine." in _pl_notiz([]).split("## Struktur-Hinweise", 1)[1]
+    # ein Schluessel kurz vor der Kuerzungsgrenze: erst geschwaerzt, dann gekuerzt -- kein angeschnittener Rest
+    lang = [{"art": "anker_unsicher", "text": "x" * 120 + " " + GHP, "datei": "d.md", "zeile": 1, "aussage_id": None}]
+    text = _pl_notiz(lang)
+    assert "ghp_" not in text and GHP[4:14] not in text
