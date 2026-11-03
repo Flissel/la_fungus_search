@@ -67,8 +67,8 @@ class Konfig:
     # Selbstbild Stufe 4 (Plan P1): hier nur validiert, das Verhalten kommt in Task 4 bis 9
     doku_ziele: tuple[str, ...] = ()
     doku_nur_lesen: tuple[str, ...] = ()
-    ereignisse: dict[str, Any] = field(default_factory=dict)
-    space_dokumente: dict[str, Any] = field(default_factory=dict)
+    ereignisse: tuple[dict[str, str], ...] = ()  # Task 5: Event-Quellen (`_ereignis_quellen`)
+    space_dokumente: dict[str, Any] = field(default_factory=dict)  # Task 5: Space -> Doku-Datei (explizit)
     rowboat_seiten_aktiv: bool = False
     rowboat_seiten_je_lauf: int = 3
     erstbefuellung: dict[str, Any] = field(default_factory=lambda: {"aktiv": False})
@@ -123,6 +123,28 @@ def _torwaechter(wert: Any) -> tuple[str, ...]:
     return tuple(wert)
 
 
+_YAML_QUELLE = frozenset({"yaml", "pfad", "werkzeug"})
+_PYTHON_QUELLE = frozenset({"python_dict", "wurzel"})
+
+
+def _ereignis_quellen(wert: Any) -> tuple[dict[str, str], ...]:
+    """Task 5: Liste von Quellen, je eine Zuordnung `{yaml, pfad, werkzeug}` (`pfad` mit genau einem `*` fuer die
+    Space-ID) oder `{python_dict, wurzel}`; alle Werte nicht-leere Zeichenketten."""
+    if wert is None:
+        return ()
+    if not isinstance(wert, list):
+        raise KonfigFehler("ereignisse muss eine Liste von Quellen sein")
+    aus: list[dict[str, str]] = []
+    for q in wert:
+        if not isinstance(q, dict) or set(q) not in (_YAML_QUELLE, _PYTHON_QUELLE) \
+                or not all(isinstance(v, str) and v.strip() for v in q.values()):
+            raise KonfigFehler("ereignisse: jede Quelle ist {yaml, pfad, werkzeug} oder {python_dict, wurzel}")
+        if "pfad" in q and q["pfad"].split(".").count("*") != 1:
+            raise KonfigFehler("ereignisse: pfad braucht genau ein * fuer die Space-ID")
+        aus.append({str(k): str(v) for k, v in q.items()})
+    return tuple(aus)
+
+
 def _aussen(roh: dict[str, Any]) -> dict[str, Any]:
     """Optionale Schluessel der Stufe 4; fehlen sie, gelten die Vorgaben von `Konfig`."""
     aus: dict[str, Any] = {}
@@ -134,8 +156,10 @@ def _aussen(roh: dict[str, Any]) -> dict[str, Any]:
         aus["torwaechter"] = _torwaechter(roh["torwaechter"])
     for k in ("doku_ziele", "doku_nur_lesen"):
         aus[k] = _liste(roh, k)
-    aus["ereignisse"] = _zuordnung(roh, "ereignisse", {})
+    aus["ereignisse"] = _ereignis_quellen(roh.get("ereignisse"))
     aus["space_dokumente"] = _zuordnung(roh, "space_dokumente", {})
+    if not all(isinstance(k, str) and isinstance(v, str) and v.strip() for k, v in aus["space_dokumente"].items()):
+        raise KonfigFehler("space_dokumente muss Space-Namen auf Doku-Pfade abbilden")
     aus["rowboat_seiten_aktiv"] = _wahrheit(roh, "rowboat_seiten_aktiv", False)
     aus["rowboat_seiten_je_lauf"] = _ganzzahl(roh, "rowboat_seiten_je_lauf", 3)
     erst = _zuordnung(roh, "erstbefuellung", {"aktiv": False})

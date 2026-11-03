@@ -57,7 +57,7 @@ def test_ohne_doku_abschnitt(tmp_path):
     assert k.repo == r.resolve()
     assert k.doku_ziele == ("docs/**/*.md",)
     assert k.ketten_md == "" and k.spaces == {} and k.agent == ""  # agent leer = kein Judge
-    assert k.ereignisse == {} and k.space_dokumente == {}
+    assert k.ereignisse == () and k.space_dokumente == {}
     assert k.rowboat_notizen_aktiv is False and k.rowboat_seiten_aktiv is False
     assert k.torwaechter == () and k.erstbefuellung == {"aktiv": False}
     assert k.waechter_zuordnung == {}
@@ -77,7 +77,7 @@ def test_ohne_doku_uebernimmt_waechter_zuordnung_und_dienste(tmp_path):
 
 def test_neue_schluessel_vorgaben(tmp_path):
     k = aus_regeln(_repo(tmp_path))
-    assert k.doku_ziele == () and k.doku_nur_lesen == () and k.ereignisse == {} and k.space_dokumente == {}
+    assert k.doku_ziele == () and k.doku_nur_lesen == () and k.ereignisse == () and k.space_dokumente == {}
     assert k.rowboat_seiten_aktiv is False and k.rowboat_seiten_je_lauf == 3
     assert k.erstbefuellung == {"aktiv": False}
 
@@ -85,11 +85,12 @@ def test_neue_schluessel_vorgaben(tmp_path):
 def test_neue_schluessel_werte(tmp_path):
     t = _vorlage() + (
         "doku_ziele: [docs/spaces/*.md]\ndoku_nur_lesen: [vibemind-os/spaces/*/README.md]\n"
-        "ereignisse: {registry: vibemind-os/config/x.yml}\nspace_dokumente: {verzeichnis: docs/spaces}\n"
+        "ereignisse: [{python_dict: EVENT_TO_TOOL, wurzel: vibemind-os/spaces}]\n"
+        "space_dokumente: {verzeichnis: docs/spaces}\n"
         "rowboat_seiten_aktiv: true\nrowboat_seiten_je_lauf: 5\nerstbefuellung: {aktiv: true, agent: x}\n")
     k = aus_regeln(_repo(tmp_path, t))
     assert k.doku_ziele == ("docs/spaces/*.md",) and k.doku_nur_lesen == ("vibemind-os/spaces/*/README.md",)
-    assert k.ereignisse == {"registry": "vibemind-os/config/x.yml"}
+    assert k.ereignisse == ({"python_dict": "EVENT_TO_TOOL", "wurzel": "vibemind-os/spaces"},)
     assert k.space_dokumente == {"verzeichnis": "docs/spaces"}
     assert k.rowboat_seiten_aktiv is True and k.rowboat_seiten_je_lauf == 5
     assert k.erstbefuellung == {"aktiv": True, "agent": "x"}
@@ -98,7 +99,9 @@ def test_neue_schluessel_werte(tmp_path):
 @pytest.mark.parametrize("zeile", [
     "ketten_mdd: x", "tick_minuten_: 3", "rowboat_seiten_je_lauf: 0", "rowboat_seiten_je_lauf: true",
     "rowboat_seiten_aktiv: ja", "doku_ziele: docs", "doku_nur_lesen: [1, [2]]", "ereignisse: [a]",
-    "space_dokumente: x", "erstbefuellung: [a]", "erstbefuellung: {aktiv: vielleicht}",
+    "space_dokumente: x", "space_dokumente: {a: 1}", "ereignisse: {registry: x.yml}",
+    "ereignisse: [{yaml: a.yml}]", "ereignisse: [{yaml: a.yml, pfad: spaces.events, werkzeug: tool}]",
+    "ereignisse: [{python_dict: X, wurzel: \"\"}]", "erstbefuellung: [a]", "erstbefuellung: {aktiv: vielleicht}",
 ])
 def test_unbekannte_oder_falsche_schluessel_in_doku(tmp_path, zeile):
     with pytest.raises(KonfigFehler):

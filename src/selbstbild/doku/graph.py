@@ -14,10 +14,12 @@ from .anker import Beleg
 KNOTEN_TYPEN = frozenset({
     "space", "dienst", "modul", "symbol", "route", "tabelle", "sql_funktion",
     "mcp_werkzeug", "mensch", "aussage", "kette", "komponente",
+    "ereignis",  # Stufe 4, Task 5: Space-Event aus Registry/EVENT_TO_TOOL
 })
 KANTEN_ARTEN = frozenset({
     "ruft_auf", "definiert_route", "liest_schreibt", "registriert", "verbindet",
     "nutzt_dienst", "gehoert_zu", "hop", "belegt_durch", "geaendert_durch",
+    "ereignis_von",  # Stufe 4, Task 5: ereignis -> space
 })
 KANTEN_QUELLEN = frozenset({"extraktor", "seed", "llm", "review"})
 VERSION = 1
@@ -195,8 +197,8 @@ class Graph:
 
 # ---------- Ruling 49: schlanker Repo-Graph, voller Graph lokal ----------
 
-SCHLANK_KANTEN = frozenset({"hop", "belegt_durch", "verbindet"})
-SCHLANK_KNOTEN = frozenset({"space", "dienst", "kette"})
+SCHLANK_KANTEN = frozenset({"hop", "belegt_durch", "verbindet", "ereignis_von"})
+SCHLANK_KNOTEN = frozenset({"space", "dienst", "kette", "ereignis"})
 # Knotentypen, fuer die der schlanke Repo-Graph die alleinige Wahrheit ist (`mit_schlank`)
 _REPO_KNOTEN = SCHLANK_KNOTEN | {"aussage"}
 

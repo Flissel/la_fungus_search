@@ -24,6 +24,9 @@ bei jedem Aufruf neu: `verbindet`-Kanten, Register-Dienstknoten (`herkunft: regi
 Endknoten der Extraktoren (`herkunft: extraktor`, ohne Space; aus den Kanten abgeleitet). Seed-Hops
 (`quelle: seed`) kommen immer aus `basis`; neu gerechnet wird nur ihr `zustand`.
 
+Space-Events (Stufe 4, Task 5): `ereignisse_einbauen` ersetzt nach jedem Bau (auch ohne Neubau) alle `ereignis`-Knoten
+und `ereignis_von`-Kanten durch die aus dem Messbaum gelesenen; beide gehoeren zum schlanken Repo-Graph.
+
 Testdateien (`korpus.ist_testdatei`) erzeugen weder Knoten noch Kanten. Ein kaputter Datensatz oder ein
 werfender Extraktor wird Pruefpunkt; ein fehlendes Manifest oder eine fehlende Space-Wurzel wirft.
 """
@@ -52,6 +55,7 @@ from .typen import Pruefpunkt
 if TYPE_CHECKING:
     from ._manifest_gate2 import Manifest
 
+    from .extraktoren.ereignisse import Ereignis
     from .extraktoren.sql import SqlDefinition
 
 GEMEINSAME_TYPEN = frozenset({"tabelle", "sql_funktion", "mcp_werkzeug", "dienst"})
@@ -546,6 +550,34 @@ class _Bau:
         if unbekannt or self.register.unbekannte(envs):
             return "nein"
         return "ja" if envs else "unbestimmt"
+
+
+def ereignisse_einbauen(graph: Graph, ereignisse: Sequence["Ereignis"]) -> None:
+    """Stufe 4, Task 5 (D8): alle `ereignis`-Knoten und `ereignis_von`-Kanten durch die aktuell gelesenen ersetzen.
+
+    Je (Space-Schluessel, Event-Name) ein Knoten `ereignis:<space>:<name>` (Attribute `werkzeug` und `quellen`, bei
+    Abweichung mit ` | ` verbunden) und eine Kante `ereignis_von` -> `space:<space>` mit den Belegen aller Quellen.
+    Global und bei jedem Lauf neu (wie die Compose-Kanten): die Quellen liegen meist ausserhalb der Space-Wurzeln.
+    Kein Zeitstempel, kein Commit (Belege tragen `commit=""`), sortiert: `digest_stabil` bleibt deterministisch.
+    Die Endknoten `space:<space>` muessen nicht existieren (wie `modul:` bei `belegt_durch`)."""
+    from .namen import space_schluessel
+
+    for eid in [e.id for e in graph.kanten.values() if e.art == "ereignis_von"]:
+        del graph.kanten[eid]
+    for nid in [k.id for k in graph.knoten.values() if k.typ == "ereignis"]:
+        del graph.knoten[nid]
+    je: dict[tuple[str, str], list["Ereignis"]] = defaultdict(list)
+    for e in ereignisse:
+        je[(space_schluessel(e.space), e.name)].append(e)
+    for (space, name), evs in sorted(je.items()):
+        quellen = [(q, b) for e in evs for q, b in e.quellen()]
+        belege = {(b.art, b.file, b.anker): b for _, b in sorted(quellen, key=lambda qb: (qb[1].file, qb[1].anker))}
+        nid = f"ereignis:{space}:{name}"
+        graph.knoten_hinzu(Knoten(nid, "ereignis", name, space=space, datei=evs[0].beleg.file, attribute={
+            "werkzeug": " | ".join(sorted({e.werkzeug for e in evs})),
+            "quellen": " | ".join(sorted({q for q, _ in quellen}))}))
+        graph.kante_hinzu(Kante(kante_id("ereignis_von", nid, f"space:{space}"), "ereignis_von", nid,
+                                f"space:{space}", "extraktor", tuple(belege.values())))
 
 
 def graph_bauen(

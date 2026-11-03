@@ -32,7 +32,7 @@ import copy
 import dataclasses
 import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
 from pathlib import Path
@@ -506,9 +506,16 @@ def einbetten(text: str, graph: Graph) -> str:
     return "".join(aus)
 
 
-def rendern(text_alt: str, graph: Graph, render_hashes: Mapping[str, str],
-            datei: str | None = None) -> RenderErgebnis:
-    """Jeden markierten Block neu rendern, ausser er wurde von Hand geaendert (siehe Moduldoku)."""
+BlockRenderer = Callable[[str, str], "str | None"]  # (Blockname, Zeilenende) -> Inhalt oder None (kein Renderer)
+OhneRenderer = Callable[[str], tuple[str, str]]  # Blockname -> (Pruefpunkt-Art, Text) fuer Bloecke ohne Inhalt
+
+
+def bloecke_rendern(text_alt: str, renderer: BlockRenderer, render_hashes: Mapping[str, str],
+                    datei: str | None = None, *, ohne_renderer: OhneRenderer | None = None) -> RenderErgebnis:
+    """Allgemeiner Kern fuer jede Doku-Datei (KETTEN.md, Space-Doku): jeden markierten Block mit `renderer` neu
+    rendern, ausser er wurde von Hand geaendert (`hand_edit`, siehe Moduldoku). Ein Block, fuer den `renderer` None
+    gibt, bleibt stehen (Pruefpunkt aus `ohne_renderer`, sonst `block_unbekannt`). Alles ausserhalb der Bloecke bleibt
+    byteweise; gerenderte Zeilen bekommen das Zeilenende der Mehrheit."""
     nl = zeilenende(text_alt)
     bloecke, zeilen_nr, pp = _scannen(text_alt)
     pp = [Pruefpunkt(p.art, p.text, datei, p.zeile, p.aussage_id) for p in pp]
@@ -517,11 +524,11 @@ def rendern(text_alt: str, graph: Graph, render_hashes: Mapping[str, str],
     pos = 0
     for block, b in sorted(bloecke.items(), key=lambda kv: kv[1].start):
         alt_hash = block_hash(b.inhalt)
-        neu = _block_rendern(graph, block, nl)
+        neu = renderer(block, nl)
         if neu is None:
-            art = "block_ohne_kette" if _HOPS.match(block) else "block_unbekannt"
-            pp.append(Pruefpunkt(art, f"{block}: keine passende Kette im Graph; Block bleibt stehen",
-                                 datei, zeilen_nr[block], block))
+            art, text = (ohne_renderer(block) if ohne_renderer is not None
+                         else ("block_unbekannt", f"{block}: kein Renderer; Block bleibt stehen"))
+            pp.append(Pruefpunkt(art, text, datei, zeilen_nr[block], block))
             hashes[block] = alt_hash
             continue
         gespeichert = render_hashes.get(block)
@@ -534,10 +541,25 @@ def rendern(text_alt: str, graph: Graph, render_hashes: Mapping[str, str],
         pos = b.ende
         hashes[block] = block_hash(neu)
     teile.append(text_alt[pos:])
+    return RenderErgebnis("".join(teile), hashes, pp)
+
+
+def _ketten_ohne_renderer(block: str) -> tuple[str, str]:
+    art = "block_ohne_kette" if _HOPS.match(block) else "block_unbekannt"
+    return art, f"{block}: keine passende Kette im Graph; Block bleibt stehen"
+
+
+def rendern(text_alt: str, graph: Graph, render_hashes: Mapping[str, str],
+            datei: str | None = None) -> RenderErgebnis:
+    """Jeden markierten Block von KETTEN.md neu rendern, ausser er wurde von Hand geaendert (siehe Moduldoku)."""
+    res = bloecke_rendern(text_alt, lambda block, nl: _block_rendern(graph, block, nl), render_hashes, datei,
+                          ohne_renderer=_ketten_ohne_renderer)
+    bloecke = bloecke_finden(text_alt)
+    pp = res.pruefpunkte
     if UEBERSICHT not in bloecke:
         pp.append(Pruefpunkt("block_fehlt", "uebersicht: kein markierter Block", datei, None, UEBERSICHT))
     for kette in _ketten(graph):
         if f"hops {kette}" not in bloecke:
             pp.append(Pruefpunkt("kette_ohne_block", f"{kette}: Kette im Graph ohne markierten Block",
                                  datei, None, f"hops {kette}"))
-    return RenderErgebnis("".join(teile), hashes, pp)
+    return res

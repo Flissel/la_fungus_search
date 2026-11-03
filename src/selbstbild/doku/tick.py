@@ -57,6 +57,12 @@ initialisiertem Submodul dessen HEAD) -- Manifeste, Extraktoren, SQL, Compose, R
 Git-Abfragen laufen im echten Repo. Messbaum-Fehler -> `messbaum:<grund>` (kein LLM, kein Commit). Belege in nicht
 initialisierten Submodulen sind `nicht_messbar` (kein Signal). `unsauber_gebaut` (15b) entfaellt; Ruling 48a bleibt
 als zweite Linie.
+
+Stufe 4, Task 5 (D8): nach der Aussagen-Pruefung liest `_ereignisse` die Space-Events aus den Quellen im Messbaum
+(Ruling T5-a), legt sie als `ereignis`-Knoten in den Graph und rendert je zugeordneter Space-Doku einen Block
+`ereignisse <space>`; `_rendern` behandelt KETTEN.md und alle anderen Doku-Dateien mit demselben Hand-Edit-Schutz
+(Render-Hashes anderer Dateien unter `<datei>#<block>`). Ein Commit an einer Ereignis-Quelle stoesst wie ein Doku-Commit
+einen Lauf ohne Neubau an. Kein Judge: Events tragen keine gemerkten Aussage-Belege.
 """
 
 from __future__ import annotations
@@ -76,13 +82,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import anker, bauen, ketten_seed, korpus, messbaum, render_ketten, rowboat, umschreiben, waechter
+from . import anker, bauen, ketten_seed, korpus, messbaum, render_ereignisse, render_ketten, rowboat, umschreiben
 from . import aussagen as au
+from . import waechter
 from .anker import Beleg
 from .belegspeicher import aussage_entfernen, aussage_speichern, beleg_dateien, gespeicherte_belege, knoten_id
+from .extraktoren import ereignisse as ereignisse_ex
 from .extraktoren import sql as sql_ex
 from .graph import Graph, graph_diff, mit_schlank, schlank
 from .konfig import Konfig, SpaceKonfig
+from .namen import space_schluessel
 from .pruefliste import (
     beleg_nicht_messbar, beleg_untracked, neue_offene, pruefliste_ergaenzen, pruefliste_laden, pruefliste_pfad,
 )
@@ -176,6 +185,7 @@ class TickErgebnis:
     aussagen_belegt: int = 0  # davon mit gemerkten Belegen nach dem Lauf
     aussagen_neu: int = 0  # Belege erstmals gemerkt (Quelle `extraktor`, ohne LLM)
     doku_uebersprungen: list[str] = dataclasses.field(default_factory=list)  # Ruling T4-b: fremd geaenderte Ziele
+    ereignisse: int = 0  # Task 5: Space-Events (Space, Name) aus den Quellen im Messbaum
 
 
 # ---------- Aenderungen ----------
@@ -257,6 +267,30 @@ def signal_traegt(beleg: Beleg, doc: str, konfig: Konfig) -> bool:
     if not (doku_ziel(konfig, doc) or nur_lesend(konfig, doc)):
         return True
     return Path(beleg.file).suffix.lower() not in CODE_ENDUNGEN
+
+
+def _doku_schluessel(schluessel: str) -> bool:
+    """Task 5: Render-Hash einer anderen Doku als KETTEN.md (`<datei>.md#<block>`); KETTEN-Bloecke heissen ohne Datei."""
+    datei, raute, _ = schluessel.partition("#")
+    return bool(raute) and datei.lower().endswith(".md")
+
+
+def ereignis_quelle(konfig: Konfig, datei: str, bekannt: frozenset[str] = frozenset()) -> bool:
+    """Task 5: betrifft eine (committete) Aenderung an `datei` eine Ereignis-Quelle? Die YAML-Datei selbst, eine schon
+    bekannte Quelldatei (`bekannt`, aus den Belegen der Ereignis-Kanten) oder eine `.py` unter einer `python_dict`-Wurzel,
+    die den Tabellennamen enthaelt. Gelesen wird dafuer nur, ob angestossen wird; gemessen wird im Messbaum (T5-a)."""
+    for q in konfig.ereignisse:
+        if "yaml" in q and datei == q["yaml"].strip("/"):
+            return True
+        if "python_dict" in q and datei.endswith(".py") and _unter(datei, [q["wurzel"].strip("/")]):
+            if datei in bekannt:
+                return True
+            try:
+                if q["python_dict"].encode("utf-8") in (konfig.repo / datei).read_bytes():
+                    return True
+            except OSError:
+                continue
+    return False
 
 
 def betroffene_spaces(konfig: Konfig, aussen: Sequence[str], sub: Sequence[str]) -> list[str]:
@@ -378,6 +412,9 @@ class _Lauf:
         self.index_holer: Callable[[], Mapping[str, list[str]]] | None = None  # Datei-Index, einer je Lauf
         # Ruling T4-c: Code-Datei -> (alter Digest, neuer Digest, Aussage-Ids) geaenderter Datei-Belege ohne Judge
         self.datei_geaendert: dict[str, tuple[str, str, list[str]]] = {}
+        # Task 5: Events-Bloecke je Doku-Datei (Blockname -> Inhalt) und Zahl der Events
+        self.ereignis_bloecke: dict[str, dict[str, str]] = {}
+        self.n_ereignisse = 0
 
     # ----- Ergebnis und Stand -----
 
@@ -388,7 +425,7 @@ class _Lauf:
                             pruefliste, commit, uebersprungen, graph_digest, messbaum_commit, hinweis,
                             doku_gelesen=self.doku_gelesen, nur_lesend_gelesen=self.nur_lesend_gelesen,
                             aussagen=self.n_aussagen, aussagen_belegt=self.n_belegt, aussagen_neu=self.n_neu,
-                            doku_uebersprungen=list(self.doku_fremd_ziele))
+                            doku_uebersprungen=list(self.doku_fremd_ziele), ereignisse=self.n_ereignisse)
 
     def stand_speichern(self, *, fortschreiben: bool, render_hashes: Mapping[str, str] | None = None,
                         hand_edit: Mapping[str, str] | None = None,
@@ -807,6 +844,10 @@ class _Lauf:
             & beleg_dateien(basis)
         # Task 4: ein Commit an einem Doku-Ziel oder einer nur-lesend-Datei -> Aussagen pruefen (ohne Neubau)
         doku_geaendert = [p for p in geaendert if doku_ziel(konfig, p) or nur_lesend(konfig, p)]
+        # Task 5: ein Commit an einer Ereignis-Quelle -> Events neu lesen und Bloecke rendern (ohne Neubau)
+        quellen_bekannt = frozenset(b.file for e in basis.kanten.values() if e.art == "ereignis_von" for b in e.belege)
+        ereignis_geaendert = [p for p in geaendert if ereignis_quelle(konfig, p, quellen_bekannt)]
+        doku_geaendert += [p for p in ereignis_geaendert if p not in doku_geaendert]
         offene = list(self.stand_alt.offene_signale) if self.stand_alt else []
         self.spaces = spaces
 
@@ -815,7 +856,8 @@ class _Lauf:
 
         self.melden(f"Änderungen: {zahl(aussen)} Dateien außen, {zahl(sub)} im Submodul -> Spaces: "
                     f"{', '.join(spaces) or 'keine'}; Beleg-Dateien außerhalb: {len(belegdateien)}; "
-                    f"Doku geändert: {len(doku_geaendert)}; offene Signale: {len(offene)}")
+                    f"Doku geändert: {len(doku_geaendert)} (Ereignis-Quellen {len(ereignis_geaendert)}); "
+                    f"offene Signale: {len(offene)}")
         if not spaces and not belegdateien and not offene and not self.render_noetig and not doku_geaendert:
             self.stand_speichern(fortschreiben=True)
             self.melden(f"Stand: Lauf {self.lauf_nr} fortgeschrieben – übersprungen (keine_aenderung)")
@@ -1117,6 +1159,9 @@ class _Lauf:
         self.signale = hop_signale + aussagen_signale
         self.melden(f"Belege: {self.signale} Signal(e) (Hops {hop_signale}, Aussagen {aussagen_signale}); "
                     f"Judge {self.llm_aufrufe} Aufruf(e), {self.umgeschrieben} umgeschrieben")
+
+        # 6b. Space-Events (Task 5, D8): aus dem Messbaum, deterministisch, kein Judge
+        self._ereignisse(graph, texte)
 
         # 7. Rendern
         render_hashes, hand_edit = self._rendern(graph, texte)
@@ -1432,31 +1477,85 @@ class _Lauf:
         aussage_speichern(graph, a, erneuert, "llm" if antwort.urteil == "noch_wahr" else "extraktor")
         return None
 
+    def _ereignisse(self, graph: Graph, texte: Mapping[str, tuple[bytes, str]]) -> None:
+        """Task 5 (D8): Events aus den Quellen im Messbaum lesen (T5-a, committeter Stand), als `ereignis`-Knoten in den
+        Graph, je zugeordneter Doku-Datei ein Block je Space, Abgleich in die Pruefliste (`struktur`). Ohne Quellen
+        werden nur alte Ereignis-Knoten entfernt."""
+        konfig = self.konfig
+        evs: list[ereignisse_ex.Ereignis] = []
+        pp: list[Pruefpunkt] = []
+        praefixe: set[str] = set()
+        if konfig.ereignisse:
+            evs = ereignisse_ex.ereignisse_lesen(self.mess_konfig, self.mess_repo, praefixe=praefixe, pruefpunkte=pp)
+        bauen.ereignisse_einbauen(graph, evs)
+        if not konfig.ereignisse:
+            return
+        zuordnung = ereignisse_ex.space_dokumente_zuordnen([e.space for e in evs], konfig.space_dokumente,
+                                                           doku_dateien(konfig))
+        bloecke: dict[str, dict[str, str]] = {}
+        for key, doc in sorted(zuordnung.items()):
+            bloecke.setdefault(doc, {})[render_ereignisse.block_name(key)] = render_ereignisse.ereignisse_rendern(
+                key, evs)
+        self.ereignis_bloecke = bloecke
+        # bekannte SQL-Objekte (`schema.name`) sind keine Events, auch wenn das Schema wie ein Event-Praefix heisst
+        pp += ereignisse_ex.abgleich(evs, {doc: neu for doc, (_, neu) in texte.items()}, zuordnung, praefixe=praefixe,
+                                     nicht_ereignisse=set(self.sql_defs))
+        self.struktur.extend(pp)
+        self.n_ereignisse = len({(space_schluessel(e.space), e.name) for e in evs})
+        arten: dict[str, int] = {}
+        for p in pp:
+            arten[p.art] = arten.get(p.art, 0) + 1
+        self.melden(f"Ereignisse: {self.n_ereignisse} in {len({space_schluessel(e.space) for e in evs})} Space(s), "
+                    f"{len(zuordnung)} mit Doku; Prüfliste " + (", ".join(f"{a} {n}" for a, n in sorted(arten.items()))
+                                                                 or "nichts"))
+
     def _rendern(self, graph: Graph, texte: dict[str, tuple[bytes, str]]) -> tuple[dict[str, str], dict[str, str]]:
+        """Markierte Bloecke aller gelesenen Doku-Dateien rendern (Task 5: verallgemeinert). KETTEN.md: Uebersicht und
+        Hops, Render-Hashes unter dem Blocknamen (wie bisher). Andere Doku: Events-Bloecke (`render_ereignisse`), Hashes
+        unter `<datei>#<block>`. Hand-Edit-Schutz und `hand_edit` (einmal je Block und Inhalts-Hash) fuer alle gleich.
+        Hashes nicht gelesener Dateien bleiben stehen."""
         alt = self.stand_alt or Stand()
         md = self.konfig.ketten_md
-        if md not in texte:
-            return dict(alt.render_hashes), dict(alt.hand_edit_gemeldet)
-        roh, text = texte[md]
-        res = render_ketten.rendern(text, graph, alt.render_hashes, datei=md)
-        bloecke = render_ketten.bloecke_finden(text)
-        hand_edit: dict[str, str] = {}
-        neu_hand = 0
-        for p in res.pruefpunkte:
-            if p.art == "hand_edit" and p.aussage_id in bloecke:
-                h = render_ketten.block_hash(bloecke[p.aussage_id].inhalt)
-                hand_edit[p.aussage_id] = h
-                if alt.hand_edit_gemeldet.get(p.aussage_id) != h:
-                    neu_hand += 1
-                    self.offen.append(Pruefpunkt(p.art, p.text, p.datei, p.zeile, f"{p.aussage_id}#{h[:12]}"))
-            elif p.art == "marker_kaputt":
-                self.offen.append(p)
+        hashes, hand_edit = dict(alt.render_hashes), dict(alt.hand_edit_gemeldet)
+        n_bloecke = geaendert = neu_hand = 0
+        for doc in list(texte):
+            roh, text = texte[doc]
+            praefix = "" if doc == md else f"{doc}#"
+
+            def eigen(k: str, praefix: str = praefix) -> bool:
+                return k.startswith(praefix) if praefix else not _doku_schluessel(k)
+
+            alte = {k[len(praefix):]: v for k, v in alt.render_hashes.items() if eigen(k)}
+            if doc == md:
+                res = render_ketten.rendern(text, graph, alte, datei=md)
             else:
-                self.struktur.append(p)
-        texte[md] = (roh, res.text)
-        geaendert = sum(1 for b, h in res.hashes.items() if alt.render_hashes.get(b) != h)
-        self.melden(f"Render: {len(res.hashes)} Block/Blöcke, {geaendert} neu, {neu_hand} neue Hand-Edits")
-        return res.hashes, hand_edit
+                inhalt = self.ereignis_bloecke.get(doc, {})
+                if not inhalt and not alte and "graph:" not in text:
+                    continue
+                res = render_ereignisse.doku_rendern(text, inhalt, alte, datei=doc)
+            for k in [k for k in hashes if eigen(k)]:
+                del hashes[k]
+            for k in [k for k in hand_edit if eigen(k)]:
+                del hand_edit[k]
+            hashes.update({praefix + b: h for b, h in res.hashes.items()})
+            bloecke = render_ketten.bloecke_finden(text)
+            for p in res.pruefpunkte:
+                if p.art == "hand_edit" and p.aussage_id in bloecke:
+                    h = render_ketten.block_hash(bloecke[p.aussage_id].inhalt)
+                    hand_edit[praefix + p.aussage_id] = h
+                    if alt.hand_edit_gemeldet.get(praefix + p.aussage_id) != h:
+                        neu_hand += 1
+                        self.offen.append(Pruefpunkt(p.art, p.text, p.datei, p.zeile, f"{p.aussage_id}#{h[:12]}"))
+                elif p.art == "marker_kaputt":
+                    self.offen.append(p)
+                else:
+                    self.struktur.append(p)
+            texte[doc] = (roh, res.text)
+            n_bloecke += len(res.hashes)
+            geaendert += sum(1 for b, h in res.hashes.items() if alte.get(b) != h)
+        if n_bloecke:
+            self.melden(f"Render: {n_bloecke} Block/Blöcke, {geaendert} neu, {neu_hand} neue Hand-Edits")
+        return hashes, hand_edit
 
 
 def _melder(melden: Melden | None) -> Melden:
