@@ -126,6 +126,7 @@ from .stand import (
     urteil_holen, urteil_merken, urteile_kuerzen, vollgraph_kennung, vollgraph_laden, vollgraph_pfad,
     vollgraph_schreiben, vollgraph_verwerfen,
 )
+from .schluessel import schwaerzen
 from .typen import Pruefpunkt
 
 if TYPE_CHECKING:
@@ -711,14 +712,16 @@ class _Lauf:
         if erzaehlt is not None:
             zusatz += erzaehlt.zusatz
             ausgefallen += erzaehlt.ausgefallen
-            links = [f"[[{konfig.rowboat_notizen}/{rowboat_erzaehlt.WAS_IST_TITEL}]] – was man mit VibeMind machen "
-                     "kann", *links]
+            if rowboat_erzaehlt.WAS_IST_REL in erzaehlt.vorhanden:  # Fix-Runde 1 (Minor 7): erst, wenn es sie gibt
+                links = [f"[[{konfig.rowboat_notizen}/{rowboat_erzaehlt.WAS_IST_TITEL}]] – was man mit VibeMind "
+                         "machen kann", *links]
         geschrieben = rowboat.notizen_schreiben(
             graph, liste["offen"], ledger, konfig.rowboat_wissen, konfig.rowboat_notizen, self.lauf,
             manifest_pfad=rowboat.manifest_pfad(konfig), commits=commits, spitzen=spitzen, vermerke=vermerke,
             struktur=liste["struktur"], urteile_datei=konfig.rowboat_urteile, bekannte_laeufe=bekannt,
             melden=self.melden, pruefpunkte=punkte, zusatz=zusatz, zusatz_ausgefallen=ausgefallen,
-            zusatz_links=links, trocken=trocken, spaces=erzaehlt is None)
+            zusatz_links=links, trocken=trocken, spaces=erzaehlt is None,
+            vorhandene_seiten=erzaehlt.vorhanden if erzaehlt is not None else None)
         return geschrieben, punkte
 
     # ----- Erzaehlte Seiten (Task 9, D11) -----
@@ -751,10 +754,22 @@ class _Lauf:
             return 1
         try:
             s = self._seiten_schreiber()
-            plan = self._seiten_plan(graph)
-            return sum(1 for a in plan if rowboat_erzaehlt.zustand(a, s)[0] == "neu") if s is not None else len(plan)
+            if s is None:  # Fix-Runde 1 (Minor 8): nichts schreibbar -> nicht anwendbar, die Erstbefuellung endet
+                self._rowboat_umgeleitet(self.offen)
+                return 0
+            fehl = rowboat_erzaehlt.fehlversuche_laden(self.konfig)
+            return rowboat_erzaehlt.offen_zahl(self._seiten_plan(graph), s, fehl)
         except Exception:  # noqa: BLE001
             return 1
+
+    def _rowboat_umgeleitet(self, ziel: list[Pruefpunkt]) -> None:
+        """Ein Pruefpunkt `rowboat_umgeleitet` (dedupliziert ueber den gleichen Text), wenn der Notizordner umgeleitet
+        ist; ein unlesbares Manifest meldet `notizen_schreiben` selbst (`notizen_manifest_kaputt`)."""
+        konfig = self.konfig
+        if rowboat._umgeleitet(konfig.rowboat_wissen / konfig.rowboat_notizen):
+            ort = f"{konfig.rowboat_notizen}/"
+            ziel.append(Pruefpunkt("rowboat_umgeleitet", f"{ort} ist ein Symlink/Junction: keine Notiz und keine "
+                                   "Seite wird geschrieben; die Seiten zählen nicht als offen", ort, None, None))
 
     def _seiten_agent(self) -> tuple[str, bool, bool]:
         """(Budget-Agent, neue Seiten erlaubt, ueberhaupt fragen). Plan-Ruling P3: waehrend der Erstbefuellung im
@@ -775,8 +790,9 @@ class _Lauf:
         konfig = self.konfig
         s = self._seiten_schreiber()
         if not self.seiten_bereit:  # ohne gelesene Doku kein Plan: nichts erzaehlen, nichts aufraeumen
+            gesichert = rowboat_erzaehlt.gesicherte_pfade(s.manifest if s is not None else {})
             erg = rowboat_erzaehlt.SeitenErgebnis(
-                ausgefallen=rowboat_erzaehlt.gesicherte_pfade(s.manifest if s is not None else {}))
+                ausgefallen=gesichert, vorhanden=[r for r in gesichert if s is not None and (s.basis / r).exists()])
             self.melden("Seiten: kein vollständiger Plan in diesem Lauf – erzählte Seiten bleiben, wie sie sind")
             return erg
         plan = self._seiten_plan(graph)
@@ -795,13 +811,22 @@ class _Lauf:
                     return None, "budget:vorpruefung"
                 return rowboat_erzaehlt.seite_erzaehlen(a, konfig, agent=agent, **self._judge_kw())
 
+        fehl = rowboat_erzaehlt.fehlversuche_laden(konfig)
         erg = rowboat_erzaehlt.seiten_lauf(plan, s, ordner=konfig.rowboat_notizen, erzaehlen=erzaehlen,
                                            max_aufrufe=konfig.rowboat_seiten_je_lauf, neue_erlaubt=neue,
-                                           deadline=self._deadline)
+                                           deadline=self._deadline, fehlversuche=fehl)
+        if s is None:
+            self._rowboat_umgeleitet(erg.pruefpunkte)
+        if not trocken and s is not None:  # Fix-Runde 1: eigene Datei, unter derselben Sperre wie der Tick
+            try:
+                rowboat_erzaehlt.fehlversuche_schreiben(konfig, erg.fehlversuche)
+            except OSError as fehler:
+                self.melden(f"Seiten: Fehlversuche nicht gespeichert ({type(fehler).__name__})")
         self._erzaehlt_merken(erg)
         self.melden(f"Seiten: {len(plan)} erzählte Seite(n), {len(erg.faellig)} fällig, {len(erg.erzaehlt)} erzählt "
                     f"({erg.aufrufe} Aufruf(e) unter {agent if erzaehlen else '-'}), {erg.nie_geschrieben} noch nie "
-                    "geschrieben" + (f"; Abbruch: {erg.abbruch}" if erg.abbruch else ""))
+                    "geschrieben" + (f", {len(erg.pausiert)} pausiert" if erg.pausiert else "")
+                    + (f"; Abbruch: {erg.abbruch}" if erg.abbruch else ""))
         return erg
 
     def _erzaehlt_merken(self, erg: rowboat_erzaehlt.SeitenErgebnis) -> None:
@@ -1757,8 +1782,9 @@ class _Lauf:
         for a, neuer_text, gewaehlt, belege in sorted(ersetzungen, key=lambda e: e[0].zeile_start, reverse=True):
             if nur_lesend:  # D7: nie ersetzen; der Vorschlag geht in die Pruefliste, die Belege werden nachgefuehrt
                 self.offen.append(Pruefpunkt(
-                    "nur_lesend_veraltet", f"Urteil veraltet ({gewaehlt.art} {gewaehlt.anker or '-'} in "
-                    f"{gewaehlt.file}); Vorschlag: {' '.join(neuer_text.split())}"[:500], a.datei, a.zeile_start,
+                    "nur_lesend_veraltet", schwaerzen(f"Urteil veraltet ({gewaehlt.art} {gewaehlt.anker or '-'} in "
+                                                      f"{gewaehlt.file}); Vorschlag: "
+                                                      f"{' '.join(neuer_text.split())}"[:500]), a.datei, a.zeile_start,
                     a.id))
                 aussage_speichern(graph, a, belege, "extraktor")
                 continue
@@ -1915,7 +1941,7 @@ class _Lauf:
                 self.offen.append(Pruefpunkt(f"judge_{u.grund.split(':', 1)[0]}", f"{ort}: {u.grund}", a.datei,
                                              a.zeile_start, a.id))
             elif antwort.urteil == "unklar":
-                self.offen.append(Pruefpunkt("judge_unklar", f"{ort}: {antwort.begruendung[:200]}", a.datei,
+                self.offen.append(Pruefpunkt("judge_unklar", schwaerzen(f"{ort}: {antwort.begruendung[:200]}"), a.datei,
                                              a.zeile_start, a.id))
             self.erst_markiert.add(a.id)
         for (doc, nur), liste in sorted(ersetzungen.items()):
@@ -2002,7 +2028,7 @@ class _Lauf:
                 return None
             return a, antwort.neuer_text, gewaehlt, erneuert
         if antwort.urteil == "unklar":
-            self.offen.append(Pruefpunkt("judge_unklar", f"{ort}: {antwort.begruendung[:200]}", a.datei,
+            self.offen.append(Pruefpunkt("judge_unklar", schwaerzen(f"{ort}: {antwort.begruendung[:200]}"), a.datei,
                                          a.zeile_start, a.id))
         aussage_speichern(graph, a, erneuert, "llm" if antwort.urteil == "noch_wahr" else "extraktor")
         return None

@@ -295,7 +295,7 @@ def abo_aufruf(prompt: str, konfig: Konfig, agent: str, *, laufzeit: Callable[..
     nur, wenn claude gestartet wurde. Antwort = `json.loads(stdout)["result"]`, wenn kein `is_error`.
 
     `annehmen(text)`: Pruefung der Antwort; None = angenommen, sonst der Grund (wird zurueckgegeben, gebucht als
-    `fehler`). Rueckgabe `(text, "ok")` oder `(None, grund)` mit `budget:<grund> | timeout | exit:<n> | ungueltig |
+    `fehler`); wirft `annehmen`, gilt `ungueltig:<Typ>` (Fix-Runde 1: nach `pruefen` wirft der Aufruf nie). Rueckgabe `(text, "ok")` oder `(None, grund)` mit `budget:<grund> | timeout | exit:<n> | ungueltig |
     nicht_gefunden | oserror:<Typ>` oder dem Grund von `annehmen`."""
     if budget is None:
         budget, grund = budget_laden(konfig)
@@ -335,7 +335,12 @@ def abo_aufruf(prompt: str, konfig: Konfig, agent: str, *, laufzeit: Callable[..
             text = aussen["result"]
     except (ValueError, RecursionError):  # RecursionError: zu tief verschachteltes JSON
         text = None
-    grund = "ungueltig" if text is None else (annehmen(text) if annehmen is not None else None)
+    grund: str | None = "ungueltig" if text is None else None
+    if text is not None and annehmen is not None:
+        try:
+            grund = annehmen(text)
+        except Exception as e:  # noqa: BLE001 - Fix-Runde 1 zu Task 9: nach `pruefen` nie werfen, immer buchen
+            grund = f"ungueltig:{type(e).__name__}"
     if grund is not None:
         _buchen(budget, agent, "fehler", start, jetzt)
         return None, grund

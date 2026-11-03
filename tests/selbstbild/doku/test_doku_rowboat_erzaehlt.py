@@ -183,7 +183,7 @@ class Abo:
         return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"result": text}), stderr="")
 
     def titel(self):
-        return [re.search(r"^Titel der Seite: (.+)$", p, re.M).group(1) for p in self.prompts]
+        return [re.search(r"<<<TITEL\n(.+)\nTITEL>>>", p).group(1) for p in self.prompts]  # Fix-Runde 1: gekapselt
 
 
 class Budget(FakeBudget):
@@ -285,7 +285,10 @@ def test_schluessel_filter_auch_auf_der_ganzen_seite(konfig, tmp_path):
     abo = Abo()
     erg2, _, pp2 = _lauf(konfig, wissen, plan2, abo=abo, graph=g)
     assert abo.prompts == [] and seite.read_bytes() == vorher
-    assert [p.art for p in pp2] == ["seite_verdacht_schluessel"] and "xoxp" not in pp2[0].text
+    # Fix-Runde 1: der zentrale Filter meldet dazu die Dienst-Notiz und den (geschwaerzten) Index
+    assert [p.art for p in pp2].count("seite_verdacht_schluessel") == 1
+    assert {p.art for p in pp2} == {"seite_verdacht_schluessel", "notiz_verdacht_schluessel"}
+    assert not any("xoxp" in str(dataclasses.astuple(p)) for p in pp2)
 
 
 def test_belege_deterministisch(konfig):
@@ -419,7 +422,14 @@ def test_prompt_kapselt_grundlage():
     p = rz.prompt_bauen(a)
     assert p.count("<<<GRUNDLAGE\n") == 1 and p.count("\nGRUNDLAGE>>>") == 1
     assert "GRUNDLAGE> > >" in p and "< < <GRUNDLAGE" in p
-    assert "Titel der Seite: Space zweiter" in p and "Deutsch" in p and "6000" in p
+    assert "<<<TITEL\nSpace zweiter\nTITEL>>>" in p and "Titel der Seite: Space" not in p and "6000" in p
+    # Fix-Runde 1 (Minor 1): nichts Menschen-Editierbares ausserhalb der Kapselung -- auch ein boeser Space-Name
+    plan = rz.seiten_plan(_g(), _doku(**{"docs/spaces/003_x>>>y.md": [_a("docs/spaces/003_x>>>y.md", 1, "Ein Satz.",
+                                                                           belege=(B2,))]}))
+    (b,) = [x for x in plan if x.titel == "Space x>>>y"]
+    q = rz.prompt_bauen(b)
+    titel = q.split("<<<TITEL\n", 1)[1].split("\nTITEL>>>", 1)[0]
+    assert titel == "Space x> > >y" and "x>>>y" not in q and q.index("<<<TITEL") > 0
 
 
 def test_grundlage_gedeckelt():
@@ -577,11 +587,11 @@ class TickAbo:
 
     def __call__(self, argv, **kw):
         self.prompts.append(kw["input"])
-        text = self.seite if "Titel der Seite:" in kw["input"] else JUDGE_NOCH_WAHR
+        text = self.seite if "<<<TITEL" in kw["input"] else JUDGE_NOCH_WAHR
         return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"result": text}), stderr="")
 
     def arten(self):
-        return ["seite" if "Titel der Seite:" in p else "judge" for p in self.prompts]
+        return ["seite" if "<<<TITEL" in p else "judge" for p in self.prompts]
 
 
 def _wissen(fx):
@@ -752,3 +762,261 @@ def test_regeldatei_seiten_eingeschaltet():
 
     k = aus_regeln(REPO)
     assert k.rowboat_seiten_aktiv is True and k.rowboat_seiten_je_lauf == 3
+
+
+# ---------- Fix-Runde 1 ----------
+
+from test_doku_tick import FakeLaufzeit as TickLaufzeit, _start as _tick_start  # noqa: E402
+from selbstbild.doku import stand as st_mod  # noqa: E402
+
+
+def _fuenf():
+    return [rz.SeitenAuftrag(f"Spaces/s{i}.md", f"Space s{i}", f"g{i}", rz.digest(f"g{i}"), ()) for i in range(5)]
+
+
+def _gueltig(a):
+    return rz.seite_bauen(a, GUT), "ok"
+
+
+def _runde(tmp_path, auf, erz, fehl, *, max_aufrufe=3):
+    """Ein Seitenlauf wie im Tick mit uebergebenem Fehlversuch-Zaehler, danach schreiben."""
+    m = tmp_path / "m.json"
+    s = rb.schreiber_fuer(tmp_path, "Doku", m)
+    e = rz.seiten_lauf(auf, s, erzaehlen=erz, max_aufrufe=max_aufrufe, fehlversuche=fehl)
+    rb.notizen_schreiben(_g(), [], [], tmp_path, "Doku", LAUF, manifest_pfad=m, zusatz=e.zusatz,
+                         zusatz_ausgefallen=e.ausgefallen, spaces=False)
+    return e, rb.schreiber_fuer(tmp_path, "Doku", m)
+
+
+def test_fix_pause_nach_zwei_fehlschlaegen(tmp_path):
+    """Repro `t9_poison.py`: drei Seiten antworten immer ungueltig. Nach zwei Fehlschlaegen sind sie pausiert -- kein
+    Aufruf, kein Platz im Lauf, nicht in `offene_seiten`; die anderen Seiten bekommen die Plaetze."""
+    (tmp_path / "Doku").mkdir()
+    auf, aufrufe = _fuenf(), []
+
+    def erz(a):
+        aufrufe.append(a.pfad)
+        return (None, "ungueltig:zu_lang") if a.pfad < "Spaces/s3.md" else _gueltig(a)
+
+    fehl: dict = {}
+    laeufe = []
+    for _ in range(3):
+        e, s = _runde(tmp_path, auf, erz, fehl)
+        fehl = e.fehlversuche
+        laeufe.append((e, rz.offen_zahl(auf, s, fehl)))
+    drei = ["Spaces/s0.md", "Spaces/s1.md", "Spaces/s2.md"]
+    assert aufrufe == drei + drei + ["Spaces/s3.md", "Spaces/s4.md"]
+    (e1, o1), (e2, o2), (e3, o3) = laeufe
+    assert (e1.aufrufe, e1.nie_geschrieben, o1) == (3, 5, 5)
+    assert (e2.aufrufe, e2.nie_geschrieben, o2) == (3, 2, 2)  # nach dem 2. Fehlschlag pausiert: zaehlt nicht mehr
+    assert (e3.aufrufe, e3.nie_geschrieben, o3) == (2, 0, 0) and e3.pausiert == drei
+    assert sorted(p.art for p in e2.pruefpunkte) == ["seite_pausiert"] * 3 + ["seite_ungueltig"] * 3
+    assert [p.art for p in e3.pruefpunkte] == ["seite_pausiert"] * 3
+    assert all("ungueltig:zu_lang" in p.text for p in e3.pruefpunkte)
+    assert fehl == {p: {"digest": rz.digest(f"g{i}"), "n": 2, "grund": "ungueltig:zu_lang"} for i, p in enumerate(drei)}
+    assert {(tmp_path / "Doku" / f"Spaces/s{i}.md").is_file() for i in (3, 4)} == {True}
+
+
+def test_fix_neue_grundlage_hebt_pause_auf(tmp_path):
+    (tmp_path / "Doku").mkdir()
+    auf = _fuenf()[:1]
+    fehl = {"Spaces/s0.md": {"digest": rz.digest("g0"), "n": 2, "grund": "ungueltig:h1"}}
+    aufrufe: list[str] = []
+
+    def erz(a):
+        aufrufe.append(a.grundlage)
+        return _gueltig(a)
+
+    e, s = _runde(tmp_path, auf, erz, fehl)
+    assert aufrufe == [] and e.pausiert == ["Spaces/s0.md"] and rz.offen_zahl(auf, s, e.fehlversuche) == 0
+    neu = [dataclasses.replace(auf[0], grundlage="g0 neu", grundlage_digest=rz.digest("g0 neu"))]
+    e, s = _runde(tmp_path, neu, erz, e.fehlversuche)
+    assert aufrufe == ["g0 neu"] and e.fehlversuche == {} and e.pausiert == []
+    assert (tmp_path / "Doku" / "Spaces" / "s0.md").is_file()
+
+
+def test_fix_erfolg_setzt_zaehler_zurueck(tmp_path):
+    (tmp_path / "Doku").mkdir()
+    auf = _fuenf()[:1]
+    antworten = [(None, "schluessel:Slack-Token"), None]
+
+    def erz(a):
+        x = antworten.pop(0)
+        return x if x is not None else _gueltig(a)
+
+    e, _ = _runde(tmp_path, auf, erz, {})
+    assert e.fehlversuche == {"Spaces/s0.md": {"digest": rz.digest("g0"), "n": 1, "grund": "schluessel:Slack-Token"}}
+    e, _ = _runde(tmp_path, auf, erz, e.fehlversuche)
+    assert e.fehlversuche == {} and e.erzaehlt == ["Spaces/s0.md"]
+
+
+def test_fix_schluessel_vor_dem_aufruf_kostet_nichts(tmp_path):
+    """Treffer schon in Titel/Anhang/Belege oder Grundlage: kein Aufruf, kein Platz, pausiert, nur das Muster."""
+    (tmp_path / "Doku").mkdir()
+    a = rz.SeitenAuftrag("Spaces/k.md", "Space k", "g", rz.digest("g"), (), anhang="- Dienst `xoxb-intern`")
+    b = rz.SeitenAuftrag("Spaces/l.md", "Space l", "Port AKIA" + "Z" * 16, rz.digest("AKIA"), ())
+    c = _fuenf()[0]
+    aufrufe: list[str] = []
+
+    def erz(x):
+        aufrufe.append(x.pfad)
+        return _gueltig(x)
+
+    e, s = _runde(tmp_path, [a, b, c], erz, {}, max_aufrufe=1)
+    assert aufrufe == ["Spaces/s0.md"] and e.aufrufe == 1  # die Plaetze gehen an die saubere Seite
+    assert e.nie_geschrieben == 0 and e.pausiert == ["Spaces/k.md", "Spaces/l.md"]
+    pp = [p for p in e.pruefpunkte if p.art == "seite_verdacht_schluessel"]
+    assert len(pp) == 2 and "Slack" in pp[0].text and "AWS" in pp[1].text
+    assert not any("xoxb" in str(dataclasses.astuple(p)) or "AKIA" in str(dataclasses.astuple(p)) for p in pp)
+    assert rz.offen_zahl([a, b, c], s, e.fehlversuche) == 0
+
+
+def test_fix_nur_echte_aufrufe_zaehlen(tmp_path):
+    (tmp_path / "Doku").mkdir()
+    auf = _fuenf()[:3]
+    gruende = {"Spaces/s0.md": (None, "prompt:KeyError"), "Spaces/s1.md": None, "Spaces/s2.md": None}
+
+    def erz(a):
+        return gruende[a.pfad] or _gueltig(a)
+
+    e, _ = _runde(tmp_path, auf, erz, {}, max_aufrufe=1)
+    assert e.aufrufe == 1 and e.erzaehlt == ["Spaces/s1.md"] and e.abbruch is None  # prompt:* kostet keinen Platz
+    for grund in ("nicht_gefunden", "oserror:PermissionError", "budget:tagesgrenze"):
+        (tmp_path / "Doku" / "Spaces" / "s1.md").unlink(missing_ok=True)
+        gruende["Spaces/s0.md"] = None
+        e, _ = _runde(tmp_path / grund.replace(":", "_"), auf, lambda a, g=grund: (None, g), {})
+        assert e.aufrufe == 0 and e.abbruch == grund and e.fehlversuche == {}
+
+
+def test_fix_abo_aufruf_wirft_nie_nach_pruefen(konfig):
+    b = FakeBudget()
+
+    def kaputt(text):
+        raise RuntimeError("geheim")
+
+    assert jg.abo_aufruf("x", konfig, "doku-loop", laufzeit=FakeLaufzeit("Antwort"), budget=b,
+                         annehmen=kaputt) == (None, "ungueltig:RuntimeError")
+    assert [(a, e) for a, e, _ in b.buchungen] == [("doku-loop", "fehler")]
+
+
+def test_fix_zentraler_schluessel_filter(tmp_path):
+    """Jede Notiz/Seite: Treffer -> nicht geschrieben, `notiz_verdacht_schluessel` nur mit dem Muster. Pruefliste und
+    Index werden geschwaerzt statt ausgelassen (sie duerfen nie einfrieren)."""
+    g = _g()
+    g.knoten_hinzu(Knoten("dienst:xoxb-dienst", "dienst", "xoxb-dienst", None, None, {}))
+    wissen = tmp_path / "wissen"
+    pp: list = []
+    punkt = {"art": "judge_unklar", "text": f"Erstprüfung: der Token {WERT} steht im Code", "datei": "docs/x.md",
+             "zeile": 3, "aussage_id": "docs/x.md#X#1", "lauf": LAUF}
+    rb.notizen_schreiben(g, [punkt], [], wissen, "Doku", LAUF, manifest_pfad=tmp_path / "m.json", pruefpunkte=pp)
+    doku = wissen / "Doku"
+    assert not any("xoxb" in p.name for p in (doku / "Dienste").iterdir())
+    pl, ix = _lesen(doku / "Prüfliste.md"), _lesen(doku / "Index.md")
+    assert WERT not in pl and "ghp_" not in pl and "Schlüssel-Verdacht" in pl
+    assert "xoxb-" not in ix and (doku / "Ketten" / "K1.md").is_file()
+    verdacht = [p for p in pp if p.art == "notiz_verdacht_schluessel"]
+    assert {p.datei for p in verdacht} >= {"Doku/Prüfliste.md", "Doku/Index.md"} and len(verdacht) == 3
+    alles = " ".join(str(dataclasses.astuple(p)) for p in verdacht)
+    assert "xoxb" not in alles and "ghp_" not in alles and WERT[4:12] not in alles
+    for datei in doku.rglob("*.md"):
+        assert not rz.sieht_aus_wie_schluessel(_lesen(datei)), datei
+
+
+def test_fix_judge_begruendung_geschwaerzt(fx):
+    """Ein `judge_unklar` mit Schluessel-artigem Text: weder die lokale Pruefliste noch Prüfliste.md enthaelt ihn."""
+    _tick_start(fx)
+    unklar = json.dumps({"urteil": "unklar", "neuer_text": None, "beleg_anker": None,
+                         "begruendung": f"Der Wert {WERT} passt nicht"})
+    _tick(fx, laufzeit=TickLaufzeit(unklar, unklar))
+    roh = tk.pruefliste_pfad(fx.konfig).read_bytes().decode("utf-8")
+    assert "judge_unklar" in roh and WERT not in roh and "ghp_" not in roh
+    pl = _lesen(_wissen(fx) / "Prüfliste.md")
+    assert "judge_unklar" in pl and WERT not in pl and "ghp_" not in pl
+
+
+def test_fix_index_nur_vorhandene_seiten(fx):
+    """Index (und alle Notizen) verlinken eine erzaehlte Seite erst, wenn es sie gibt."""
+    _ohne_erst(fx)
+    _anstoss(fx)
+    _tick(fx, erzwingen=True, budget=TagesstandBudget(30), laufzeit=TickAbo())  # keine Seite erzaehlt
+    ix = _lesen(_wissen(fx) / "Index.md")
+    assert "Was ist VibeMind" not in ix and "[[Doku/Spaces/e1]]" not in ix
+    assert "[[Doku/Spaces/a]]" not in ix and "- a" in ix  # Graph-Space ohne Datei: nur der Name
+    _anstoss(fx)
+    _tick(fx, erzwingen=True, budget=ErstBudget(), laufzeit=TickAbo())  # je_lauf 2: Was ist + Spaces/a
+    ix = _lesen(_wissen(fx) / "Index.md")
+    assert "[[Doku/Was ist VibeMind]]" in ix and "[[Doku/Spaces/a]]" in ix
+
+
+def _abo_mit_giftiger_seite(titel="Was ist VibeMind"):
+    abo = TickAbo()
+    gift = "# Überschrift\n\nDer Text ist ungültig, weil er eine H1 hat und die Regel nicht einhält.\n"
+
+    def aufruf(argv, **kw):
+        abo.prompts.append(kw["input"])
+        if "<<<TITEL" not in kw["input"]:
+            text = JUDGE_NOCH_WAHR
+        else:
+            text = gift if f"<<<TITEL\n{titel}\nTITEL>>>" in kw["input"] else GUT
+        return subprocess.CompletedProcess(argv, 0, stdout=json.dumps({"result": text}), stderr="")
+
+    aufruf.prompts = abo.prompts  # type: ignore[attr-defined]
+    return aufruf
+
+
+def _gift_zahl(prompts):
+    return sum(1 for p in prompts if "<<<TITEL\nWas ist VibeMind\nTITEL>>>" in p)
+
+
+def test_fix_tick_pause_bleibt_ueber_laeufe(fx):
+    _ohne_erst(fx, je_lauf=10)
+    datei = rz.fehlversuche_pfad(fx.konfig)
+    for i in range(3):
+        if i:
+            _schreib(fx.repo, "sp/a/client.py", (fx.repo / "sp/a/client.py").read_text(encoding="utf-8") + f"\n# {i}\n")
+            _commit(fx.repo, f"c{i}", "sp/a/client.py")
+        abo = _abo_mit_giftiger_seite()
+        _anstoss(fx)
+        erg = _tick(fx, erzwingen=i == 0, budget=ErstBudget(), laufzeit=abo)
+        assert _gift_zahl(abo.prompts) == (1 if i < 2 else 0), i
+        gespeichert = json.loads(datei.read_text(encoding="utf-8"))
+        assert gespeichert["seiten"][rz.WAS_IST_REL]["n"] == min(i + 1, 2)
+    assert erg.erzaehlt_offen == 0 and rz.WAS_IST_REL not in erg.erzaehlt_faellig
+    arten = [p["art"] for p in tk.pruefliste_laden(fx.konfig)["offen"]]
+    assert arten.count("seite_pausiert") == 1 and arten.count("seite_ungueltig") == 1
+    assert st_mod.stand_pfad(fx.konfig).is_file()  # der Stand selbst bleibt die alte Datei
+
+
+def test_fix_erstbefuellung_endet_trotz_giftiger_seite(fx):
+    _ziele(fx, rowboat_seiten_aktiv=True, rowboat_seiten_je_lauf=3)
+    _start(fx)
+    gift = 0
+    for minute in range(0, 300, 10):
+        abo = _abo_mit_giftiger_seite()
+        _anstoss(fx)
+        _tick(fx, jetzt=_nacht(minute), budget=ErstBudget(), laufzeit=abo)
+        gift += _gift_zahl(abo.prompts)
+        if _stand(fx).erstbefuellung_fertig:
+            break
+    assert _stand(fx).erstbefuellung_fertig is True and gift == 2
+
+
+@pytest.mark.skipif(__import__("sys").platform != "win32", reason="Junctions nur unter Windows")
+def test_fix_umgeleiteter_rowboat_ordner_haelt_nicht_offen(fx, tmp_path):
+    from test_doku_rowboat import _junction
+
+    _ziele(fx, rowboat_seiten_aktiv=True)
+    draussen = tmp_path / "draussen"
+    draussen.mkdir()
+    fx.konfig.rowboat_wissen.mkdir(parents=True, exist_ok=True)
+    if not _junction(fx.konfig.rowboat_wissen / fx.konfig.rowboat_notizen, draussen):
+        pytest.skip("Junction nicht anlegbar")
+    _start(fx)
+    for minute in (0, 10):
+        abo = TickAbo()
+        _anstoss(fx)
+        _tick(fx, jetzt=_nacht(minute), budget=ErstBudget(), laufzeit=abo)
+        assert "seite" not in abo.arten()
+    assert _stand(fx).erstbefuellung_fertig is True and list(draussen.iterdir()) == []
+    arten = [p["art"] for p in tk.pruefliste_laden(fx.konfig)["offen"]]
+    assert arten.count("rowboat_umgeleitet") == 1

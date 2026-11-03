@@ -63,6 +63,7 @@ from . import umschreiben
 from .anker import Beleg
 from .graph import Graph, Kante, Knoten
 from .konfig import Konfig
+from .schluessel import schluessel_muster, schwaerzen
 from .schreibvorgang import Aenderung, git, kopf, kopf_pruefen, schreiben_pruefen_committen
 from .stand import lokaler_ordner, repo_schluessel
 from .typen import Pruefpunkt
@@ -305,8 +306,10 @@ class _Notiz:
 
 
 class _Notizen:
-    def __init__(self, graph: Graph, ordner: str) -> None:
+    def __init__(self, graph: Graph, ordner: str, space_vorhanden: Collection[str] | None = None) -> None:
         self.g, self.ordner = graph, ordner.strip("/")
+        # Fix-Runde 1 zu Task 9: gehoert `Spaces/` den erzaehlten Seiten, verlinkt nur, was es gibt (None = immer)
+        self.space_vorhanden = None if space_vorhanden is None else set(space_vorhanden)
         self.dienste = {i: k for i, k in graph.knoten.items() if k.typ == "dienst"}
         self.spaces = {i: k for i, k in graph.knoten.items() if k.typ == "space"}
         self.ketten = {i: k for i, k in graph.knoten.items() if k.typ == "kette"}
@@ -327,6 +330,8 @@ class _Notizen:
         if kid in self.dienst_name:
             return self.link("Dienste", self.dienst_name[kid])
         if kid in self.space_name:
+            if self.space_vorhanden is not None and f"Spaces/{self.space_name[kid]}.md" not in self.space_vorhanden:
+                return self.spaces[kid].name
             return self.link("Spaces", self.space_name[kid])
         k = self.g.knoten.get(kid)
         return k.name if k is not None else kid.split(":", 1)[-1]
@@ -686,7 +691,7 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
                       melden: Melden | None = None, pruefpunkte: list[Pruefpunkt] | None = None,
                       zusatz: Sequence[object] = (), zusatz_links: Sequence[str] = (),
                       zusatz_ausgefallen: Collection[str] = (), trocken: bool = False,
-                      spaces: bool = True) -> list[Path]:
+                      spaces: bool = True, vorhandene_seiten: Collection[str] | None = None) -> list[Path]:
     """Notizen schreiben (siehe Moduldoku); Rueckgabe die tatsaechlich geschriebenen Dateien.
 
     `pruefliste`: offene Punkte (Dicts aus `pruefliste_laden` mit `lauf`, oder Pruefpunkte); `ledger_neu`: Ledger-
@@ -706,7 +711,13 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
 
     `spaces=False` (Task 9, Ruling T9-a): die deterministischen Space-Notizen `Spaces/<name>.md` entstehen hier nicht
     mehr -- die Pfade gehoeren dann den erzaehlten Seiten (`rowboat_erzaehlt`), die als `zusatz` kommen (oder, solange
-    sie fehlen, als `zusatz_ausgefallen` stehen bleiben)."""
+    sie fehlen, als `zusatz_ausgefallen` stehen bleiben). `vorhandene_seiten` (Fix-Runde 1): mit `spaces=False`
+    verlinken die Notizen einen Space nur, wenn seine Seite in dieser Menge ist (sonst steht nur sein Name da).
+
+    Schluessel-Filter (Fix-Runde 1, global.md): jede Notiz und Seite wird vor dem Schreiben mit `schluessel_muster`
+    geprueft. Treffer -> diese Notiz wird nicht geschrieben (eine vorhandene Fassung bleibt) und `notiz_verdacht_schluessel`
+    nennt nur das Muster. Pruefliste und Index werden stattdessen geschwaerzt (`schwaerzen`), damit sie nie einfrieren:
+    die Pruefliste traegt Texte aus Judge-Urteilen."""
     melden = melden or _still
     gemeldet = pruefpunkte if pruefpunkte is not None else []
     wurzel = Path(wurzel)
@@ -727,7 +738,7 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
 
     commits, spitzen = commits or {}, spitzen or {}
     aus = _Ausblendung.aus(vermerke)
-    n = _Notizen(graph, ordner)
+    n = _Notizen(graph, ordner, None if spaces else vorhandene_seiten)
     punkte = [d for d in map(_punkt_dict, pruefliste)
               if (lauf_text(d.get("lauf")), punkt_kennung(d)) not in aus.erledigt]
     alle_ledger = [e for e in ledger_neu if e.quelle != "review"]
@@ -775,8 +786,21 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
     geschrieben: list[Path] = []
     umgeleitet = 0
     soll: set[str] = set()
+    navigation = {f"{PRUEFLISTE_NAME}.md", f"{PRUEFLISTE_NAME} (Loop).md", f"{INDEX_NAME}.md", f"{INDEX_NAME} (Loop).md"}
     for notiz in notizen:
         soll.add(notiz.rel)
+        ort = f"{ordner}/{schwaerzen(notiz.rel)}"
+        if notiz.rel in navigation:
+            sauber = schwaerzen(notiz.text)
+            if sauber != notiz.text:
+                gemeldet.append(Pruefpunkt("notiz_verdacht_schluessel", f"{ort}: enthielt etwas, das nach einem "
+                                           "Schlüssel aussieht; geschwärzt geschrieben", ort, None, None))
+                notiz = _Notiz(notiz.rel, sauber)
+        muster = schluessel_muster(notiz.text)
+        if muster is not None:  # nie schreiben; die vorhandene Fassung bleibt (rel ist in `soll`, Manifest unveraendert)
+            gemeldet.append(Pruefpunkt("notiz_verdacht_schluessel", f"{ort}: sieht nach einem Schlüssel aus (Muster: "
+                                       f"{muster}); nicht geschrieben", ort, None, None))
+            continue
         entscheid = s.entscheiden(notiz.rel, notiz.text)
         if entscheid == "umgeleitet":
             umgeleitet += 1
