@@ -1080,6 +1080,7 @@ class _Lauf:
             self.doku_gelesen += 1
             texte[doc] = (roh, neu)
         aussagen_signale += self._nur_lesend_pruefen(graph)
+        self._verwaiste_aussagen(graph)
         self.melden(f"Aussagen: {self.doku_gelesen} Doku-Datei(en), {self.nur_lesend_gelesen} nur lesend, "
                     f"{len(self.doku_fremd_ziele)} ausgelassen; {self.n_aussagen} Aussagen, {self.n_belegt} belegt, "
                     f"{self.n_neu} neu gemerkt")
@@ -1179,6 +1180,29 @@ class _Lauf:
             "hop_beleg_geaendert", f"{hop}: {alt.art} {alt.anker or '-'} in {stelle} geändert (Digest "
             f"{alt.digest[:12]} -> {neu.digest[:12]}); Hop-Zeile prüfen", self.konfig.ketten_md,
             zeile if isinstance(zeile, int) else None, f"{hop}#{neu.digest[:12]}"))
+
+    def _verwaiste_aussagen(self, graph: Graph) -> None:
+        """Fix-Runde 1, Item 2: gemerkte Aussagen eines geloeschten oder umbenannten Doku-Ziels (bzw. einer nur-lesend-
+        Datei) entfernen -- nur wenn die Loeschung committet ist: die Datei trifft ein Muster, ist weder Ziel noch
+        nur-lesend-Datei dieses Laufs, nicht versioniert, nicht unsauber (ein fremdes `git rm` ohne Commit ist
+        unsauber) und auf der Platte weder im Arbeitsbaum noch im Messbaum."""
+        konfig = self.konfig
+        bekannt = (set(doku_dateien(konfig)) | set(nur_lesend_dateien(konfig, self.mess_repo))
+                   | set(self.doku_fremd_ziele))
+        weg: list[str] = []
+        for k in list(graph.knoten.values()):
+            d = k.datei
+            if k.typ != "aussage" or not d or not (doku_ziel(konfig, d) or nur_lesend(konfig, d)):
+                continue
+            if d in bekannt or d in self.versioniert or d in self.unsauber:
+                continue
+            if (self.repo / d).exists() or (self.mess_repo / d).exists():
+                continue
+            aussage_entfernen(graph, k.id[len("aussage:"):])
+            weg.append(d)
+        if weg:
+            self.melden(f"Aussagen: {len(weg)} verwaist (Datei committet gelöscht/umbenannt: "
+                        f"{', '.join(sorted(set(weg)))}) – entfernt")
 
     def _nur_lesend_pruefen(self, graph: Graph) -> int:
         """D7/Ruling T4-a: nur-lesend-Dateien aus dem Messbaum (committeter Stand, nie der Arbeitsbaum eines

@@ -370,3 +370,46 @@ def test_urteile_warten_nur_fuer_das_dreckige_ziel(fx):
     assert neu in (fx.repo / a).read_text("utf-8")
     assert [k for k in rb.erledigt_laden(rb.erledigt_pfad(fx.konfig)) if aid[a] in str(k)]
     assert _status(fx.repo) == []
+
+
+# ---------- Fix-Runde 1, Item 2: verwaiste Aussagen geloeschter/umbenannter Ziele ----------
+
+def test_committete_loeschung_entfernt_die_aussagen(fx):
+    _zwei_ziele(fx)
+    _git(fx.repo, "rm", "-q", "--", "docs/spaces/001_x.md")
+    _git(fx.repo, "commit", "-q", "-m", "001 weg")
+    _anstoss(fx)
+    erg = _tick(fx)
+    assert erg.commit is not None and erg.llm_aufrufe == 0
+    assert not _aussagen(fx.repo, "docs/spaces/001_x.md")
+    assert len(_aussagen(fx.repo, "docs/spaces/002_y.md")) == 1
+    assert not [e for e in Graph.laden(fx.repo / GRAPH).kanten.values()
+                if e.art == "belegt_durch" and "001_x.md" in e.von]
+
+
+def test_uncommittete_loeschung_behaelt_die_aussagen(fx):
+    _zwei_ziele(fx)
+    alt = {aid: _belege_von(fx.repo, aid) for aid in _aussagen(fx.repo, "docs/spaces/001_x.md")}
+    _code_aenderung(fx, 1)  # vorher: `_commit` committet alles Gestagte
+    _git(fx.repo, "rm", "-q", "--", "docs/spaces/001_x.md")  # fremdes `git rm`, nicht committet (gestaged)
+    _anstoss(fx)
+    _tick(fx, erzwingen=True)
+    assert {aid: _belege_von(fx.repo, aid) for aid in _aussagen(fx.repo, "docs/spaces/001_x.md")} == alt
+    _git(fx.repo, "reset", "-q", "HEAD", "--", "docs/spaces/001_x.md")
+    _git(fx.repo, "checkout", "--", "docs/spaces/001_x.md")
+    _code_aenderung(fx, 2)
+    (fx.repo / "docs/spaces/002_y.md").unlink()  # nur im Arbeitsbaum geloescht
+    _anstoss(fx)
+    _tick(fx, erzwingen=True)
+    assert len(_aussagen(fx.repo, "docs/spaces/002_y.md")) == 1
+
+
+def test_umbenennung_entfernt_alte_und_merkt_neue_aussagen(fx):
+    _zwei_ziele(fx)
+    _git(fx.repo, "mv", "docs/spaces/001_x.md", "docs/spaces/003_z.md")
+    _git(fx.repo, "commit", "-q", "-m", "umbenannt")
+    _anstoss(fx)
+    erg = _tick(fx, erzwingen=True)
+    assert erg.commit is not None and erg.llm_aufrufe == 0
+    assert not _aussagen(fx.repo, "docs/spaces/001_x.md")
+    assert len(_aussagen(fx.repo, "docs/spaces/003_z.md")) == 1
