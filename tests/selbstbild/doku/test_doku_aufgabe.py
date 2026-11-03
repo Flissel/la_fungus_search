@@ -724,7 +724,7 @@ def test_alte_typen_aus_ast_sonst_kopie(tmp_path):
 @braucht_vm
 def test_fixture_gleich_dem_alten_loop():
     echt = (REPO / "scripts" / "doku_loop" / "graph.py").read_bytes().replace(b"\r\n", b"\n")
-    assert (ALT_FIXTURE / "graph.py").read_bytes() == echt
+    assert (ALT_FIXTURE / "graph.py").read_bytes().replace(b"\r\n", b"\n") == echt  # autocrlf-fest
     typen, quelle = ag.alte_typen(REPO)
     assert typen == ag.ALTE_TYPEN_KOPIE and quelle.startswith("ast")
 
