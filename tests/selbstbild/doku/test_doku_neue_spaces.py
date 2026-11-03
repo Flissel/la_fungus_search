@@ -46,15 +46,49 @@ API = 'from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get("/status")\n
 SERVER = ('from mcp.server.fastmcp import FastMCP\n\nmcp = FastMCP("testraum")\n\n\n@mcp.tool()\ndef pruefen():\n'
           '    return True\n')
 
-# docs_drift_waechter: DOC_FILE und INDEX_LINK wortgleich (echte Doku nutzt dreistellige Nummern)
+# docs_drift_waechter: DOC_FILE, INDEX_LINK und STAND wortgleich (echte Doku nutzt dreistellige Nummern)
 DOC_FILE = re.compile(r"^\d{2,3}_([a-z0-9_]+)\.md$")
 INDEX_LINK = re.compile(r"\]\((\d{2,3}_[a-z0-9_]+\.md)\)")
+STAND = re.compile(r"(?:Stand|Datum)[^\d\n]{0,12}(\d{4}-\d{2}-\d{2})")
+STAND_PART_RE = re.compile(r"^([A-Za-z0-9_.\-/]+)@([0-9a-f]{7,40})$")  # space_doc_check
+
+
+def _gitlinks_unter(repo, prefix):
+    """`docs_drift_waechter.gitlinks_unter`: (pfad, sha) der Gitlinks direkt unter prefix, `git ls-tree HEAD` im
+    Ordner `vibemind-os` (Pfade relativ dazu)."""
+    out = _git(repo / "vibemind-os", "ls-tree", "HEAD", prefix)
+    treffer = []
+    for zeile in out.splitlines():
+        meta, _, pfad = zeile.partition("\t")
+        mode, typ, sha = meta.split()[:3]
+        if mode == "160000" and typ == "commit":
+            treffer.append((pfad, sha))
+    return treffer
+
+
+def _pins(repo, doc, text):
+    """`docs_drift_waechter.pruefe_pins` fuer `bereich == "spaces"` (`erwartete_pins`, `_space_dir`)."""
+    name = DOC_FILE.match(doc.name).group(1)
+
+    def norm(p):
+        return p.rsplit("/", 1)[-1].replace("-", "_").lstrip("_")
+
+    pins = [(p, s) for p, s in _gitlinks_unter(repo, "spaces/") if norm(p) == name]
+    space_dir = next((v for v in (name, name.replace("_", "-"), "_" + name)
+                      if (repo / "vibemind-os/spaces" / v).is_dir()), name)
+    pins += _gitlinks_unter(repo, f"spaces/{space_dir}/")
+    return {(doc.relative_to(repo).as_posix(), f"Pin-Drift: `{p}` steht in HEAD auf {s[:12]}, im Dokument nicht genannt")
+            for p, s in pins if s[:7] not in text}
 
 
 def _waechter(repo):
-    """Torwaechter-Stub wie `docs_drift_waechter`: Belege-Pfade existieren (`_waechter_stub`) und der Index
-    `docs/spaces/README.md` verlinkt genau die vorhandenen `NN(N)_name.md` (`pruefe_index`)."""
+    """Torwaechter-Stub wie `docs_drift_waechter`: Belege-Pfade existieren (`_waechter_stub`), jedes Dokument nennt die
+    Pins seiner Gitlinks (`pruefe_pins`) und der Index `docs/spaces/README.md` verlinkt genau die vorhandenen
+    `NN(N)_name.md` (`pruefe_index`)."""
     fehler = set(_waechter_stub(repo))
+    for doc in sorted((repo / "docs/spaces").glob("*.md")):
+        if DOC_FILE.match(doc.name):
+            fehler |= _pins(repo, doc, doc.read_text(encoding="utf-8", errors="replace"))
     ordner = repo / "docs/spaces"
     index = ordner / "README.md"
     if not index.exists():
@@ -134,6 +168,10 @@ def test_neuer_space_bekommt_doku(fx):
     assert text.startswith("# 021 testraum\n")
     assert f"Stand: repo@{sha[:7]}" in text  # Repo des Space (hier das aeussere) @ letzter Commit am Ordner
     assert re.search(r"^Stand:\s*(.+?)\s*$", text, re.M).group(1) == f"repo@{sha[:7]}"  # space_doc_check.STAND_RE
+    # M1: `Datum:` mit dem Commit-Datum dieses sha -- docs_drift_waechter.pruefe_stand findet es im Kopf
+    datum = _git(fx.repo, "log", "-1", "--format=%cs", sha).strip()
+    assert f"Stand: repo@{sha[:7]}\nDatum: {datum}\n" in text
+    assert STAND.search(text.split("\n## ", 1)[0]).group(1) == datum
     bloecke = bloecke_finden(text)
     assert set(bloecke) == {"stand testraum", "steckbrief testraum", "ereignisse testraum", "schnittstellen testraum",
                             "belege testraum"}
@@ -221,6 +259,7 @@ def test_space_entfernt(fx):
     assert (fx.repo / NEU).read_bytes() == vorher and (fx.repo / README).read_bytes() == readme
     punkte = [p for p in _pruefliste(fx)["struktur"] if p["art"] == "space_doku_ohne_space"]
     assert len(punkte) == 1 and punkte[0]["datei"] == NEU and punkte[0]["aussage_id"] == "space:testraum"
+    assert "Datei löschen oder Belege anpassen; der Drift-Waechter meldet bis dahin 'Beleg fehlt'." in punkte[0]["text"]
     assert not [p for p in _pruefliste(fx)["struktur"] if p["art"] in ("block_unbekannt", "block_ohne_quelle")]
     # der Index bleibt vollstaendig; die stehen gebliebenen Belege zeigen auf die geloeschten Dateien -- das hat der
     # Loesch-Commit verursacht (steht im Torwaechter "vorher", blockiert also keinen spaeteren Loop-Commit)
@@ -304,14 +343,116 @@ def test_halb_angelegter_space_ohne_commit_bekommt_keine_doku(fx):
     assert erg.neue_spaces == [] and not list((fx.repo / "docs/spaces").glob("021_*.md"))
 
 
-def test_nicht_initialisiertes_submodul_ist_kein_neuer_space(fx):
+# ---------- Fix-Runde 1, Ruling T6-a: Submodul-Spaces sind Spaces ----------
+
+EXTERN = "docs/spaces/021_extern.md"
+
+
+def _gitlink(fx, rel, sha):
+    """Gitlink ohne Checkout (nicht initialisiertes Submodul); nur dieser Pfad im Commit."""
+    (fx.repo / rel).mkdir(parents=True, exist_ok=True)
+    _git(fx.repo, "update-index", "--add", "--cacheinfo", f"160000,{sha},{rel}")
+    _git(fx.repo, "commit", "-q", "-m", f"gitlink {rel}")
+    return _head(fx.repo)
+
+
+def _stand(text):
+    teile = [t.strip() for t in re.search(r"^Stand:\s*(.+?)\s*$", text, re.M).group(1).split(",")]
+    assert all(STAND_PART_RE.match(t) for t in teile), teile  # space_doc_check.parse_stand liest jeden Teil
+    return teile
+
+
+def test_neuer_space_als_gitlink_nicht_initialisiert_und_pin_wechsel(fx):
     _basis(fx)
-    sha = _head(fx.repo)
-    _git(fx.repo, "update-index", "--add", "--cacheinfo", f"160000,{sha},vibemind-os/spaces/fremd")
-    _git(fx.repo, "commit", "-q", "-m", "gitlink")
+    pin = _head(fx.repo)
+    commit = _gitlink(fx, "vibemind-os/spaces/extern", pin)
     _anstoss(fx)
-    erg = _t(fx, erzwingen=True)
-    assert erg.neue_spaces == [] and erg.neue_dateien == []
+    erg = _t(fx)  # nur der Gitlink im Commit: der Lauf startet trotzdem
+    assert erg.commit == _head(fx.repo) and erg.neue_dateien == [EXTERN]
+    text = (fx.repo / EXTERN).read_text("utf-8")
+    assert _stand(text) == [f"repo@{commit[:7]}", f"vibemind-os/spaces/extern@{pin[:7]}"]
+    assert f"Datum: {_git(fx.repo, 'log', '-1', '--format=%cs', commit).strip()}" in text
+    bloecke = bloecke_finden(text)
+    assert set(bloecke) == {"stand extern", "steckbrief extern", "belege extern"}
+    assert "Unter-Repo, im Messbaum nicht vermessen" in bloecke["steckbrief extern"].inhalt
+    assert "`vibemind-os/spaces/extern/`" in bloecke["steckbrief extern"].inhalt
+    assert bloecke["belege extern"].inhalt == "- [B1] `vibemind-os/spaces/extern/`\n"
+    assert _waechter(fx.repo) == set() and _namen(fx.repo) == {EXTERN, README}
+    # der Pin-Stub ist echt: ein falscher Pin waere ein Fehler
+    falsch = text.replace(pin[:7], "0000000")
+    assert _pins(fx.repo, fx.repo / EXTERN, falsch) and not _pins(fx.repo, fx.repo / EXTERN, text)
+    # Pin-Wechsel: der Block `stand` wird neu gerendert, sonst nichts
+    neu_pin = _git(fx.repo, "rev-parse", "HEAD~1").strip()
+    commit2 = _gitlink(fx, "vibemind-os/spaces/extern", neu_pin)
+    _anstoss(fx)
+    erg = _t(fx)
+    assert erg.commit == _head(fx.repo) and _namen(fx.repo) == {EXTERN}
+    text2 = (fx.repo / EXTERN).read_text("utf-8")
+    assert _stand(text2) == [f"repo@{commit2[:7]}", f"vibemind-os/spaces/extern@{neu_pin[:7]}"]
+    assert _waechter(fx.repo) == set() and _status(fx.repo) == []
+
+
+def test_neuer_space_als_submodul_initialisiert(fx, tmp_path):
+    from test_doku_tick import _submodul
+    _basis(fx)
+    _submodul(fx, tmp_path, "vibemind-os/spaces/extern", {"api.py": API})
+    pin = _gitlinks_unter(fx.repo, "spaces/")[0][1]
+    _anstoss(fx)
+    erg = _t(fx)
+    assert erg.commit == _head(fx.repo) and erg.neue_dateien == [EXTERN]
+    text = (fx.repo / EXTERN).read_text("utf-8")
+    bloecke = bloecke_finden(text)
+    assert "`/status`" in bloecke["schnittstellen extern"].inhalt  # aus dem Submodul-Worktree im Messbaum
+    assert "`vibemind-os/spaces/extern/api.py`" in bloecke["belege extern"].inhalt
+    assert _stand(text)[-1] == f"vibemind-os/spaces/extern@{pin[:7]}"
+    assert _waechter(fx.repo) == set() and _status(fx.repo) == []
+
+
+def test_space_mit_gitlink_darin_misst_eigene_dateien(fx, tmp_path):
+    from test_doku_tick import _submodul
+    _basis(fx)
+    _schreib(fx.repo, "vibemind-os/spaces/mitsub/main.py", "def main():\n    return 4\n")
+    _commit(fx.repo, "mitsub", "vibemind-os/spaces/mitsub/main.py")
+    _submodul(fx, tmp_path, "vibemind-os/spaces/mitsub/lib", {"api.py": API})
+    pin = _gitlinks_unter(fx.repo, "spaces/mitsub/")[0][1]
+    _anstoss(fx)
+    erg = _t(fx)
+    ziel = "docs/spaces/021_mitsub.md"
+    assert erg.neue_dateien == [ziel]
+    text = (fx.repo / ziel).read_text("utf-8")
+    bloecke = bloecke_finden(text)
+    assert "`vibemind-os/spaces/mitsub/main.py`" in bloecke["steckbrief mitsub"].inhalt
+    assert "/status" not in text and "lib/api.py" not in text  # nur die eigenen Dateien, nicht das Unter-Repo
+    assert _stand(text)[-1] == f"vibemind-os/spaces/mitsub/lib@{pin[:7]}"
+    assert _waechter(fx.repo) == set() and _status(fx.repo) == []
+
+
+def test_generierter_space_bekommt_spaeter_ein_unter_repo(fx, tmp_path):
+    from test_doku_tick import _submodul
+    _basis(fx)
+    _testraum(fx)
+    _anstoss(fx)
+    _t(fx)
+    _submodul(fx, tmp_path, "vibemind-os/spaces/testraum/lib", {"x.py": "def x():\n    return 1\n"})
+    pin = _gitlinks_unter(fx.repo, "spaces/testraum/")[0][1]
+    _anstoss(fx)
+    erg = _t(fx)
+    assert erg.commit == _head(fx.repo) and _namen(fx.repo) == {NEU}
+    assert _stand((fx.repo / NEU).read_text("utf-8"))[-1] == f"vibemind-os/spaces/testraum/lib@{pin[:7]}"
+    assert not [p for p in _pruefliste(fx)["struktur"] if p["art"] == "space_doku_ohne_space"]
+    assert _waechter(fx.repo) == set() and _status(fx.repo) == []
+
+
+def test_readme_nicht_utf8_ist_ein_pruefpunkt(fx):
+    _basis(fx)
+    (fx.repo / README).write_bytes(README_HAND.encode("utf-8") + b"\nkaputt: \xe4\n")
+    _commit(fx.repo, "readme latin-1", README)
+    _testraum(fx)
+    _anstoss(fx)
+    erg = _t(fx)
+    assert erg.uebersprungen is None and erg.neue_dateien == [] and not (fx.repo / NEU).exists()
+    punkte = [p for p in _pruefliste(fx)["struktur"] if p["art"] == "space_doku_wartet"]
+    assert len(punkte) == 1 and "UTF-8" in punkte[0]["text"]
 
 
 def test_trocken_meldet_neue_spaces_ohne_zu_schreiben(fx):
@@ -343,19 +484,23 @@ def _baum(tmp_path):
         p = w / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(REGELN if rel == "selbstbild.yaml" else "x\n", encoding="utf-8")
-    (w / "vibemind-os/spaces/leer").mkdir()  # nicht initialisiertes Submodul im Messbaum: leerer Ordner
+    (w / "vibemind-os/spaces/leer").mkdir()  # leerer Ordner ohne Gitlink: kein Space
+    (w / "vibemind-os/spaces/extern").mkdir()  # nicht initialisierter Gitlink im Messbaum: leer, aber ein Space
+    (w / "vibemind-os/spaces/_privat").mkdir()  # Gitlink mit `_` am Anfang: kein Space
     return w
 
 
 def test_neue_spaces_ausschluesse_und_namen(tmp_path, fx):
+    """Ruling T6-a: ein Ordner, der ein Gitlink ist oder einen enthaelt, ist ein Space; `_` und `__pycache__` nicht."""
     w = _baum(tmp_path)
     konfig = dataclasses.replace(fx.konfig, repo=w, doku_ziele=("docs/spaces/0*.md",),
                                  space_dokumente={"bubbles": "docs/spaces/006_ideas.md"})
-    unter = ("vibemind-os/spaces/fremd", "vibemind-os/spaces/mitrepo/sub")
-    assert ns.neue_spaces(konfig, Graph(), w, unter_repos=unter) == ["Neu-Zwei", "neu"]
+    unter = ("vibemind-os/spaces/fremd", "vibemind-os/spaces/mitrepo/sub", "vibemind-os/spaces/extern",
+             "vibemind-os/spaces/_privat")
+    assert ns.neue_spaces(konfig, Graph(), w, unter_repos=unter) == ["Neu-Zwei", "extern", "fremd", "mitrepo", "neu"]
     ordner = ns.space_ordner(w, unter_repos=unter)
     assert "sales-claw" in ordner and "sales_claw" not in ordner  # eine Schreibweise je Space-Schluessel
-    assert not {"_contract", "__pycache__", "fremd", "mitrepo", "leer"} & set(ordner)
+    assert not {"_contract", "__pycache__", "leer", "_privat"} & set(ordner)
 
 
 def test_dateien_planen_nummer_und_name():

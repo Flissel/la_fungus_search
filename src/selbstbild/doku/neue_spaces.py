@@ -2,9 +2,12 @@
 
 Erkennung (im Messbaum, also nur committeter Stand): die Ordner, die auf den `ort` einer Strukturregel mit `art`
 "space" passen (gelesen wie der Skill, `skill._regeln_sammeln`; in VibeMind `vibemind-os/spaces/*/`). Nicht dazu
-gehoeren Ordner mit `_` am Anfang, `__pycache__`, Ordner, die selbst ein Unter-Repo sind oder eines enthalten
-(Gitlinks des Messbaums, `skill._mit_repo`), und leere Ordner (ein nicht initialisiertes Submodul im Messbaum). Je
-Space-Schluessel (`namen.space_schluessel`) zaehlt ein Ordner. "Hat Doku" heisst: die Zuordnung aus Task 5
+gehoeren Ordner mit `_` am Anfang und `__pycache__`. Fix-Runde 1, Ruling T6-a: ein Ordner, der ein Gitlink des
+Messbaums ist (auch nicht initialisiert, also leer) oder einen enthaelt, ist ein Space; nur ohne Gitlink zaehlen leere
+Ordner und Ordner mit eigenem `.git` nicht. Inhalt: (a) enthaelt Gitlinks -> nur die eigenen Dateien vermessen; (b) ist
+ein initialisierter Gitlink -> sein Worktree im Messbaum; (c) ist ein nicht initialisierter Gitlink -> nur Steckbrief
+(Ort, Hinweis `Unter-Repo, im Messbaum nicht vermessen`) und Belege. Der Block `stand` nennt jeden Gitlink am oder
+unter dem Ordner mit seinem Pin (der Drift-Waechter verlangt ihn) und darunter `Datum:`. Je Space-Schluessel (`namen.space_schluessel`) zaehlt ein Ordner. "Hat Doku" heisst: die Zuordnung aus Task 5
 (`space_dokumente_zuordnen`: `doku.space_dokumente`, sonst `docs/spaces/<NNN>_<name>.md`) findet eine vorhandene Datei.
 
 Fuer einen Space ohne Doku entsteht `docs/spaces/<NNN>_<schluessel>.md` (NNN = hoechste vorhandene Nummer + 1, mehrere
@@ -47,6 +50,7 @@ STAND, STECKBRIEF, EREIGNISSE, SCHNITTSTELLEN, BELEGE = "stand ", "steckbrief ",
     "belege "
 GENERIERT = (STAND, STECKBRIEF, SCHNITTSTELLEN, BELEGE)  # Bloecke dieses Moduls (Events rendert Task 5)
 KEINE_EVENTS = "Keine Events in den Quellen.\n"
+UNVERMESSEN = "Unter-Repo, im Messbaum nicht vermessen"  # Ruling T6-a (c): Gitlink, nicht initialisiert
 # Pruefpunkt-Arten dieses Moduls; jeder Lauf berechnet sie neu (in `struktur` je Lauf ersetzt)
 ARTEN = frozenset({"space_doku_ohne_space", "space_doku_wartet", "space_name_ungeeignet", "space_doku_fehler"})
 NAME_OK = re.compile(r"^[a-z0-9_]+$")  # docs_drift_waechter.DOC_FILE: nur so benannte Dateien zaehlen im Index
@@ -56,6 +60,18 @@ EINSTIEG_NAMEN = frozenset({"__main__.py", "main.py", "server.py", "app.py"})
 
 
 # ---------- Erkennung ----------
+
+def pfad_gleich(a: str, b: str) -> bool:
+    """Repo-relative Pfade gleich (ohne Gross-/Kleinschreibung, wo sie egal ist; wie der Skill)."""
+    from .. import struktur
+
+    return a.lower() == b.lower() if struktur.GROSSKLEIN_EGAL else a == b
+
+
+def gitlinks_von(ort: str, gitlinks: Iterable[str]) -> list[str]:
+    """Gitlinks am Ordner `ort` oder darunter (sortiert)."""
+    return sorted(g for g in gitlinks if pfad_gleich(g, ort) or pfad_gleich(g[:len(ort) + 1], ort + "/"))
+
 
 def space_orte(wurzel: Path) -> list[str]:
     """`ort`-Globs (ohne `/` am Ende, relativ zur Wurzel) der Space-Regeln, gelesen wie der Skill `neuer-space`."""
@@ -67,11 +83,11 @@ def space_orte(wurzel: Path) -> list[str]:
 
 def space_ordner(wurzel: Path, *, unter_repos: Iterable[str] = (), orte: Sequence[str] | None = None) -> dict[str, str]:
     """Space-Name (Ordnername) -> repo-relativer Ordner unter `wurzel` (siehe Moduldoku); je Space-Schluessel der erste
-    Ordner nach Pfad."""
-    from .. import skill
-
+    Ordner nach Pfad. `unter_repos`: Gitlinks des Messbaums (repo-relativ). Ruling T6-a: ein Ordner, der ein Gitlink ist
+    (auch leer = nicht initialisiert) oder einen enthaelt, ist ein Space; leere Ordner und Ordner mit eigenem `.git`
+    ohne Gitlink nicht."""
     wurzel = Path(wurzel)
-    unter = {u.strip("/") for u in unter_repos if u.strip("/")}
+    unter = [u.strip("/") for u in unter_repos if u.strip("/")]
     gefunden: list[tuple[str, str]] = []
     for ort in (space_orte(wurzel) if orte is None else orte):
         try:
@@ -79,13 +95,15 @@ def space_ordner(wurzel: Path, *, unter_repos: Iterable[str] = (), orte: Sequenc
         except (OSError, ValueError):
             continue
         for p in treffer:
-            try:
-                if not p.is_dir() or (p / ".git").exists() or not any(p.iterdir()):
-                    continue
-            except OSError:
+            if p.name.startswith("_") or p.name == "__pycache__":
                 continue
             rel = p.relative_to(wurzel).as_posix()
-            if p.name.startswith("_") or p.name == "__pycache__" or skill._mit_repo(rel, unter):
+            try:
+                if not p.is_dir():
+                    continue
+                if not any(pfad_gleich(u, rel) for u in unter) and ((p / ".git").exists() or not any(p.iterdir())):
+                    continue
+            except OSError:
                 continue
             gefunden.append((rel, p.name))
     aus: dict[str, str] = {}
@@ -143,8 +161,25 @@ def _space_knoten(graph: Graph, space: str) -> str | None:
     return k.datei if k is not None and k.datei else None
 
 
+def stand_text(stand: str, datum: str = "") -> str:
+    """Inhalt des Blocks `stand`: `Stand: <repo>@<sha7>[, <gitlink>@<pin7> ...]`, darunter `Datum: <JJJJ-MM-TT>`
+    (Commit-Datum des ersten sha; docs_drift_waechter.pruefe_stand liest es, `Stand:` bleibt ohne Datum)."""
+    return f"Stand: {stand}\n" + (f"Datum: {datum}\n" if datum else "")
+
+
+def bloecke_unvermessen(space: str, ort: str, *, stand: str = "", datum: str = "") -> dict[str, str]:
+    """Ruling T6-a (c): der Space-Ordner ist ein nicht initialisierter Gitlink -- Steckbrief mit Ort und Hinweis, Belege
+    nur der Ordner; keine Schnittstellen."""
+    key = space_schluessel(space)
+    ort = ort.strip("/")
+    zeilen = [_zeile(["Feld", "Wert"]), "|---|---|", _zeile(["Ort", f"{_code(ort + '/')} [B1]"]),
+              _zeile(["Hinweis", UNVERMESSEN])]
+    return {STAND + key: stand_text(stand, datum), STECKBRIEF + key: "".join(z + "\n" for z in zeilen),
+            BELEGE + key: f"- [B1] {_code(ort + '/')}\n"}
+
+
 def bloecke(space: str, graph: Graph, ereignisse: Sequence[Ereignis], *, ort: str | None = None,
-            stand: str = "") -> dict[str, str]:
+            stand: str = "", datum: str = "") -> dict[str, str]:
     """Inhalt (LF) der Bloecke `stand`, `steckbrief`, `schnittstellen`, `belege` und `ereignisse` eines Space aus seinem
     Graphen (`bauen.graph_bauen` fuer diesen Space) und den Events (Task 5). Keine Zeilennummern."""
     from .render_ereignisse import ereignisse_rendern
@@ -193,7 +228,7 @@ def bloecke(space: str, graph: Graph, ereignisse: Sequence[Ereignis], *, ort: st
         sch.append("Keine MCP-Werkzeuge gefunden.")
     belege = [f"- [B1] {_code(ort + '/')}"] + [f"- [B{nummer[d]}] {_code(d)}" for d in dateien]
     return {
-        STAND + key: f"Stand: {stand}\n",
+        STAND + key: stand_text(stand, datum),
         STECKBRIEF + key: steckbrief,
         EREIGNISSE + key: ereignisse_rendern(key, evs) if evs else KEINE_EVENTS,
         SCHNITTSTELLEN + key: "".join(z + "\n" for z in sch),
@@ -205,9 +240,15 @@ def _leer(name: str) -> str:
     return MARKER_BEGIN.format(block=name) + "\n" + MARKER_END
 
 
-def geruest(space: str, nummer: int) -> str:
-    """Datei mit leeren Bloecken (LF); den Inhalt setzt der Block-Kern."""
+def geruest(space: str, nummer: int, *, vermessen: bool = True) -> str:
+    """Datei mit leeren Bloecken (LF); den Inhalt setzt der Block-Kern. `vermessen=False` (Ruling T6-a (c)): nur
+    Stand, Steckbrief und Belege."""
     key = space_schluessel(space)
+    if not vermessen:
+        return "\n".join([
+            f"# {nummer:03d} {space}", "", _leer(STAND + key), "", HINWEIS, "",
+            "## Steckbrief (generiert)", "", _leer(STECKBRIEF + key), "",
+            "## Belege", "", _leer(BELEGE + key), ""])
     return "\n".join([
         f"# {nummer:03d} {space}", "", _leer(STAND + key), "", HINWEIS, "",
         "## Steckbrief (generiert)", "", _leer(STECKBRIEF + key), "",
@@ -224,10 +265,11 @@ def generierte_rendern(text: str, inhalt: Mapping[str, str], render_hashes: Mapp
 
 
 def doku_entwurf(space: str, graph: Graph, ereignisse: Sequence[Ereignis], nummer: int, *, ort: str | None = None,
-                 stand: str = "") -> str:
+                 stand: str = "", datum: str = "") -> str:
     """Vollstaendige generierte Doku (LF): Kopfzeile `# <NNN> <name>`, Block `stand` (`Stand: <repo>@<sha7>`), Hinweis,
     Abschnitte Steckbrief, Events, Schnittstellen, Belege -- aller Inhalt in markierten Bloecken."""
-    return generierte_rendern(geruest(space, nummer), bloecke(space, graph, ereignisse, ort=ort, stand=stand), {}).text
+    return generierte_rendern(geruest(space, nummer),
+                              bloecke(space, graph, ereignisse, ort=ort, stand=stand, datum=datum), {}).text
 
 
 # ---------- README ----------

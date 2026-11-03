@@ -452,6 +452,8 @@ class _Lauf:
         self.generiert_bloecke: dict[str, dict[str, str]] = {}  # generierte Doku -> Blockname -> Inhalt (LF)
         self.readme_roh: bytes | None = None  # CAS-Basis von docs/spaces/README.md (None = fehlt)
         self.readme: render_ketten.RenderErgebnis | None = None  # gerenderter Block `neue-spaces`
+        self.readme_text = ""  # dekodierte CAS-Basis der README (nur gesetzt, wenn `readme` gesetzt ist)
+        self.gitlinks: list[str] = []  # Ruling T6-a: Gitlinks des Messbaums (initialisiert und nicht)
 
     # ----- Ergebnis und Stand -----
 
@@ -967,7 +969,8 @@ class _Lauf:
             teile = p.split("/")
             for ort in orte:
                 n = len(ort.split("/"))
-                if len(teile) > n and muster_trifft(ort, "/".join(teile[:n]), ignorecase=ic):
+                # T6-a: auch der Ordner selbst (ein Gitlink kommt dazu oder bekommt einen neuen Pin)
+                if len(teile) >= n and muster_trifft(ort, "/".join(teile[:n]), ignorecase=ic):
                     je_ordner.setdefault(teile[n - 1], []).append(p)
         je_ordner = {n: ps for n, ps in je_ordner.items() if not n.startswith("_") and n != "__pycache__"}
         if not je_ordner:
@@ -1290,7 +1293,7 @@ class _Lauf:
                   f"{m} in Prüfliste"
         if self.neu_angelegt:
             betreff += f"; neue Space-Doku {', '.join(self.neu_angelegt)}"
-        aus: Ausgang =schreiben_pruefen_committen(repo, aenderungen, betreff, self.lauf, vorher=vorher,
+        aus: Ausgang = schreiben_pruefen_committen(repo, aenderungen, betreff, self.lauf, vorher=vorher,
                                                    drift=self.drift, ledger=self.ledger, melden=self.melden,
                                                    pp_datei=konfig.ketten_md, zweig=konfig.zweig,
                                                    vermerk=schreibvermerk_pfad(konfig))
@@ -1578,7 +1581,9 @@ class _Lauf:
         if not neue_spaces_aktiv(konfig):
             return
         pp: list[Pruefpunkt] = []
-        ordner = neue_spaces_mod.space_ordner(self.mess_repo, unter_repos=(*self.sub_koepfe, *self.nicht_messbar))
+        # Ruling T6-a: Gitlinks des Messbaums (initialisiert und nicht) machen einen Ordner zum Space, nie zum Ausschluss
+        self.gitlinks = sorted({*self.sub_koepfe, *self.nicht_messbar})
+        ordner = neue_spaces_mod.space_ordner(self.mess_repo, unter_repos=self.gitlinks)
         je_key = {space_schluessel(n): (n, rel) for n, rel in ordner.items()}
         dateien = doku_dateien(konfig)
         self.neue_spaces = neue_spaces_mod.neue_spaces(konfig, None, self.mess_repo, dateien=dateien, ordner=ordner)
@@ -1591,12 +1596,13 @@ class _Lauf:
                 inhalt = self._space_bloecke(*je_key[key], pp)
             else:
                 pp.append(Pruefpunkt("space_doku_ohne_space", f"{doc}: generierte Doku, aber kein Space-Ordner `{key}` "
-                                     "mehr im committeten Stand; die Datei bleibt (Löschen nur von Hand)", doc, None,
-                                     f"space:{key}"))
-            if inhalt is None:  # Bloecke bleiben, wie sie sind
-                inhalt = {b: x.inhalt.replace("\r\n", "\n") for b, x in render_ketten.bloecke_finden(text).items()
-                          if b.startswith((*neue_spaces_mod.GENERIERT, neue_spaces_mod.EREIGNISSE))}
-            self.generiert_bloecke[doc] = inhalt
+                                     "mehr im committeten Stand; die Datei bleibt (Löschen nur von Hand). Datei löschen "
+                                     "oder Belege anpassen; der Drift-Waechter meldet bis dahin 'Beleg fehlt'.", doc,
+                                     None, f"space:{key}"))
+            # Bloecke ohne neuen Inhalt (Ordner weg, Fehler, Space nicht mehr vermessen) bleiben, wie sie sind
+            stehen = {b: x.inhalt.replace("\r\n", "\n") for b, x in render_ketten.bloecke_finden(text).items()
+                      if b.startswith((*neue_spaces_mod.GENERIERT, neue_spaces_mod.EREIGNISSE))}
+            self.generiert_bloecke[doc] = {**stehen, **(inhalt or {})}
         readme_fremd = bool(umschreiben.fremde_aenderungen(self.repo, [NEUE_SPACES_README]))
         if self.neue_spaces and readme_fremd:
             pp.append(self._wartet(f"{NEUE_SPACES_README} hat nicht committete fremde Änderungen"))
@@ -1611,8 +1617,9 @@ class _Lauf:
                     pp.append(self._wartet(f"{doc} existiert schon"))
                     continue
                 nummer = int(doc.rsplit("/", 1)[-1].split("_", 1)[0])
-                texte[doc] = (b"", neue_spaces_mod.generierte_rendern(neue_spaces_mod.geruest(name, nummer), inhalt,
-                                                                      {}, doc).text)
+                vermessen = neue_spaces_mod.SCHNITTSTELLEN + space_schluessel(name) in inhalt  # sonst T6-a (c)
+                geruest = neue_spaces_mod.geruest(name, nummer, vermessen=vermessen)
+                texte[doc] = (b"", neue_spaces_mod.generierte_rendern(geruest, inhalt, {}, doc).text)
                 self.generiert_bloecke[doc] = inhalt
                 self.neu_angelegt.append(doc)
         if not readme_fremd:  # 3. Index
@@ -1622,8 +1629,16 @@ class _Lauf:
                     f"angelegt {', '.join(self.neu_angelegt) or 'nichts'}; generierte Dokus {len(self.generiert_bloecke)}")
 
     def _wartet(self, grund: str) -> Pruefpunkt:
-        return Pruefpunkt("space_doku_wartet", f"{grund}; neue Space-Doku für {', '.join(self.neue_spaces)} wartet",
-                          NEUE_SPACES_README, None, "space_doku_wartet")
+        folge = (f"; neue Space-Doku für {', '.join(self.neue_spaces)} wartet" if self.neue_spaces
+                 else "; Index nicht gerendert")
+        return Pruefpunkt("space_doku_wartet", grund + folge, NEUE_SPACES_README, None, "space_doku_wartet")
+
+    def _neue_verwerfen(self, texte: dict[str, tuple[bytes, str]]) -> None:
+        """Die in diesem Lauf angelegten Dateien zuruecknehmen (sie lagen nur in `texte`, nichts ist geschrieben)."""
+        for doc in self.neu_angelegt:
+            texte.pop(doc, None)
+            self.generiert_bloecke.pop(doc, None)
+        self.neu_angelegt = []
 
     def _readme(self, texte: dict[str, tuple[bytes, str]], pp: list[Pruefpunkt]) -> None:
         """Block `neue-spaces` mit einer Zeile je generierter Doku (auch fremd geaendert ausgelassene: die Datei gibt es).
@@ -1631,7 +1646,12 @@ class _Lauf:
         alt = self.stand_alt or Stand()
         praefix = f"{NEUE_SPACES_README}#"
         alte = {k[len(praefix):]: v for k, v in alt.render_hashes.items() if k.startswith(praefix)}
-        text = (self.readme_roh or b"").decode("utf-8")
+        try:
+            text = (self.readme_roh or b"").decode("utf-8")
+        except UnicodeDecodeError:  # M4: Pruefpunkt statt Abbruch; ohne Index-Zeile keine neue Doku (Torwaechter)
+            pp.append(self._wartet(f"{NEUE_SPACES_README} ist kein UTF-8"))
+            self._neue_verwerfen(texte)
+            return
 
         def eintraege() -> list[tuple[str, str]]:
             aus: list[tuple[str, str]] = []
@@ -1657,41 +1677,67 @@ class _Lauf:
         if [d for d in self.neu_angelegt if not neue_spaces_mod.im_index(res.text, d)]:
             pp.append(self._wartet(f"Block `{neue_spaces_mod.README_BLOCK}` in {NEUE_SPACES_README} ist von Hand "
                                    "geändert oder entfernt und kann die neue Datei nicht verlinken"))
-            for doc in self.neu_angelegt:
-                texte.pop(doc, None)
-                self.generiert_bloecke.pop(doc, None)
-            self.neu_angelegt = []
+            self._neue_verwerfen(texte)
             res = neue_spaces_mod.readme_rendern(text, eintraege(), alte)
-        self.readme = res
+        self.readme, self.readme_text = res, text
 
     def _space_bloecke(self, name: str, ort: str, pp: list[Pruefpunkt]) -> dict[str, str] | None:
         """Bloecke einer generierten Doku: Graph nur dieses Space (`bauen.graph_bauen`, Messbaum), Events, Stand. Ein
-        Fehler wird `space_doku_fehler` (nur der Typ) und die Doku in diesem Lauf nicht (neu) gerendert."""
+        Fehler wird `space_doku_fehler` (nur der Typ) und die Doku in diesem Lauf nicht (neu) gerendert.
+
+        Ruling T6-a: (a) enthaelt der Ordner Gitlinks, werden nur seine eigenen Dateien vermessen (die Unter-Repos sind
+        fuer Korpus und Extraktoren ausgeschlossen); (b) ist er ein initialisierter Gitlink, wird sein Worktree im
+        Messbaum vermessen; (c) ist er ein nicht initialisierter Gitlink, gibt es nur Steckbrief (Ort, Hinweis) und
+        Belege. Der Stand nennt jeden Gitlink am oder unter dem Ordner mit seinem Pin."""
         try:
+            links = neue_spaces_mod.gitlinks_von(ort, self.gitlinks)
+            stand, datum = self._stand(ort, links)
+            if any(neue_spaces_mod.pfad_gleich(ort, g) for g in self.nicht_messbar):  # (c)
+                return neue_spaces_mod.bloecke_unvermessen(name, ort, stand=stand, datum=datum)
             mess = self.mess_konfig
             # MCP-Muster eines konfigurierten Space mit diesem Ordner, sonst `decorator` (`@mcp.tool`)
             muster = next((s.mcp_muster for s in mess.spaces.values() if s.wurzel.strip("/") == ort), "decorator")
             sk = SpaceKonfig(name, ort, muster)
-            k = dataclasses.replace(mess, spaces={sk.name: sk})
+            innen = frozenset(g for g in links if not neue_spaces_mod.pfad_gleich(g, ort))  # (a): nur eigene Dateien
+            k = dataclasses.replace(mess, spaces={sk.name: sk}, ausschluss_pfade=mess.ausschluss_pfade | innen)
             manifest = self.manifest_bauer(sk, k, self.commit_fuer(ort + "/"))
             graph, bau_pp = bauen.graph_bauen(k, [sk.name], None, {sk.name: manifest}, sql_defs=self.sql_defs,
                                               commit_aussen=self.kopf_aussen, commit_sub=self.kopf_sub)
             pp.extend(p for p in bau_pp if p.art in ("extraktor_fehler", "datensatz_fehler"))
-            inhalt = neue_spaces_mod.bloecke(sk.name, graph, self.evs, ort=ort, stand=self._stand(ort))
+            inhalt = neue_spaces_mod.bloecke(sk.name, graph, self.evs, ort=ort, stand=stand, datum=datum)
         except Exception as fehler:  # noqa: BLE001 - ein Space darf den Lauf nicht umwerfen
             pp.append(Pruefpunkt("space_doku_fehler", f"{name}: {type(fehler).__name__} in {_fehler_ort(fehler)}; "
                                  "Space-Doku in diesem Lauf nicht gerendert", None, None, f"space:{space_schluessel(name)}"))
             return None
         return inhalt
 
-    def _stand(self, ort: str) -> str:
-        """`<repo>@<sha7>`: Repo, in dem der Space liegt (Submodul-Pfad bzw. Name des aeusseren Repos), und der letzte
-        Commit am Ordner bis zum gemessenen Commit (aendert sich nur, wenn sich der Space aendert)."""
-        sub = self._submodul_von(ort + "/")
-        wo, pfad, name = (self.repo, ort, self.repo.name) if sub is None else (self.repo / sub, ort[len(sub) + 1:], sub)
-        commit = self.commit_fuer(ort + "/")
+    def _eltern(self, pfad: str) -> tuple[str | None, Path, str, str]:
+        """(Repo, echter Checkout, Pfad darin, gemessener Commit) des Repos, das `pfad` enthaelt -- bei einem Gitlink
+        das Eltern-Repo, nicht der Gitlink selbst."""
+        oben = pfad.rsplit("/", 1)[0] if "/" in pfad else ""
+        sub = self._submodul_von(oben) if oben else None
+        if sub is None:
+            return None, self.repo, pfad, self.kopf_aussen
+        commit = self.sub_koepfe.get(sub) or (self.kopf_sub if sub == SUBMODUL else "")
+        return sub, self.repo / sub, pfad[len(sub) + 1:], commit
+
+    def _stand(self, ort: str, links: Sequence[str] = ()) -> tuple[str, str]:
+        """(`<repo>@<sha7>[, <gitlink>@<pin7> ...]`, Datum): Repo, in dem der Space-Ordner liegt (Submodul-Pfad bzw.
+        Name des aeusseren Repos), mit dem letzten Commit am Ordner bis zum gemessenen Commit (aendert sich nur, wenn sich
+        der Space aendert, bei einem Gitlink also beim Pin-Wechsel); dazu jeder Gitlink am oder unter dem Ordner mit
+        seinem Pin (`docs_drift_waechter.pruefe_pins` verlangt dessen sha7 im Text). Datum: `%cs` des ersten sha."""
+        sub, wo, pfad, commit = self._eltern(ort)
         sha = (git(wo, "log", "-1", "--format=%H", commit, "--", pfad) or "").strip() if commit else ""
-        return f"{name}@{(sha or commit)[:7]}"
+        basis = sha or commit
+        teile = [f"{sub or self.repo.name}@{basis[:7]}"]
+        for g in links:
+            _, g_wo, g_pfad, g_commit = self._eltern(g)
+            zeile = (git(g_wo, "ls-tree", g_commit, "--", g_pfad) or "") if g_commit else ""
+            meta = zeile.split("\t", 1)[0].split()
+            if len(meta) == 3 and meta[0] == "160000":
+                teile.append(f"{g}@{meta[2][:7]}")
+        datum = (git(wo, "log", "-1", "--format=%cs", basis) or "").strip() if basis else ""
+        return ", ".join(teile), datum
 
     def _ereignisse_lesen(self) -> None:
         """Task 5: Events aus den Quellen im Messbaum lesen (T5-a, committeter Stand); einmal je Lauf."""
@@ -1746,9 +1792,7 @@ class _Lauf:
 
             alte = {k[len(praefix):]: v for k, v in alt.render_hashes.items() if eigen(k)}
             if doc in readme and self.readme is not None:  # Task 6: in `_neue_spaces` gerendert (nur `neue-spaces`)
-                roh = self.readme_roh or b""
-                text = roh.decode("utf-8")
-                res = self.readme
+                roh, text, res = self.readme_roh or b"", self.readme_text, self.readme
             elif doc == md:
                 roh, text = texte[doc]
                 res = render_ketten.rendern(text, graph, alte, datei=md)
