@@ -8,9 +8,10 @@ Task 1 bis 10, la_fungus `main` @ `4de58f4`. Für diese Abnahme wurde **kein Cod
 **Nachtrag Final-Fix-Welle (03.11.2026):** Nach dem Final-Review kam eine Fix-Welle; der Abschnitt
 „Final-Fix-Welle“ unten listet sie. Schritt 2 beschreibt jetzt den Ablauf von Teil B.
 
-**Teil B ist offen.** Die Umschaltung der Windows-Aufgabe, der erste echte Tick, die Ruhe-Messung, das Schreiben
-der Rowboat-Seiten und die erste Nacht der Erstbefüllung kommen erst nach dem Final-Review, einer Fix-Welle und dem
-OK des Users. Bis dahin schreibt nur der alte Loop (`scripts\doku-loop.cmd`).
+**Teil B ist live (03.11.2026, ab 21:27).** Die Windows-Aufgabe ist umgeschaltet. Erster erzwungener Lauf, Ruhe über
+10 Läufe und die deterministischen Rowboat-Seiten sind erledigt; der alte Einstieg verweigert `tick`. Im Betrieb
+kamen zwei Befunde, beide mit Hotfix (Abschnitt „Befunde im Betrieb“). Offen bleiben die erste Nacht der
+Erstbefüllung und die Punkte unter „Bekannte Grenzen und offene Punkte“.
 
 Stufe 4 verpflanzt den Doku-Loop aus `scripts/doku_loop/` als Paket `selbstbild.doku` (CLI
 `python -m selbstbild doku …`). Neu sind die Doku-Ziele `docs/spaces/0*.md` und `docs/modules/0*.md`, die nur
@@ -26,10 +27,14 @@ Erstbefüllung, erzählte und deterministische Rowboat-Seiten und das Umschalten
 | Belege mit Anker ≥ 95 % exakt (Spec 9) | KETTEN.md: **119 von 127 (93,7 %)**; alle 8 Abweichungen liegen in Dateien mit fremden, nicht committeten Änderungen (ohne sie 119/119). Neue Ziele: keine gerenderten Belege mit Zeile (s. Schritt 4) | **knapp verfehlt** (Ursache außerhalb des Loops, s. Schritt 4) |
 | Events: Blöcke für die Registry-Spaces, Video-Fall | 144 Events in 14 Spaces, 13 Blöcke in 12 Dokus; Video 9 (Registry) gegen 11 (`EVENT_TO_TOOL`) als 10 × `ereignis_quellen_abweichend`; `video.reel` u. a. als 5 × `ereignis_nur_doku` | erreicht |
 | Neue Spaces | geplant nur `docs/spaces/021_sales.md` + eine Zeile im README-Block (Ruling T6-a); Fixture-Test 19/19 grün | erreicht (Inhalt weicht bewusst vom Brief ab, T6-a) |
-| Rowboat-Seiten (Plan) | 40 erzählte Seiten (1 + 21 + 18), 2 deterministische (`Mitbauen/…`, `Zustand.md`), `Index.md` neu; 124 vorhandene Notizen, **0 von Hand bearbeitet** | Plan erreicht; Schreiben **offen (Teil B)** |
-| Secrets: 0 Treffer der Schlüsselmuster | 0 Treffer in 183 Dateien bzw. Ausgaben (7 Muster) | erreicht; Hash-Probe mit echten Werten **startet der User** |
-| Tests `tests/selbstbild` | 1 577 passed, 34 skipped, 0 failed | erreicht |
-| Umschaltung, erster Tick, Ruhe (10 Ticks), Rowboat geschrieben, erste Nacht | — | **offen (Teil B, User-OK)** |
+| Rowboat-Seiten | Live geschrieben: `Index.md`, `Prüfliste.md` (gruppiert), `Zustand.md`, `Mitbauen/…`. Die 40 erzählten Seiten (1 + 21 + 18) warten auf die Nacht (P3); 124 vorhandene Notizen, 0 von Hand bearbeitet | deterministisch **erreicht**; erzählt **offen (erste Nacht)** |
+| Secrets: 0 Treffer der Schlüsselmuster | 0 Treffer in 183 Dateien bzw. Ausgaben (7 Muster); nach der Fix-Welle 9 Muster, 0 Treffer in 40 Doku-Dateien | erreicht; Hash-Probe mit echten Werten **startet der User** |
+| Tests | `tests/selbstbild` 1 602 passed, 36 skipped (`8f5f240`); `tests/selbstbild/doku` nach T4-c3 957 passed, 35 skipped (`f0e5060`); 0 failed | erreicht |
+| Umschaltung (Teil B) | 21:27:17 `aufgabe --umschalten`, Sicherung `doku_loop-sicherung-20261103-212717` (6 Dateien, ohne `messbaum-*`), `aufgabe-alt.json` geschrieben, neue Aktion zurückgelesen = Ziel, `--pruefen`: `Loop: neu` | **erreicht** |
+| Erster erzwungener Lauf (Teil B) | 21:27:32, 86 s: Commit `be80fb3` (15 Dateien: 13 Events-Blöcke in 12 Dokus, `021_sales.md`, README-Block, `graph.json` 0,35 → 2,9 MB), 1 294 Aussagen neu gemerkt, 0 Signale, 0 LLM, Torwächter ohne neue Fehler | **erreicht** |
+| Ruhe (Spec 9): 10 Läufe ohne Änderung | 22:53–23:38, 10 Läufe (Lauf-Nummern #322–#323; Läufe ohne Anstoß zählen keine Nummer): 0 LLM, 0 Commits, 0 Fehler | **erreicht** (nach T4-c2/T4-c3) |
+| Betrieb ohne Lärm (Anti-Ziel „Lauter Hintergrund“) | zwei Befunde im ersten Betrieb, beide mit Hotfix (`fdd99ac`, `f0e5060`) | erreicht nach Hotfix |
+| Erste Nacht der Erstbefüllung | — | **offen** (ab 00:00) |
 
 ## Befehle (PowerShell, im la_fungus-Arbeitsbaum)
 
@@ -166,9 +171,22 @@ Alle Diffs fügen nur ein (0 entfernte Zeilen): eine Überschrift `## Events (ge
 Seiten im Zustand `neu`. Schätzung: 532 × 2 + 40 = 1 104 Aufrufe, bei 150/Tag **mindestens 8 Nächte**. Task 7 hatte
 451 geschätzt; die Näherung damals kannte nicht alle Space-Manifeste.
 
-## Schritt 2: Umschaltung – Ablauf Teil B (nur mit User-OK)
+## Schritt 2: Umschaltung – Teil B (erledigt)
 
-Nicht ausgeführt. **Der erste Inhalt kommt am Tag, erzwungen und ohne LLM** (Final-Review C2, Teil a): Ohne
+**Ergebnis (03.11.2026, live, Angaben aus dem Ledger des Controllers):**
+
+| Schritt | Zeit | Ergebnis | Status |
+|---|---|---|---|
+| 1. `aufgabe --umschalten` | 21:27:17 | Sicherung `doku_loop-sicherung-20261103-212717` (6 Dateien, kein `messbaum-*`), `aufgabe-alt.json` geschrieben, neue Aktion zurückgelesen = Ziel | erledigt |
+| 2. erster Lauf `tick --erzwingen` | 21:27:32 | 86 s; 0 Signale, 0 LLM-Aufrufe; 1 294 Aussagen neu gemerkt | erledigt |
+| 3. den einen Commit prüfen | – | äußerer Commit `be80fb3`, 15 Dateien: 13 Events-Blöcke in 12 Dokus, `docs/spaces/021_sales.md`, README-Block `neue-spaces`, `docs/graph/graph.json` (0,35 → 2,9 MB, M5 beobachten); Torwächter: keine neuen Fehler | erledigt |
+| 4. Rowboat prüfen | – | geschrieben: `Index.md`, `Prüfliste.md` (gruppiert, I5), `Zustand.md`, `Mitbauen/Neuen Space erstellen mit Claude Code.md`; die 40 erzählten Seiten warten auf die Nacht (Plan-Ruling P3) | erledigt |
+| 5. `aufgabe --pruefen` | – | `Loop: neu` | erledigt |
+| 6. Aufgabe laufen lassen | ab 21:27 | live; zwei Befunde, s. „Befunde im Betrieb“ | erledigt |
+
+Der Ablauf, wie er vorher geplant war:
+
+**Der erste Inhalt kommt am Tag, erzwungen und ohne LLM** (Final-Review C2, Teil a): Ohne
 `--erzwingen` täte der erste ungezwungene Tick nichts, weil sich seit dem letzten Lauf des alten Loops kein Code
 geändert hat. Der erste Inhalt käme dann erst nachts mit der Erstbefüllung. Ablauf nach dem OK, in dieser Reihenfolge:
 
@@ -209,9 +227,47 @@ Weicht Schritt 3 oder 4 ab: `aufgabe --zurueck --trocken`, dann `aufgabe --zurue
 - **Mindestens 8 Nächte**, bis die Erstbefüllung fertig ist (532 Aussagen × 2 + 40 Seiten ≈ 1 104 Aufrufe bei 150/Tag).
   Danach gilt wieder `doku-loop` mit 30/Tag.
 
-## Schritt 3: Ruhe – offen (Teil B)
+## Schritt 3: Ruhe – erreicht (Teil B)
 
-10 Ticks ohne Codeänderung außerhalb des Erstbefüllungs-Fensters: 0 LLM-Aufrufe, 0 Commits. Log-Auszug kommt hierher.
+Ziel (Spec 9): 10 Läufe ohne Codeänderung außerhalb des Erstbefüllungs-Fensters, 0 LLM-Aufrufe, 0 Commits.
+
+Ergebnis: 10 Läufe von 22:53 bis 23:38, nach den Hotfixes T4-c2 und T4-c3, ohne Änderung im Repo. **0 LLM-Aufrufe,
+0 Commits, 0 Fehler. Erreicht.** Die Lauf-Nummern gehen dabei nur von #322 bis #323: Ein Lauf ohne Anstoß
+(`kein_anstoss`) speichert keinen Stand und zählt keine Nummer.
+
+## Befunde im Betrieb
+
+Beide Befunde traten in den ersten Stunden nach der Umschaltung auf. Beide wurden live mit einem Hotfix behoben. Die
+Windows-Aufgabe läuft direkt aus dem la_fungus-Arbeitsbaum, der Fix wirkt also ab dem nächsten Lauf.
+
+**Befund 1 – Budget-Verbrauch durch `WORKBOARD.md` (21:33 und 22:03, Läufe #316/#317).**
+- 18 Aussagen in Space- und Modul-Dokus belegen `WORKBOARD.md` als Ganzdatei-Anker ohne Ankernamen. Jede Session
+  committet dort ihren Claim, die Datei ändert sich also mehrmals am Tag. Jeder WORKBOARD-Commit ergab 18
+  Judge-Signale.
+- Lauf #317 verbrauchte 16 Aufrufe unter `doku-loop` (30/Tag). Die Urteile waren nur `unklar`, `uneinig` oder
+  `noch_wahr`, umgeschrieben wurde nichts. Für einen Anker ohne Namen kann der Judge nie gültig `veraltet` sagen
+  (`erlaubte_anker` filtert leere Namen). Commit `e0aec1d` (nur `graph.json`).
+- **Hotfix Ruling T4-c2, `fdd99ac`:** In Doku-Zielen und nur-lesend-Dateien (nicht KETTEN.md) trägt ein
+  `datei`-Anker ohne Ankernamen kein Judge-Signal mehr, gleich welche Endung. Er wird still nachgeführt und je Datei
+  als `beleg_datei_geaendert` gemeldet. Offene Signale dieser Art erledigt der nächste Lauf ohne Aufruf (#319: 20
+  erledigt, 0 LLM).
+- Wirkung auf den Bestand: 275 Aussagen haben jetzt nur noch gesammelte Prüfpunkte, 63 verlieren einen Teil ihrer
+  signaltragenden Anker. Die Erstbefüllung ändert sich nicht, weil T7-c solche Aussagen schon übersprang.
+- Weil der Extraktor jeden `datei`-Anker ohne Namen anlegt, tragen in Doku-Zielen nur noch `symbol`-, `yaml_key`- und
+  `sql`-Anker ein Signal.
+
+**Befund 2 – Commit-Lärm durch die Nachführung (22:33, Lauf #319).**
+- Die Nachführung der Digests nicht signaltragender Anker änderte `docs/graph/graph.json`, und der Loop committete die
+  Datei (`1444a7d`, 2,9 MB). Jede Änderung an `WORKBOARD.md` oder `vibemind.config.json` hätte einen solchen Commit
+  `docs(loop): Belege – …` ohne Doku-Änderung erzeugt. Das verletzt das Anti-Ziel „Lauter Hintergrund“.
+- **Hotfix Ruling T4-c3, `f0e5060`:** Die Commit-Entscheidung (`digest_stabil` des schlanken Graphen) ignoriert den
+  Digest jedes nicht signaltragenden Belegs in Doku-Zielen und nur-lesend-Dateien. Der Trockenlauf-`graph_digest` nutzt
+  denselben Maßstab. Der nachgeführte Digest steht im lokalen Vollgraph und fährt mit dem nächsten fälligen Commit mit.
+  `beleg_datei_geaendert` bleibt, der Commit-Zeiger wird fortgeschrieben. KETTEN.md und signaltragende Anker zählen
+  wie bisher.
+- Folge: Bis zum nächsten fälligen Commit führt jeder Lauf, der die Dokus liest, diese Anker erneut nach. Das kostet
+  kein LLM und keinen Commit, der Prüfpunkt ist dedupliziert. Der nächste echte Commit trägt dann alle nachgeführten
+  Digests mit, sein `graph.json`-Diff ist also größer, als sein Betreff vermuten lässt.
 
 ## Schritt 4: Belege
 
@@ -505,8 +561,16 @@ Geparkt: M2 (Zeilen in unsauberen Dateien nachführen), M5 (Größe von `graph.j
   konfigurierbar. Ein Repo ohne `KETTEN.md` und ohne `docs/graph/graph.json` endet heute aber mit `kein_seed`: Es
   gibt keinen Weg zum ersten Graph ohne den Ketten-Seed. Das ist ein Punkt für eine spätere Stufe.
 
-- **Teil B offen:** Umschaltung (User-OK), erster echter Tick mit Diff, Ruhe über 10 Ticks, Rowboat-Seiten geschrieben,
-  erste Nacht der Erstbefüllung, Hash-Probe mit den geschriebenen Seiten.
+- **Offen nach Teil B:**
+  - erste Nacht der Erstbefüllung (ab 00:00): Commits `docs(loop): Erstbefüllung – …` und die ersten erzählten Seiten
+    prüfen;
+  - Hash-Probe mit echten Werten (startet der User; Schritt 8), dann mit den geschriebenen Seiten;
+  - Push von la_fungus (User-OK);
+  - Frist 14 Tage für den alten Code (`scripts/doku_loop/`, `scripts/doku-loop.cmd`, `config/doku_loop.yaml`), danach
+    Entfernung mit User-OK;
+  - C.9.1 neu messen, sobald die fremden Marketing-Dateien committet sind;
+  - Größe von `graph.json` (M5: 0,35 → 2,9 MB) als Folgepunkt;
+  - die 30-Tage-Abnahme der Doku beginnt erst nach dem Ende der Erstbefüllung (Spec 12a).
 - **C.9.1 bei 93,7 %.** Alle Abweichungen in fremd geänderten Marketing-Dateien. Ob der Loop eine bei gleichem Digest
   nur verschobene Zeile nachziehen soll, ist eine Frage für das Final-Review. Die neuen Ziele haben noch keinen
   Belegbestand für C.9.1.
