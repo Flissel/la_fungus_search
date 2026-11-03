@@ -9,13 +9,20 @@ von selbst, sobald nichts mehr offen ist (`Stand.erstbefuellung_fertig`); danach
 
 Auswahl (Ruling T7-a): nur Aussagen mit mindestens einem signaltragenden Beleg (`tick.signal_traegt`); eine Aussage,
 die nur ganze-Datei-Anker auf Code-Dateien binden, wird nicht geprueft (sie steht gesammelt in der Pruefliste).
-Reihenfolge deterministisch nach Datei, dann Zeile. Befragt wird der erste signaltragende Beleg der Aussage.
+Ruling T7-c (Fix-Runde 1): auch nicht, wenn alle signaltragenden Belege keinen Ankernamen haben (ganze Datei, z. B.
+`.md`) -- `erlaubte_anker` waere leer, ein gueltiges `veraltet` unmoeglich; solche Aussagen zaehlen nicht als offen.
+Reihenfolge deterministisch nach Datei, dann Zeile. Befragt wird der signaltragende Beleg mit Ankernamen nach Art:
+symbol > sql > yaml_key > datei mit Zeile > datei ohne Zeile (Fix-Runde 1, `ANKER_RANG`).
 
 Abbruch: bei einer Budget-Ablehnung, jedem WIEDERHOLEN-Grund (`tick.WIEDERHOLEN`: Budget, Timeout, Exit-Code, claude
 fehlt, OSError) und an der Tick-Deadline. Scheitert in `zweimal_einig` erst der zweite Aufruf, gilt die Aussage als
 NICHT geprueft und der naechste Lauf fragt beide neu: das kostet genau eine Buchung extra (die verworfene erste),
 hoechstens einmal je Lauf, weil der Schritt danach abbricht. Inhaltliche Fehlschlaege (`uneinig`, `ungueltig`,
 `prompt:*`) zaehlen als geprueft und werden Pruefpunkt.
+
+Giftige Aussage (Fix-Runde 1): scheitert dieselbe Aussage zweimal hintereinander technisch (`timeout`, `exit:<n>`;
+Zaehler `Stand.erst_fehlversuche`), wird sie Pruefpunkt `erstpruefung_gescheitert`, gilt als erstgeprueft und der
+Schritt macht mit der naechsten weiter. Budget-Ablehnungen, Deadline und Fenster zaehlen nie als Fehlversuch.
 
 Urteils-Cache (`stand.urteil_holen/urteil_merken`, Fragetyp `erstpruefung`): Schluessel `["erstpruefung", aussage_id,
 art, datei, anker, digest]` mit `neu_digest = digest` (alt = neu = heutiger Digest). Ein spaeteres echtes Signal auf
@@ -50,6 +57,10 @@ __all__ = [
 ]
 
 AGENT_VORGABE = "selbstbild-erstbefuellung"
+ANKER_RANG = {"symbol": 0, "sql": 1, "yaml_key": 2, "datei": 3}  # kleiner = zuerst befragt
+FEHLVERSUCH_GRUENDE = ("timeout", "exit:")  # zaehlen fuer die giftige Aussage; Budget/Deadline nie
+GIFT_GRENZE = 2
+GESCHEITERT = "gescheitert:"  # Grund-Praefix eines `ErstUrteil` fuer eine giftige Aussage
 VON_VORGABE = "00:00"
 BIS_VORGABE = "06:00"
 FRAGETYP = "erstpruefung"
@@ -108,7 +119,7 @@ class ErstPosten:
 class ErstUrteil:
     posten: ErstPosten
     antwort: JudgeAntwort | None
-    grund: str  # ok | uneinig | ungueltig | prompt:<Typ>
+    grund: str  # ok | uneinig | ungueltig | prompt:<Typ> | gescheitert:<timeout|exit:n>
     aus_cache: bool = False
 
 
@@ -119,22 +130,41 @@ class ErstErgebnis:
     fertig: bool
     urteile: tuple[ErstUrteil, ...] = ()
     abbruch: str | None = None  # budget:<grund> | timeout | exit:<n> | nicht_gefunden | oserror:<Typ> | deadline
+    fehlversuche: dict[str, int] = dataclasses.field(default_factory=dict)  # neuer Zaehler je Aussage-Id
+
+
+def anker_rang(b: Beleg) -> tuple[int, int]:
+    """Fix-Runde 1: symbol > sql > yaml_key > datei mit Zeile > datei ohne Zeile (unbekannte Arten zuletzt)."""
+    return ANKER_RANG.get(b.art, len(ANKER_RANG)), 0 if b.zeile is not None else 1
+
+
+def ersatz_hindernis(antwort: JudgeAntwort, gewaehlt: Beleg | None, *, doku_da: bool) -> str | None:
+    """Fix-Runde 1 (M7): Pruefpunkt-Art, warum ein `veraltet` nicht ersetzt werden kann; None = ersetzbar."""
+    if gewaehlt is None:
+        return "beleg_nicht_aufloesbar"
+    if not antwort.neuer_text:
+        return "erstpruefung_ohne_ersatz"
+    if not doku_da:
+        return "erstpruefung_doku_nicht_gelesen"
+    return None
 
 
 def posten_waehlen(konfig: Konfig, eintraege: Iterable[tuple[Aussage, Sequence[Beleg], bool, bool]]
                    ) -> list[ErstPosten]:
     """Aus `(aussage, gemerkte Belege, fragbar, nur_lesend)` die Posten mit mindestens einem signaltragenden Beleg
-    (Ruling T7-a), nach Datei, Zeile und Id sortiert; doppelte Ids zaehlen einmal (der erste Eintrag)."""
+    mit Ankernamen (Rulings T7-a, T7-c), nach Datei, Zeile und Id sortiert; doppelte Ids zaehlen einmal (der erste
+    Eintrag). Befragt wird der beste Beleg nach `anker_rang` (bei Gleichstand der erste)."""
     from .tick import signal_traegt  # tick importiert dieses Modul
 
     posten: dict[str, ErstPosten] = {}
     for a, belege, fragbar, nur_lesend in eintraege:
         if a.id in posten:
             continue
-        tragend = [b for b in belege if signal_traegt(b, a.datei, konfig)]
+        tragend = [b for b in belege if b.anker and signal_traegt(b, a.datei, konfig)]
         if not tragend:
             continue
-        posten[a.id] = ErstPosten(dataclasses.replace(a, belege=tuple(belege)), tragend[0], fragbar, nur_lesend)
+        posten[a.id] = ErstPosten(dataclasses.replace(a, belege=tuple(belege)), min(tragend, key=anker_rang),
+                                  fragbar, nur_lesend)
     return sorted(posten.values(), key=lambda p: (p.aussage.datei, p.aussage.zeile_start, p.aussage.id))
 
 
@@ -164,7 +194,11 @@ def erstbefuellung_schritt(konfig: Konfig, graph: Graph | None, stand: Stand | N
     den Prompt (Vorgabe: keine; `graph` wird nur dafuer gebraucht).
 
     `fertig` = `vollstaendig` (alle Doku-Dateien gelesen) und nichts offen und `offene_seiten == 0`. Plan-Ruling P3:
-    Task 9 uebergibt hier die Zahl der noch nie geschriebenen Rowboat-Seiten."""
+    Task 9 uebergibt hier die Zahl der noch nie geschriebenen Rowboat-Seiten.
+
+    Fehlversuche (`stand.erst_fehlversuche`): `timeout`/`exit:<n>` erhoeht den Zaehler der Aussage und bricht ab; beim
+    `GIFT_GRENZE`-ten in Folge wird sie `ErstUrteil(grund="gescheitert:<grund>")` und der Schritt macht weiter. Ein
+    Urteil setzt den Zaehler zurueck. Ergebnis: `ErstErgebnis.fehlversuche` (der neue Zaehler)."""
     from . import judge  # nie beim Import (Trockenlauf und `--ohne-llm` laden den Judge nicht)
     from .stand import urteil_holen, urteil_merken
     from .tick import WIEDERHOLEN, _cache_antwort, _cache_eintrag
@@ -177,6 +211,7 @@ def erstbefuellung_schritt(konfig: Konfig, graph: Graph | None, stand: Stand | N
                    key=lambda p: (p.aussage.datei, p.aussage.zeile_start, p.aussage.id))
     urteile: list[ErstUrteil] = []
     abbruch: str | None = None
+    fehl = dict(stand.erst_fehlversuche) if stand is not None else {}
     kw: dict[str, Any] = {"laufzeit": laufzeit, "agent": e.agent}
     if budget is not None:
         kw["budget"] = budget
@@ -198,19 +233,27 @@ def erstbefuellung_schritt(konfig: Konfig, graph: Graph | None, stand: Stand | N
         frage = judge.JudgeFrage(a, b, text, text, nachbarn(b) if nachbarn is not None else (), fragetyp=FRAGETYP)
         antwort, grund = judge.zweimal_einig(frage, konfig, **kw)
         if antwort is None and grund.startswith(WIEDERHOLEN):
+            if grund.startswith(FEHLVERSUCH_GRUENDE):
+                n = fehl.get(a.id, 0) + 1
+                if n >= GIFT_GRENZE:  # giftig: nicht noch einmal versuchen, weiter mit der naechsten Aussage
+                    fehl.pop(a.id, None)
+                    urteile.append(ErstUrteil(p, None, GESCHEITERT + grund))
+                    continue
+                fehl[a.id] = n
             abbruch = grund  # die Aussage bleibt offen; der naechste Lauf fragt beide Aufrufe neu
             break
+        fehl.pop(a.id, None)
         urteil_merken(konfig, a.id, schl, stand_digest, stand_digest, _cache_eintrag(antwort, grund, zeit),
                       fragetyp=FRAGETYP)
         urteile.append(ErstUrteil(p, antwort, grund))
     rest = len(offen) - len(urteile)
     return ErstErgebnis(len(urteile), rest, vollstaendig and rest == 0 and offene_seiten <= 0, tuple(urteile),
-                        abbruch)
+                        abbruch, fehl)
 
 
 def stand_fortschreiben(stand: Stand, ergebnis: ErstErgebnis, *, dazu: Iterable[str] = ()) -> Stand:
     """Neuer Stand mit den Ids der Urteile aus `ergebnis` (und `dazu`) in `erstgeprueft` (sortiert) und `fertig`.
     Der Tick nutzt das nicht direkt: dort zaehlt eine Ersetzung erst nach ihrem Commit (`_Lauf.stand_speichern`)."""
     ids = set(stand.erstgeprueft) | {u.posten.aussage.id for u in ergebnis.urteile} | set(dazu)
-    return dataclasses.replace(stand, erstgeprueft=sorted(ids),
+    return dataclasses.replace(stand, erstgeprueft=sorted(ids), erst_fehlversuche=dict(ergebnis.fehlversuche),
                                erstbefuellung_fertig=stand.erstbefuellung_fertig or ergebnis.fertig)

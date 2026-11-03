@@ -84,7 +84,7 @@ import time
 import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -475,6 +475,7 @@ class _Lauf:
         self.erst_geprueft = 0
         self.erst_aufrufe = 0
         self.erst_umgeschrieben = 0
+        self.erst_fehlversuche: dict[str, int] | None = None  # Fix-Runde 1: neuer Zaehler (None = unveraendert)
 
     # ----- Ergebnis und Stand -----
 
@@ -500,6 +501,7 @@ class _Lauf:
         if self.erst_sammeln:  # nur waehrend der Erstbefuellung (sonst waechst die Liste mit jedem Signal)
             erst |= self.erst_markiert | (self.erst_ersetzt if committet else set())
         fertig = alt.erstbefuellung_fertig or (self.erst_fertig and (committet or not self.erst_ersetzt))
+        fehl = self.erst_fehlversuche if self.erst_fehlversuche is not None else alt.erst_fehlversuche
         stand_schreiben(self.konfig, Stand(
             letzter_commit_aussen=self.kopf_aussen if fortschreiben else alt.letzter_commit_aussen,
             letzter_commit_sub=(self.kopf_sub or None) if fortschreiben else alt.letzter_commit_sub,
@@ -512,7 +514,7 @@ class _Lauf:
             submodul_commits=dict(self.sub_koepfe if fortschreiben else alt.submodul_commits),
             koepfe_gesehen=dict(self.gesehen if self.gesehen is not None else alt.koepfe_gesehen),
             gemessen_ausstehend=dict(self.ausstehend if self.ausstehend is not None else alt.gemessen_ausstehend),
-            erstgeprueft=sorted(erst), erstbefuellung_fertig=fertig,
+            erstgeprueft=sorted(erst), erstbefuellung_fertig=fertig, erst_fehlversuche=dict(fehl),
         ))
 
     def _abschluss(self, ergebnis: TickErgebnis) -> TickErgebnis:
@@ -853,7 +855,7 @@ class _Lauf:
         self.lauf = f"{self.jetzt:%Y-%m-%dT%H:%M:%S}#{self.lauf_nr}"
         self.vollgraph_kennung = self.stand_alt.vollgraph_kennung if self.stand_alt else None
         self._erst_einstellen()
-        self.erst_fragen = self.erst_faellig and not self.ohne_llm
+        self.erst_fragen = self.erst_faellig and not self.ohne_llm and not self._erst_budget_erschoepft()
 
         # 1. Anstoss
         try:
@@ -1279,7 +1281,7 @@ class _Lauf:
         aussagen_signale += self._nur_lesend_pruefen(graph)
         self._verwaiste_aussagen(graph)
         self._datei_geaendert_melden()
-        self._erstbefuellung(graph, texte)  # Task 7: nach allen echten Signalen, mit der Rest-Deadline
+        self._erstbefuellung(graph, texte, uebrig)  # Task 7: nach allen echten Signalen, mit der Rest-Deadline
         self.melden(f"Aussagen: {self.doku_gelesen} Doku-Datei(en), {self.nur_lesend_gelesen} nur lesend, "
                     f"{len(self.doku_fremd_ziele)} ausgelassen; {self.n_aussagen} Aussagen, {self.n_belegt} belegt, "
                     f"{self.n_neu} neu gemerkt")
@@ -1563,17 +1565,62 @@ class _Lauf:
 
     # ----- Erstbefuellung (Task 7, D10) -----
 
+    @staticmethod
+    def _signal_ids(signale: Sequence[Mapping[str, object]]) -> set[str]:
+        ids: set[str] = set()
+        for s in signale:
+            aussage = s.get("aussage")
+            if isinstance(aussage, Mapping) and isinstance(aussage.get("id"), str):
+                ids.add(str(aussage["id"]))
+        return ids
+
     def _erst_einstellen(self) -> None:
         """Faellig (fuer das Ergebnis) und ob gesammelt wird; gefragt wird nur im echten Tick ohne `--ohne-llm`."""
         e = erst_mod.einstellung(self.konfig)
         self.erst_sammeln = e.aktiv and not (self.stand_alt is not None and self.stand_alt.erstbefuellung_fertig)
         self.erst_faellig = erst_mod.erstbefuellung_faellig(self.konfig, self.stand_alt, self.jetzt)
 
+    def _erst_budget_erschoepft(self) -> bool:
+        """Fix-Runde 1 (M4): lesende Vorpruefung ueber `tagesstand()` des Budget-Waechters (gleicher Lader wie der
+        Judge), damit ein Lauf ohne Aenderung nicht alle Dokus liest, wenn der Agent heute sicher nichts mehr darf:
+        Tagesgrenze erreicht, Not-Aus, oder User aktiv bei eingeschalteter Pause (Klasse hintergrund). Nur eine Abkuerzung:
+        `pruefen` bleibt die einzige Instanz; jeder Fehler hier heisst `False` (weiter wie bisher). Nur bei
+        `erst_faellig`, also hoechstens einmal je Lauf im Fenster."""
+        if not self.erst_faellig or self.ohne_llm:
+            return False
+        try:
+            budget = self.budget
+            if budget is None:
+                from . import judge
+
+                budget, _ = judge.budget_laden(self.konfig)
+            stand_fn = getattr(budget, "tagesstand", None)
+            if stand_fn is None:
+                return False
+            tag = stand_fn()
+            agent = erst_mod.einstellung(self.konfig).agent
+            eintrag = next((x for x in tag.get("agenten", []) if x.get("agent") == agent), None)
+            grund = None
+            if eintrag is not None and int(eintrag.get("heute", 0)) >= int(eintrag.get("grenze", 0)):
+                grund = f"Tagesgrenze {eintrag.get('heute')}/{eintrag.get('grenze')}"
+            elif tag.get("not_aus") is True:
+                grund = "Not-Aus"
+            elif (tag.get("user_aktiv") is True and tag.get("pause_aktiv_schalter", True) is True
+                  and (eintrag is None or eintrag.get("klasse", "hintergrund") == "hintergrund")):
+                grund = "User aktiv (Pause)"
+        except Exception:  # noqa: BLE001 - die Vorpruefung darf nie etwas verhindern, das `pruefen` erlauben wuerde
+            return False
+        if grund is None:
+            return False
+        self.melden(f"Erstbefüllung: Budget heute erschöpft oder pausiert ({grund}) – in diesem Lauf nicht gefragt")
+        return True
+
     def _erst_merken(self, a: au.Aussage, belege: Sequence[Beleg], *, fragbar: bool, nur_lesend: bool) -> None:
         if self.erst_sammeln and belege:
             self.erst_pool.append((a, tuple(belege), fragbar, nur_lesend))
 
-    def _erstbefuellung(self, graph: Graph, texte: dict[str, tuple[bytes, str]]) -> None:
+    def _erstbefuellung(self, graph: Graph, texte: dict[str, tuple[bytes, str]],
+                        uebrig: Sequence[Mapping[str, object]] = ()) -> None:
         """Task 7: die noch nicht erstgeprueften, signaltragend gebundenen Aussagen dieses Laufs (Ruling T7-a) unter dem
         Agenten der Erstbefuellung pruefen -- nach allen echten Signalen, mit der Rest-Deadline. Ohne `erst_fragen`
         (Trockenlauf, `--ohne-llm`, ausserhalb des Fensters) nur zaehlen. `veraltet` mit aufloesbarem Anker geht ueber
@@ -1583,8 +1630,13 @@ class _Lauf:
             return
         alt = self.stand_alt or Stand()
         bekannt = set(alt.erstgeprueft) | self.erst_markiert | self.erst_ersetzt
+        # Fix-Runde 1 (I1): nie eine Erstpruefung fuer eine Aussage, deren echtes Signal offen ist -- in diesem Lauf
+        # gefragt (auch abgelehnt), aus dem Stand uebernommen (`uebrig`, auch ohne Neubau nicht wiedergefunden) oder neu
+        # offen; sonst umginge die Erstbefuellung das doku-loop-Limit
+        gesperrt = {k[0] for k in self.gefragt} | self._signal_ids(uebrig) | self._signal_ids(self.offene_signale) \
+            | self._signal_ids(alt.offene_signale)
         posten = erst_mod.posten_waehlen(self.konfig, [
-            (a, belege, fragbar and a.datei not in self.erst_umgeschrieben_docs, nur)
+            (a, belege, fragbar and a.datei not in self.erst_umgeschrieben_docs and a.id not in gesperrt, nur)
             for a, belege, fragbar, nur in self.erst_pool])
         vollstaendig = not self.doku_fremd_ziele and not self.erst_zurueck
         if not self.erst_fragen:
@@ -1593,13 +1645,20 @@ class _Lauf:
                         f"{'fällig' if self.erst_faellig else 'nicht fällig'}, hier nicht gefragt")
             return
         vorher = self.llm_aufrufe
+        e = erst_mod.einstellung(self.konfig)
+
+        def schluss() -> bool:  # Fix-Runde 1 (M6): Tick-Deadline oder das Fenster schliesst waehrend des Laufs
+            jetzt = self.jetzt + timedelta(seconds=self.uhr() - self.start)
+            return self._deadline() or not erst_mod.im_fenster(e, jetzt)
+
         erg = erst_mod.erstbefuellung_schritt(
             self.konfig, graph, dataclasses.replace(alt, erstgeprueft=sorted(bekannt)), budget=self.budget,
-            laufzeit=self.laufzeit, deadline=self._deadline, posten=posten,
+            laufzeit=self.laufzeit, deadline=schluss, posten=posten,
             quelltext=lambda b: self.quelltext(b, alt=False), digest=self.digest_jetzt,
             nachbarn=lambda b: self.nachbarn(graph, b), vollstaendig=vollstaendig, jetzt=self.jetzt)
         self.erst_aufrufe = self.llm_aufrufe - vorher
         self.erst_geprueft, self.erst_offen, self.erst_fertig = erg.geprueft, erg.offen, erg.fertig
+        self.erst_fehlversuche = dict(erg.fehlversuche)
         ersetzungen: dict[tuple[str, bool], list[tuple[au.Aussage, str, Beleg, list[Beleg]]]] = {}
         for u in erg.urteile:
             a, b, antwort = u.posten.aussage, u.posten.beleg, u.antwort
@@ -1607,15 +1666,25 @@ class _Lauf:
             if antwort is not None and antwort.urteil == "veraltet":
                 gewaehlt = next((x for x in a.belege if x.anker == antwort.beleg_anker and self.urteil(x) == "beleg_ok"),
                                 None)
-                if gewaehlt is not None and antwort.neuer_text and (u.posten.nur_lesend or a.datei in texte):
+                hindernis = erst_mod.ersatz_hindernis(antwort, gewaehlt,
+                                                      doku_da=u.posten.nur_lesend or a.datei in texte)
+                if hindernis is None and gewaehlt is not None and antwort.neuer_text:
                     ersetzungen.setdefault((a.datei, u.posten.nur_lesend), []).append(
                         (a, antwort.neuer_text, gewaehlt, list(a.belege)))
                     if u.posten.nur_lesend:
                         self.erst_markiert.add(a.id)
                     continue
-                self.offen.append(Pruefpunkt("beleg_nicht_aufloesbar",
-                                             f"{ort}: Judge nennt {antwort.beleg_anker!r}, nicht aufloesbar",
-                                             a.datei, a.zeile_start, a.id))
+                text = {"beleg_nicht_aufloesbar": f"Judge nennt {antwort.beleg_anker!r}, nicht aufloesbar",
+                        "erstpruefung_ohne_ersatz": "Urteil veraltet ohne Ersatztext",
+                        "erstpruefung_doku_nicht_gelesen": "Urteil veraltet, Doku in diesem Lauf nicht gelesen"
+                        }.get(str(hindernis), str(hindernis))
+                self.offen.append(Pruefpunkt(str(hindernis), f"{ort}: {text}", a.datei, a.zeile_start, a.id))
+            elif antwort is None and u.grund.startswith(erst_mod.GESCHEITERT):
+                # Fix-Runde 1 (M5): ohne Inhalt der Aussage oder des Quelltexts, nur Ort und Grund
+                self.offen.append(Pruefpunkt(
+                    "erstpruefung_gescheitert", f"Erstprüfung {erst_mod.GIFT_GRENZE}x in Folge technisch gescheitert "
+                    f"({u.grund[len(erst_mod.GESCHEITERT):]}); als geprüft markiert, bitte von Hand prüfen",
+                    a.datei, a.zeile_start, a.id))
             elif antwort is None:
                 self.offen.append(Pruefpunkt(f"judge_{u.grund.split(':', 1)[0]}", f"{ort}: {u.grund}", a.datei,
                                              a.zeile_start, a.id))

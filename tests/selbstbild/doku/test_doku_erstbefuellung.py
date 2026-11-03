@@ -540,3 +540,174 @@ def test_regeldatei_erstbefuellung():
     k = aus_regeln(REPO)
     assert k.erstbefuellung == ERST
     assert eb.einstellung(k) == eb.ErstEinstellung(True, time(0, 0), time(6, 0), AGENT)
+
+
+# ---------- Fix-Runde 1 ----------
+
+PLAN = "Der Plan in `notes/plan.md` nennt die naechsten drei Schritte des Teams."
+
+
+def test_offenes_signal_bleibt_ohne_erstpruefung_ueber_laeufe(fx):
+    """Review I1: ein echtes Signal, das das doku-loop-Budget nicht beantworten durfte, bleibt offen -- auch im
+    NAECHSTEN Lauf (ohne Codeaenderung, Space nicht neu gebaut) fragt die Erstbefuellung diese Aussagen nicht."""
+    _start(fx)
+    _schreib(fx.repo, "sp/a/client.py", CLIENT.replace("return 1", "return 2"))  # Signal an D1 und D2
+    _commit(fx.repo, "helfer", "sp/a/client.py")
+    b1, a1 = AgentBudget("doku-loop"), Abo()
+    _nachtlauf(fx, budget=b1, laufzeit=a1)
+    assert a1.aussagen() == [D3, D3, AUSSAGE, AUSSAGE] and len(_stand(fx).offene_signale) == 2
+    b2, a2 = AgentBudget("doku-loop"), Abo()
+    e2 = _nachtlauf(fx, 40, budget=b2, laufzeit=a2)
+    assert a2.prompts == [] and AGENT not in b2.erlaubt and "doku-loop" in b2.pruefungen
+    assert e2.erst_offen == 2 and _stand(fx).erstbefuellung_fertig is False
+    assert len(_stand(fx).offene_signale) == 2
+
+
+def test_befragter_anker_nach_art(fx):
+    """Review I2: symbol > sql > yaml_key > datei mit Zeile > datei ohne Anker -- nicht der erste in der Liste."""
+    k = _ziele(fx, doku_ziele=("docs/spaces/0*.md",))
+    md = Beleg("datei", "notes/plan.md", "", "d1", "c", None)
+    sym = Beleg("symbol", "sp/a/client.py", "client.helfer", "d2", "c", 11)
+    yml = Beleg("yaml_key", "config/dienste.yaml", "dienste.a", "d3", "c", 2)
+    a = Aussage("docs/spaces/001_x.md#X#1", "docs/spaces/001_x.md", "X", 3, 3, "Text.", ())
+    (p,) = eb.posten_waehlen(k, [(a, (md, yml, sym), True, False)])
+    assert p.beleg == sym and p.aussage.belege == (md, yml, sym)
+    (p,) = eb.posten_waehlen(k, [(a, (md, yml), True, False)])
+    assert p.beleg == yml
+
+
+def test_nur_leere_anker_nicht_erstgeprueft(fx):
+    """Ruling T7-c: traegt eine Aussage nur Belege ohne Ankernamen (ganze Datei, z. B. .md), kann der Judge kein
+    gueltiges `veraltet` nennen -- sie wird nicht erstgeprueft und zaehlt nicht als offen."""
+    k = _ziele(fx, doku_ziele=("docs/spaces/0*.md",))
+    md = Beleg("datei", "notes/plan.md", "", "d1", "c", 4)
+    a = Aussage("docs/spaces/001_x.md#X#1", "docs/spaces/001_x.md", "X", 3, 3, "Text.", ())
+    assert eb.posten_waehlen(k, [(a, (md,), True, False)]) == []
+    # im Tick: die Plan-Aussage ist gebunden (datei auf .md), wird aber nicht gefragt; trotzdem fertig
+    _schreib(fx.repo, "notes/plan.md", "# Plan\n\nerster Stand\n")
+    _commit(fx.repo, "plan", "notes/plan.md")
+    _start(fx, (D1, PLAN))
+    from test_doku_ziele import _belege_von
+
+    plan = _id(fx, "docs/spaces/002_e2.md")
+    assert [art for _, art, *_ in _belege_von(fx.repo, f"aussage:{plan}")] == ["datei"]
+    abo = Abo()
+    erg = _nachtlauf(fx, laufzeit=abo)
+    assert abo.aussagen() == [D1, D1, AUSSAGE, AUSSAGE]
+    assert erg.erst_offen == 0 and _stand(fx).erstbefuellung_fertig is True
+
+
+class StandBudget(Budget):
+    """Budget-Fake mit lesendem `tagesstand` (wie claude_budget.tagesstand)."""
+
+    def __init__(self, *, heute=0, grenze=150, not_aus=False, user_aktiv=False, schalter=True, fehler=False):
+        super().__init__()
+        self.stand = {"datum": "2026-10-29", "user_aktiv": user_aktiv, "not_aus": not_aus,
+                      "pause_aktiv_schalter": schalter,
+                      "agenten": [{"agent": AGENT, "klasse": "hintergrund", "heute": heute, "grenze": grenze,
+                                   "abgelehnt": {}}]}
+        self.fehler = fehler
+        self.tagesstaende = 0
+
+    def tagesstand(self, *, jetzt=None, umgebung=None):
+        self.tagesstaende += 1
+        if self.fehler:
+            raise OSError("kaputt")
+        return self.stand
+
+
+@pytest.mark.parametrize("kw", [{"heute": 150}, {"heute": 151}, {"not_aus": True}, {"user_aktiv": True}])
+def test_budget_vorpruefung_spart_den_lauf(fx, kw):
+    """Review M4: zeigt der lesende Tagesstand, dass der Agent heute nichts mehr darf, wird ohne Aenderung nichts
+    gelesen und nichts gefragt (`keine_aenderung`); `pruefen` wird gar nicht erst gerufen."""
+    _start(fx)
+    budget, abo = StandBudget(**kw), Abo()
+    erg = _nachtlauf(fx, budget=budget, laufzeit=abo)
+    assert budget.tagesstaende == 1 and budget.pruefungen == [] and abo.prompts == []
+    assert erg.uebersprungen == "keine_aenderung" and erg.erst_faellig and _stand(fx).erstgeprueft == []
+
+
+@pytest.mark.parametrize("kw", [{"heute": 149}, {"user_aktiv": True, "schalter": False}, {"fehler": True}])
+def test_budget_vorpruefung_laesst_pruefen_entscheiden(fx, kw):
+    _start(fx, (D1,))
+    budget, abo = StandBudget(**kw), Abo()
+    erg = _nachtlauf(fx, budget=budget, laufzeit=abo)
+    assert abo.aussagen() == [D1, D1, AUSSAGE, AUSSAGE] and budget.pruefungen == [AGENT] * 4
+    assert erg.erst_geprueft == 2
+
+
+def test_giftige_aussage_nach_zwei_fehlschlaegen(fx):
+    """Review M5: zweimal hintereinander technisch gescheitert (Timeout/Exit) -> Pruefpunkt
+    `erstpruefung_gescheitert` ohne Inhalt, als erstgeprueft markiert, weiter mit der naechsten; Budget-Ablehnungen
+    zaehlen nicht."""
+    _start(fx)
+
+    class Haenger(Abo):
+        def __call__(self, argv, **kw):
+            if _aussage_im_prompt(kw["input"]) == D1:
+                self.prompts.append(kw["input"])
+                raise subprocess.TimeoutExpired(argv, 180)
+            return super().__call__(argv, **kw)
+
+    for i in range(3):  # Budget-Ablehnungen zaehlen nicht
+        _nachtlauf(fx, i * 40, budget=Budget(erlaubt_bis=0))
+    assert _stand(fx).erst_fehlversuche == {}
+    abo = Haenger()
+    erg = _nachtlauf(fx, 200, laufzeit=abo)
+    d1 = _id(fx, "docs/spaces/001_e1.md")
+    assert abo.aussagen() == [D1] and erg.erst_geprueft == 0 and _stand(fx).erst_fehlversuche == {d1: 1}
+    abo2 = Haenger()
+    erg2 = _nachtlauf(fx, 240, laufzeit=abo2)
+    assert abo2.aussagen() == [D1, D2, D2, D3, D3, AUSSAGE, AUSSAGE]
+    assert erg2.erst_offen == 0 and _stand(fx).erstbefuellung_fertig is True
+    stand = _stand(fx)
+    assert d1 in stand.erstgeprueft and stand.erst_fehlversuche == {}
+    (punkt,) = [p for p in _pruefliste(fx)["offen"] if p["art"] == "erstpruefung_gescheitert"]
+    assert punkt["aussage_id"] == d1 and D1 not in punkt["text"] and "helfer" not in punkt["text"]
+
+
+def test_giftige_aussage_direkt_exit_code(fx):
+    k = dataclasses.replace(fx.konfig, erstbefuellung=dict(ERST))
+    posten = [_posten(f"docs/spaces/00{i}_x.md", 3, f"Aussage {i} nennt `f{i}`.") for i in (1, 2)]
+
+    def exit1(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
+
+    erg = eb.erstbefuellung_schritt(k, None, st.Stand(), budget=Budget(), laufzeit=exit1, deadline=lambda: False,
+                                    posten=posten, quelltext=lambda b: "x")
+    assert (erg.geprueft, erg.abbruch, erg.fehlversuche) == (0, "exit:1", {"docs/spaces/001_x.md#a": 1})
+    stand = st.Stand(erst_fehlversuche=dict(erg.fehlversuche))
+    erg2 = eb.erstbefuellung_schritt(k, None, stand, budget=Budget(), laufzeit=exit1, deadline=lambda: False,
+                                     posten=posten, quelltext=lambda b: "x")
+    assert [(u.posten.aussage.id, u.grund) for u in erg2.urteile] == [("docs/spaces/001_x.md#a", "gescheitert:exit:1")]
+    assert erg2.fehlversuche == {"docs/spaces/002_x.md#a": 1} and erg2.abbruch == "exit:1"
+
+
+def test_fenster_endet_mitten_im_lauf(fx):
+    """Review M6: schliesst das Fenster waehrend des Laufs, hoert die Erstbefuellung auf (die Uhr laeuft mit jedem
+    Aufruf 50 s weiter: Start 05:58:30, nach Aussage 1 ist es 06:00:10)."""
+    _start(fx)
+    uhr = [1000.0]
+
+    class Langsam(Abo):
+        def __call__(self, argv, **kw):
+            uhr[0] += 50
+            return super().__call__(argv, **kw)
+
+    abo = Langsam()
+    _anstoss(fx)
+    erg = _tick(fx, jetzt=datetime(2026, 10, 29, 5, 58, 30).astimezone(), laufzeit=abo, budget=Budget(),
+                uhr=lambda: uhr[0])
+    assert abo.aussagen() == [D1, D1] and erg.erst_geprueft == 1 and erg.erst_offen == 3
+
+
+def test_hindernis_arten_beim_ersetzen():
+    """Review M7: genaue Pruefpunkt-Art, warum ein `veraltet` nicht ersetzt wird."""
+    from selbstbild.doku.judge import JudgeAntwort
+
+    b = Beleg("symbol", "sp/a/client.py", "client.helfer", "d", "c", 11)
+    ok = JudgeAntwort("veraltet", "Neu.", "client.helfer", "x")
+    assert eb.ersatz_hindernis(ok, b, doku_da=True) is None
+    assert eb.ersatz_hindernis(ok, None, doku_da=True) == "beleg_nicht_aufloesbar"
+    assert eb.ersatz_hindernis(dataclasses.replace(ok, neuer_text=""), b, doku_da=True) == "erstpruefung_ohne_ersatz"
+    assert eb.ersatz_hindernis(ok, b, doku_da=False) == "erstpruefung_doku_nicht_gelesen"

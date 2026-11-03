@@ -86,6 +86,8 @@ class Stand:
     # Additiv wie `koepfe_gesehen`: der alte Loop liest nur seine Felder (`d.get`) und ignoriert diese beiden.
     erstgeprueft: list[str] = field(default_factory=list)
     erstbefuellung_fertig: bool = False
+    # Fix-Runde 1: Zahl der technischen Fehlschlaege (timeout/exit) je Aussage-Id in Folge (giftige Aussage)
+    erst_fehlversuche: dict[str, int] = field(default_factory=dict)
 
     @property
     def offene_spaces(self) -> list[str]:
@@ -107,13 +109,16 @@ class Stand:
         offen = d.get("offene_signale")
         nr = d.get("lauf_nr")
         erst = d.get("erstgeprueft")
+        fehl = d.get("erst_fehlversuche")
         return cls(text("letzter_commit_aussen"), text("letzter_commit_sub"), text("letzter_tick"),
                    zuordnung("render_hashes"), int(nr) if isinstance(nr, int) else 0, zuordnung("hand_edit_gemeldet"),
                    [dict(s) for s in offen if isinstance(s, dict)] if isinstance(offen, list) else [],
                    text("vollgraph_kennung"), zuordnung("submodul_commits"), zuordnung("gemessen_ausstehend"),
                    zuordnung("koepfe_gesehen"),
                    [s for s in erst if isinstance(s, str)] if isinstance(erst, list) else [],
-                   d.get("erstbefuellung_fertig") is True)
+                   d.get("erstbefuellung_fertig") is True,
+                   {str(k): v for k, v in fehl.items() if isinstance(v, int) and not isinstance(v, bool)}
+                   if isinstance(fehl, dict) else {})
 
 
 def stand_pfad(konfig: Konfig) -> Path:
