@@ -418,6 +418,7 @@ class _Lauf:
         self.uhr, self.start = uhr, uhr()  # I7a: Tick-Deadline fuer neue Judge-Fragen
         self.deadline_gemeldet = False
         self.seiten_zeit_gemeldet = False  # Final-Fix M3
+        self.nur_erstbefuellung = False  # Final-Fix C2b: der Lauf besteht nur wegen der Erstbefuellung
         self.erzwingen, self.ohne_llm = erzwingen, ohne_llm
         self.budget, self.drift, self.manifest_bauer = budget, drift, manifest_bauer
         self.nach_tick, self.melden = nach_tick, melden
@@ -1185,6 +1186,7 @@ class _Lauf:
             # noch nie gemerkte Aussagen ohne Space-Manifeste (ohne Symbol-Anker, also nie erstgeprueft). Commit nur,
             # wenn sich der stabile Digest aendert (wie immer)
             spaces = sorted(konfig.spaces)
+            self.nur_erstbefuellung = True  # Betreff `docs(loop): Erstbefüllung – …`, nicht die Liste aller Spaces
             self.melden("Erstbefüllung: Lauf ohne Änderung – alle Spaces werden gebaut (Anker mit Manifesten)")
         offene = list(self.stand_alt.offene_signale) if self.stand_alt else []
         self.spaces = spaces
@@ -1601,7 +1603,8 @@ class _Lauf:
             return self._abschluss(self.ergebnis(pruefliste=neu_offen))
 
         m = neue_offene(konfig, self.offen)
-        was = ', '.join(self.spaces) or ('Erstbefüllung' if self.erst_umgeschrieben else 'Belege')
+        was = ('Erstbefüllung' if self.nur_erstbefuellung
+               else ', '.join(self.spaces) or ('Erstbefüllung' if self.erst_umgeschrieben else 'Belege'))
         betreff = f"docs(loop): {was} – {self.umgeschrieben} Aussagen nachgeführt, {m} in Prüfliste"
         if self.neu_angelegt:
             betreff += f"; neue Space-Doku {', '.join(self.neu_angelegt)}"

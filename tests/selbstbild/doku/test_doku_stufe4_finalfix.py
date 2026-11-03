@@ -196,6 +196,10 @@ def test_c2b_erstbefuellungs_lauf_ohne_aenderung_baut_alle_spaces(fx):
     assert any(art == "symbol" and anker == "client.helfer" for _, art, _, anker, _ in belege), belege
     assert D1 in abo.aussagen()  # mit ihrem Space-Anker signaltragend -> einmal geprueft
     assert erg.erst_faellig and sorted(bauer.gebaut) == ["a", "b"] and erg.spaces == ["a", "b"]
+    # der Commit (Aussage neu gemerkt) traegt den Betreff der Erstbefuellung, nicht die Liste aller Spaces
+    from test_doku_tick import _git
+    assert erg.commit is not None
+    assert _git(fx.repo, "log", "-1", "--format=%s").startswith("docs(loop): Erstbefüllung – ")
 
 
 def test_c2b_ohne_erstbefuellung_bleibt_der_lauf_ohne_neubau(fx):
