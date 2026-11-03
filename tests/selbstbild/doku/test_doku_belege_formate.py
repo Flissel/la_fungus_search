@@ -163,3 +163,24 @@ def test_datei_quittung_nur_in_der_vorlagenform(tmp_path):
     assert liste[0].pruefpunkte == ()
     messung = [*klammer[:4], "## 7. Belege", "", "- B1: messung vibemind-os/config/space_agent_registry.yml:1", ""]
     assert _lesen(tmp_path, konfig, manifeste, messung)[0].belege == ()
+
+
+def test_datei_quittung_nicht_lesbar_wird_pruefpunkt(tmp_path, monkeypatch):
+    """Fix-Runde 1, Item 5: scheitert das Lesen der Datei (OSError), faellt die Quittung nicht still weg."""
+    from selbstbild.doku import anker
+
+    konfig, manifeste = _repo(tmp_path)
+    (tmp_path / "vibemind-os/config").mkdir(parents=True)
+    (tmp_path / "vibemind-os/config/space_agent_registry.yml").write_text(REGISTRY, encoding="utf-8")
+
+    def gesperrt(*a, **kw):
+        raise PermissionError("gesperrt")
+
+    monkeypatch.setattr(anker, "beleg_fuer_datei", gesperrt)
+    zeilen = ["# P", "", "Die Registry fuehrt den Space ideas [B1].", "", "## 7. Belege", "",
+              "- B1: datei vibemind-os/config/space_agent_registry.yml:1", ""]
+    liste = _lesen(tmp_path, konfig, manifeste, zeilen)
+    assert liste[0].belege == ()
+    punkte = [p for p in liste[0].pruefpunkte if p.art == "beleg_nicht_lesbar"]
+    assert len(punkte) == 1 and "vibemind-os/config/space_agent_registry.yml" in punkte[0].text
+    assert punkte[0].aussage_id == liste[0].id and "gesperrt" not in punkte[0].text  # nur der Typ, nie der Text

@@ -288,7 +288,11 @@ class _Verankerer:
             if quittung and v.beleg is None and v.pruefpunkt == "anker_zu_grob" and st.pfad is not None:
                 # Task 4: eine `- B<n>: datei pfad:zeile`-Quittung bindet an die Datei, auch wo der feinere Anker zu
                 # grob waere (z. B. Zeile 1 einer YAML-Datei)
-                v = ks.Verankerung(ks._datei_beleg(st.pfad, st.start, self.konfig.repo, self.commit))
+                try:
+                    v = ks.Verankerung(anker.beleg_fuer_datei(st.pfad, st.start, self.konfig.repo, self.commit))
+                except OSError as fehler:  # Fix-Runde 1, Item 5: nie still verwerfen (nur der Typ, nie der Text)
+                    v = ks.Verankerung(None, "beleg_nicht_lesbar",
+                                       f"Datei-Quittung nicht lesbar ({type(fehler).__name__}); kein Beleg")
             if v.pruefpunkt is not None:
                 pp.append(Pruefpunkt(v.pruefpunkt, f"`{st.roh}` -> {st.pfad or '?'}: {v.text}", datei, zeile, aid))
             if v.beleg is not None:
