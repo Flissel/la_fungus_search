@@ -224,6 +224,45 @@ def test_i4_doku_ziel_fremd_drei_inhalte_ein_eintrag(fx):
     assert punkte[0]["aussage_id"] == "docs/spaces/001_x.md"
 
 
+# ---------- M4: Budget-Vorpruefung erst nach dem Anstoss ----------
+
+class _StandZaehler:
+    def __init__(self):
+        self.tagesstand_aufrufe = 0
+        self.pruefungen: list[str] = []
+
+    def pruefen(self, agent, *, jetzt=None, umgebung=None):
+        self.pruefungen.append(agent)
+        from types import SimpleNamespace
+        return SimpleNamespace(erlaubt=True, grund="ok", agent=agent, heute=0, grenze=150)
+
+    def buchen(self, agent, ergebnis, dauer_s, *, jetzt=None, umgebung=None):
+        pass
+
+    def tagesstand(self, *, jetzt=None, umgebung=None):
+        self.tagesstand_aufrufe += 1
+        return {"datum": "2026-10-29", "user_aktiv": False, "not_aus": False, "agenten": []}
+
+
+def test_m4_ohne_anstoss_kein_tagesstand(fx):
+    from test_doku_erstbefuellung import Budget, _nacht
+
+    _erst_start(fx)
+    erste = _nachtlauf(fx, budget=Budget(erlaubt_bis=2))  # erster Nachtlauf (mit Marker), Budget nach 2 Aufrufen aus
+    assert erste.erst_faellig and not tk.stand_laden(fx.konfig).erstbefuellung_fertig  # Erstbefuellung bleibt offen
+    budget = _StandZaehler()
+    erg = _tick(fx, jetzt=_nacht(1), budget=budget, laufzeit=Abo())  # kein Marker, 1 min spaeter, HEAD gleich
+    assert erg.uebersprungen == "kein_anstoss"
+    assert budget.tagesstand_aufrufe == 0 and budget.pruefungen == []
+
+
+def test_m4_mit_anstoss_im_fenster_wird_vorgeprueft(fx):
+    _erst_start(fx)
+    budget = _StandZaehler()
+    erg = _nachtlauf(fx, budget=budget)
+    assert erg.erst_faellig and budget.tagesstand_aufrufe >= 1
+
+
 # ---------- I5: Struktur-Hinweise in Pruefliste.md gruppiert ----------
 
 def _pl_notiz(struktur, punkte=()):

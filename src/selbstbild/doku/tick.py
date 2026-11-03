@@ -1089,7 +1089,6 @@ class _Lauf:
         self.lauf = f"{self.jetzt:%Y-%m-%dT%H:%M:%S}#{self.lauf_nr}"
         self.vollgraph_kennung = self.stand_alt.vollgraph_kennung if self.stand_alt else None
         self._erst_einstellen()
-        self.erst_fragen = self.erst_faellig and not self.ohne_llm and not self._erst_budget_erschoepft()
 
         # 1. Anstoss
         try:
@@ -1100,6 +1099,9 @@ class _Lauf:
             self.melden(f"Anstoß: kein Marker, letzter Lauf jünger als {konfig.tick_minuten} min – übersprungen "
                         "(kein_anstoss)")
             return self.ergebnis(uebersprungen="kein_anstoss")
+        # Final-Fix M4: die Budget-Vorpruefung erst nach dem Anstoss -- ein ruhiger 5-Minuten-Aufruf laedt weder das
+        # Budget-Modul noch liest er dessen Log
+        self.erst_fragen = self.erst_faellig and not self.ohne_llm and not self._erst_budget_erschoepft()
         # C1 (Final-Fix): nie auf detached HEAD, in eine laufende Git-Operation oder auf einen fremden Branch; der
         # Marker bleibt liegen, der Stand unveraendert -> der naechste Lauf versucht es wieder
         kopf_grund = kopf_pruefen(self.repo, konfig.zweig)
