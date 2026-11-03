@@ -83,6 +83,27 @@ def test_i2_telegram_bot_token():
         assert sl.schluessel_muster(harmlos) is None, harmlos
 
 
+TG_REST = "AAbbCCddEEffGGhhIIjjKKllMMnnOOppQQr"  # 35 Zeichen, synthetisch
+
+
+@pytest.mark.parametrize("text", [
+    f"https://api.telegram.org/bot123456789:{TG_REST}/sendMessage",  # URL-Form: `bot` direkt davor
+    "Token 123456789:" + TG_REST[:-1] + "-",  # letztes Zeichen `-`
+    f"123456789:{TG_REST}",  # schlicht
+])
+def test_nachtrag_telegram_trifft(text):
+    assert sl.schluessel_muster(text) == "Telegram-Bot-Token"
+    assert "AAbbCC" not in sl.schwaerzen(text)
+
+
+@pytest.mark.parametrize("text", [
+    f"12345678901:{TG_REST}",  # 11 Ziffern
+    "Stand 20261103:" + "abcdef0123456789" + " weiter",  # zeitstempelartig, weniger als 35 Zeichen
+])
+def test_nachtrag_telegram_kein_fehltreffer(text):
+    assert sl.schluessel_muster(text) is None
+
+
 def test_i2_namen_ohne_wertteile():
     for name, _ in sl.SCHLUESSEL_MUSTER:
         assert not re.search(r"sk-|ghp_|xox|AKIA|eyJ|\d{8}:", name)
@@ -160,6 +181,34 @@ def test_c1_erstbefuellung_veraltet_mit_schluessel(fx):
     offen = tk.pruefliste_laden(fx.konfig)["offen"]
     assert any(p["art"] == "judge_ungueltig" and p["datei"] == "docs/spaces/001_e1.md" for p in offen)
     assert all(GHP not in json.dumps(p, ensure_ascii=False) for p in offen)
+
+
+# ---------- Nachtrag: begruendung erst schwaerzen, dann kuerzen ----------
+
+BEGRUENDUNG_MIT_SCHLUESSEL = "x" * 190 + " " + GHP  # Schluessel beginnt bei Zeichen 191, Schnitt bei 200
+
+
+def _unklar_mit_schluessel():
+    return json.dumps({"urteil": "unklar", "neuer_text": None, "beleg_anker": None,
+                       "begruendung": BEGRUENDUNG_MIT_SCHLUESSEL})
+
+
+def test_nachtrag_signal_unklar_begruendung_ohne_angeschnittenen_schluessel(fx):
+    _start(fx)
+    _tick(fx, laufzeit=FakeLaufzeit(_unklar_mit_schluessel(), _unklar_mit_schluessel()))
+    (pp,) = [p for p in tk.pruefliste_laden(fx.konfig)["offen"] if p["art"] == "judge_unklar"]
+    assert "ghp_" not in pp["text"] and GHP[4:9] not in pp["text"]
+    assert "[Schlüsse" in pp["text"]  # die Markierung steht da (der Schnitt bei 200 darf sie selbst kuerzen)
+
+
+def test_nachtrag_erstbefuellung_unklar_begruendung_ohne_angeschnittenen_schluessel(fx):
+    _erst_start(fx)
+    abo = Abo(lambda p: _unklar_mit_schluessel() if _aussage_im_prompt(p) == D1 else ERST_NOCH_WAHR)
+    _nachtlauf(fx, laufzeit=abo)
+    punkte = [p for p in tk.pruefliste_laden(fx.konfig)["offen"]
+              if p["art"] == "judge_unklar" and p["datei"] == "docs/spaces/001_e1.md"]
+    assert len(punkte) == 1
+    assert "ghp_" not in punkte[0]["text"] and GHP[4:9] not in punkte[0]["text"]
 
 
 # ---------- C2b: ein Lauf nur wegen der Erstbefuellung baut alle Spaces ----------

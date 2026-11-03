@@ -1980,7 +1980,9 @@ class _Lauf:
                 self.offen.append(Pruefpunkt(f"judge_{u.grund.split(':', 1)[0]}", f"{ort}: {u.grund}", a.datei,
                                              a.zeile_start, a.id))
             elif antwort.urteil == "unklar":
-                self.offen.append(Pruefpunkt("judge_unklar", schwaerzen(f"{ort}: {antwort.begruendung[:200]}"), a.datei,
+                # Nachtrag: erst schwaerzen, dann kuerzen (wie I5) -- ein angeschnittener Schluessel traefe kein Muster
+                befund = schwaerzen(f"{ort}: {schwaerzen(antwort.begruendung)[:200]}")
+                self.offen.append(Pruefpunkt("judge_unklar", befund, a.datei,
                                              a.zeile_start, a.id))
             self.erst_markiert.add(a.id)
         for (doc, nur), liste in sorted(ersetzungen.items()):
@@ -2067,7 +2069,9 @@ class _Lauf:
                 return None
             return a, antwort.neuer_text, gewaehlt, erneuert
         if antwort.urteil == "unklar":
-            self.offen.append(Pruefpunkt("judge_unklar", schwaerzen(f"{ort}: {antwort.begruendung[:200]}"), a.datei,
+            # Nachtrag: erst schwaerzen, dann kuerzen (wie I5) -- ein angeschnittener Schluessel traefe kein Muster
+            befund = schwaerzen(f"{ort}: {schwaerzen(antwort.begruendung)[:200]}")
+            self.offen.append(Pruefpunkt("judge_unklar", befund, a.datei,
                                          a.zeile_start, a.id))
         aussage_speichern(graph, a, erneuert, "llm" if antwort.urteil == "noch_wahr" else "extraktor")
         return None

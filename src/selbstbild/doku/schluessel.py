@@ -18,7 +18,9 @@ SCHLUESSEL_MUSTER: tuple[tuple[str, re.Pattern[str]], ...] = (
     # Final-Fix I1: der ganze Schluessel bis zur END-Zeile (oder bis zum Textende), nicht nur die BEGIN-Zeile
     ("privater Schlüssel (PEM)", re.compile(
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.DOTALL)),
-    ("Telegram-Bot-Token", re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")),  # Final-Fix I2
+    # Final-Fix I2, Nachtrag: ohne `\b` -- trifft auch `.../bot<token>/...` (URL-Form) und ein `-` am Ende;
+    # links keine weitere Ziffer, rechts kein weiteres Token-Zeichen
+    ("Telegram-Bot-Token", re.compile(r"(?<!\d)\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])")),
 )
 
 
