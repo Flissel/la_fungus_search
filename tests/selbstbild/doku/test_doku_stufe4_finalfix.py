@@ -202,3 +202,24 @@ def test_c2b_ohne_erstbefuellung_bleibt_der_lauf_ohne_neubau(fx):
     from test_doku_erstbefuellung import _tag
     erg = _tick(fx, jetzt=_tag(), bauer=bauer)  # am Tag: nicht faellig -> kein Neubau, kein LLM
     assert not erg.erst_faellig and bauer.gebaut == [] and erg.llm_aufrufe == 0
+
+
+# ---------- I4: doku_ziel_fremd einmal je Datei ----------
+
+def test_i4_doku_ziel_fremd_drei_inhalte_ein_eintrag(fx):
+    from test_doku_tick import _code_aenderung, _pruefliste
+    from test_doku_ziele import _doku, _zwei_ziele
+
+    _zwei_ziele(fx)
+    ziel = fx.repo / "docs/spaces/001_x.md"
+    for i in range(3):
+        ziel.write_bytes(_doku("X", AUSSAGE, f"Fremde Notiz Nummer {i}, noch nicht committet.").encode("utf-8"))
+        _code_aenderung(fx, i)
+        from test_doku_tick import _anstoss
+        _anstoss(fx)
+        erg = _tick(fx)
+        assert erg.doku_uebersprungen == ["docs/spaces/001_x.md"]
+    punkte = [p for p in _pruefliste(fx)["offen"] if p["art"] == "doku_ziel_fremd"]
+    assert len(punkte) == 1 and punkte[0]["datei"] == "docs/spaces/001_x.md"
+    assert punkte[0]["aussage_id"] == "docs/spaces/001_x.md"
+

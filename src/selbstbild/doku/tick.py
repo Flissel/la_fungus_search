@@ -1346,7 +1346,8 @@ class _Lauf:
     def _fremde_ziele(self, *, melden_pruefliste: bool) -> None:
         """Ruling T4-b: Doku-Ziele mit fremden (nicht committeten) Aenderungen werden in diesem Lauf ausgelassen --
         keine Aussagen-Pruefung, kein Ersetzen, ihre gemerkten Aussagen bleiben unveraendert im Graph. Pruefpunkt
-        `doku_ziel_fremd` einmal je Datei und Inhalt (die Pruefliste dedupliziert nach Art/Datei/Id/Text)."""
+        `doku_ziel_fremd` einmal je Datei (Final-Fix I4: zusammengefuehrt ueber Art/Datei/Id, der erste Text bleibt --
+        sonst waechst die Pruefliste mit jedem neuen fremden Inhalt)."""
         self.doku_fremd_ziele = sorted(fremde_doku_ziele(self.konfig))
         if not self.doku_fremd_ziele:
             return
@@ -1361,7 +1362,7 @@ class _Lauf:
             self.offen.append(Pruefpunkt(
                 "doku_ziel_fremd", f"{datei} hat nicht committete fremde Änderungen (Inhalt {stand}); vom Loop "
                 "ausgelassen, gemerkte Aussagen bleiben, bis die Änderung committet ist", datei, None,
-                f"{datei}#{stand}"))
+                datei))  # Final-Fix I4: ein Eintrag je Datei (`OHNE_TEXT_ZUSAMMENFUEHREN`), nicht je Inhalt
 
     def _fremd(self, doc: str) -> bool:
         """Ruling T4-b/Item 4: `doc` ist ein fremd geaendertes Ziel (ohne Gross-/Kleinschreibung, wo sie egal ist)."""

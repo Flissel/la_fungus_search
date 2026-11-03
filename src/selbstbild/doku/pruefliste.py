@@ -38,8 +38,9 @@ def _pp_dict(p: Pruefpunkt, lauf: str) -> dict[str, object]:
 
 
 # Arten, deren Text wechselnde Einzelheiten traegt (Zahl/Ids der Aussagen): zusammengefuehrt wird ueber die
-# `aussage_id` (`<datei>#<digest12>`), der erste Text bleibt (Task 4, Fix-Runde 2)
-OHNE_TEXT_ZUSAMMENFUEHREN = frozenset({"beleg_datei_geaendert"})
+# `aussage_id` (`<datei>#<digest12>`), der erste Text bleibt (Task 4, Fix-Runde 2); `doku_ziel_fremd` mit der Datei
+# als `aussage_id` (Final-Fix I4: ein Eintrag je Datei, nicht je fremdem Inhalt)
+OHNE_TEXT_ZUSAMMENFUEHREN = frozenset({"beleg_datei_geaendert", "doku_ziel_fremd"})
 
 
 def _schluessel(d: Mapping[str, object]) -> str:

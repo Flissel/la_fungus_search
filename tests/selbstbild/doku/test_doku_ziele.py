@@ -184,7 +184,7 @@ def test_fremdes_doku_ziel_blockiert_den_tick_nicht(fx):
     assert {aid: _belege_von(fx.repo, aid) for aid in _aussagen(fx.repo, "docs/spaces/001_x.md")} == alt_001
     punkte = [p for p in _pruefliste(fx)["offen"] if p["art"] == "doku_ziel_fremd"]
     assert [p["datei"] for p in punkte] == ["docs/spaces/001_x.md"]
-    # einmal je Datei und Inhalt: gleicher Inhalt -> kein neuer Punkt, anderer Inhalt -> einer mehr
+    # einmal je Datei (Final-Fix I4): gleicher und auch anderer fremder Inhalt -> kein neuer Punkt
     _code_aenderung(fx, 1)
     _anstoss(fx)
     _tick(fx)
@@ -193,7 +193,7 @@ def test_fremdes_doku_ziel_blockiert_den_tick_nicht(fx):
     _code_aenderung(fx, 2)
     _anstoss(fx)
     _tick(fx)
-    assert len([p for p in _pruefliste(fx)["offen"] if p["art"] == "doku_ziel_fremd"]) == 2
+    assert len([p for p in _pruefliste(fx)["offen"] if p["art"] == "doku_ziel_fremd"]) == 1
 
 
 def test_fremde_ketten_md_blockiert_weiter_den_ganzen_tick(fx):
