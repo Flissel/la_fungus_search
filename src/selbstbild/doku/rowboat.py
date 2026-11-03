@@ -951,8 +951,9 @@ class _Anwender:
     def __init__(self, repo: Path, ledger_pfad: Path, erledigt: Path, *, lauf: str, jetzt: datetime, drift: Drift,
                  melden: Melden, doku: Sequence[str], offene_punkte: Sequence[Mapping[str, object]],
                  zweig: str | None = None, vermerk: Path | None = None,
-                 fremd_commits: Mapping[str, str] | None = None) -> None:
+                 fremd_commits: Mapping[str, str] | None = None, fremd: Sequence[str] = ()) -> None:
         self.repo, self.erledigt, self.lauf, self.jetzt = Path(repo), Path(erledigt), lauf, jetzt
+        self.fremd = set(fremd)  # Ruling T4-b (Fix-Runde 1): Doku-Ziele mit fremden Aenderungen -> deren Urteile warten
         self.zweig, self.vermerk, self.fremd_commits = zweig, vermerk, dict(fremd_commits or {})
         self.drift, self.melden, self.doku = drift, melden, list(doku)
         self.ledger = {(e.lauf, e.aussage_id): e for e in ledger_lesen(ledger_pfad)}
@@ -1003,11 +1004,20 @@ class _Anwender:
         else:
             self.korrektur(u, e)
 
+    def wartet(self, u: Urteil, datei: str) -> bool:
+        """Fix-Runde 1, Item 1: das Ziel hat fremde, nicht committete Aenderungen -> nicht vermerken, spaeter erneut."""
+        if datei not in self.fremd:
+            return False
+        self.melden(f"Urteile: {u.art} für {datei} wartet (fremde Änderungen an der Datei)")
+        return True
+
     def zurueck(self, u: Urteil, e: umschreiben.LedgerEintrag) -> None:
         datei = e.datei
         if datei not in self.doku:
             self.punkt("zurueck_nicht_moeglich", f"{datei} ist keine Doku-Datei des Loops", datei, u)
             self.vermerken(u, "abgelehnt", "datei")
+            return
+        if self.wartet(u, datei):
             return
         sha = self.commits().get(e.lauf)  # GENAU `Lauf: <lauf>`, kein Teilstring
         if sha is None:
@@ -1057,6 +1067,8 @@ class _Anwender:
         if datei not in self.doku:
             self.punkt("korrektur_abgelehnt", f"{datei} ist keine Doku-Datei des Loops", datei, u)
             self.vermerken(u, "abgelehnt", "datei")
+            return
+        if self.wartet(u, datei):
             return
         try:
             roh = (self.repo / datei).read_bytes()
@@ -1114,16 +1126,18 @@ class _Anwender:
 def urteile_anwenden(urteile: Sequence[Urteil], repo: Path, ledger_pfad: Path, erledigt_pfad: Path, *, lauf: str,
                      jetzt: datetime, drift: Drift, melden: Melden | None = None, doku: Sequence[str] = (),
                      offene_punkte: Sequence[Mapping[str, object]] = (), zweig: str | None = None,
-                     vermerk: Path | None = None, fremd_commits: Mapping[str, str] | None = None) -> list[Pruefpunkt]:
+                     vermerk: Path | None = None, fremd_commits: Mapping[str, str] | None = None,
+                     fremd: Sequence[str] = ()) -> list[Pruefpunkt]:
     """Noch nicht vermerkte Urteile anwenden (siehe Moduldoku); Rueckgabe die Pruefpunkte.
 
     `offene_punkte`: die offenen Punkte der lokalen Pruefliste (Bezug fuer `ok`/`korrektur`, Ruling 54). Der Aufrufer
-    stellt sicher, dass die Doku-Dateien keine fremden Aenderungen haben (sonst warten die Urteile). Vorlaeufige Fehler
+    stellt sicher, dass KETTEN.md, weitere Doku und docs/graph keine fremden Aenderungen haben (sonst warten alle
+    Urteile); `fremd` nennt Doku-Ziele mit fremden Aenderungen, nur deren Urteile warten (nicht vermerkt). Vorlaeufige Fehler
     (Torwaechter laeuft nicht, Schreib-/Commitfehler) werden nicht vermerkt und beim naechsten Mal erneut versucht;
     inhaltliche Ablehnungen werden vermerkt und nie wiederholt."""
     a = _Anwender(Path(repo), Path(ledger_pfad), Path(erledigt_pfad), lauf=lauf, jetzt=jetzt, drift=drift,
                   melden=melden or _still, doku=doku, offene_punkte=offene_punkte, zweig=zweig, vermerk=vermerk,
-                  fremd_commits=fremd_commits)
+                  fremd_commits=fremd_commits, fremd=fremd)
     for u in offene_urteile(urteile, Path(erledigt_pfad)):
         try:  # Fix-Runde 2, Item 4: ein Urteil, das wirft, haelt die uebrigen nicht auf (nicht vermerkt -> erneut)
             a.anwenden(u)

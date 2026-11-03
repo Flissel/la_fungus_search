@@ -331,3 +331,42 @@ def test_nur_lesend_trigger_bei_commit_im_submodul(fx, tmp_path):
     assert erg.uebersprungen is None and erg.nur_lesend_gelesen == 1 and erg.llm_aufrufe == 0
     assert len(_aussagen(fx.repo, "ext/doku/README.md")) == 2
     assert json.loads((fx.repo / GRAPH).read_text("utf-8"))["version"] == 1
+
+
+# ---------- Fix-Runde 1, Item 1: Urteile warten nur fuer das fremd geaenderte Ziel ----------
+
+def _urteile_fuer(fx, aids, text):
+    from selbstbild.doku.pruefliste import pruefliste_ergaenzen
+    from selbstbild.doku.typen import Pruefpunkt
+
+    pruefliste_ergaenzen(fx.konfig, [Pruefpunkt("judge_unklar", "zur Durchsicht", d, 5, aid)
+                                     for d, aid in aids.items()], [], voll=False, lauf="2026-10-28T12:00:00#7")
+    pfad = fx.konfig.rowboat_wissen / fx.konfig.rowboat_urteile
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    pfad.write_bytes(("\n".join(["# Urteile", *(f"2026-10-28T12:00:00#7 {aid} korrektur: {text}"
+                                                for aid in aids.values())]) + "\n").encode("utf-8"))
+
+
+def test_urteile_warten_nur_fuer_das_dreckige_ziel(fx):
+    from selbstbild.doku import rowboat as rb
+
+    _zwei_ziele(fx)
+    a, b = "docs/spaces/001_x.md", "docs/spaces/002_y.md"
+    aid = {d: next(x.id for x in rb.aussagen_ohne_belege(d, (fx.repo / d).read_text("utf-8")) if x.text == AUSSAGE)
+           for d in (a, b)}
+    neu = "Ein ganz neuer Satz über den Client."
+    _urteile_fuer(fx, aid, neu)
+    dreckig = (fx.repo / a).read_bytes() + b"\nfremde Notiz\n"
+    (fx.repo / a).write_bytes(dreckig)
+    _anstoss(fx)
+    _tick(fx, erzwingen=True)
+    assert neu in (fx.repo / b).read_text("utf-8")  # B angewandt
+    assert (fx.repo / a).read_bytes() == dreckig  # A unberuehrt ...
+    erledigt = rb.erledigt_laden(rb.erledigt_pfad(fx.konfig))
+    assert [k for k in erledigt if aid[b] in str(k)] and not [k for k in erledigt if aid[a] in str(k)]  # ... offen
+    _git(fx.repo, "checkout", "--", a)  # die andere Session raeumt auf: jetzt wird A angewandt
+    _anstoss(fx)
+    _tick(fx, erzwingen=True)
+    assert neu in (fx.repo / a).read_text("utf-8")
+    assert [k for k in rb.erledigt_laden(rb.erledigt_pfad(fx.konfig)) if aid[a] in str(k)]
+    assert _status(fx.repo) == []

@@ -434,9 +434,8 @@ class _Lauf:
         urteile = rowboat.urteile_lesen(pfad, unlesbar=unlesbar, datei=konfig.rowboat_urteile)
         erledigt = rowboat.erledigt_pfad(konfig)
         offen = rowboat.offene_urteile(urteile, erledigt)
-        if offen and fremde_doku_ziele(konfig):  # Ruling T4-b: eine Korrektur darf nie fremde Arbeit mitcommitten
-            self.melden(f"Urteile: {len(offen)} offen, fremde Änderungen an Doku-Zielen – warten")
-            offen = []
+        # Ruling T4-b (Fix-Runde 1): nur Urteile zu einem fremd geaenderten Ziel warten (nie fremde Arbeit mitcommitten)
+        fremd_ziele = fremde_doku_ziele(konfig) if offen else []
         pps = list(unlesbar)
         if offen:
             md = self.repo / konfig.ketten_md
@@ -448,7 +447,7 @@ class _Lauf:
                                                 doku=doku_dateien(konfig),
                                                 offene_punkte=pruefliste_laden(konfig)["offen"], zweig=konfig.zweig,
                                                 vermerk=schreibvermerk_pfad(konfig),
-                                                fremd_commits=fremd_commits_laden(konfig))
+                                                fremd_commits=fremd_commits_laden(konfig), fremd=fremd_ziele)
             finally:  # Fix-Runde 2, Item 4: ein committeter Revert verwirft die Hashes auch, wenn danach etwas wirft
                 nachher = md.read_bytes() if md.is_file() else b""
                 if nachher != vorher:
