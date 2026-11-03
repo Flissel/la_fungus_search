@@ -116,6 +116,10 @@ __all__ = [
 
 KONFIG_DATEI = "config/doku_loop.yaml"
 REGEL_DATEI = "selbstbild.yaml"  # Stufe 4: Abschnitt `doku:` (D5); eine Aenderung baut wie die alte Konfig alles neu
+# Ruling T4-c: Endungen von Code-Dateien, deren ganze-Datei-Belege in Doku-Zielen kein Judge-Signal tragen
+CODE_ENDUNGEN = frozenset({".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs", ".go", ".ps1", ".psm1",
+                           ".sh", ".bash", ".cmd", ".bat", ".sql"})
+DATEI_GEAENDERT_IDS = 20  # so viele Aussage-Ids nennt ein Pruefpunkt `beleg_datei_geaendert`
 NACHBARN_MAX = 12
 QUELLTEXT_MERKEN = 7000  # Quelltext offener Signale im lokalen Stand (der Judge kuerzt ohnehin auf 6000)
 AUSSCHNITT_ZEILEN = 40  # Minor 15: `datei`-Belege zeigt der Judge nur +-40 Zeilen um die angezeigte Zeile
@@ -241,6 +245,19 @@ def _unter_sql_wurzel(datei: str, wurzeln: Sequence[str]) -> bool:
     return any(w.strip("/") in ("", ".") or _unter(datei, [w.strip("/")]) for w in wurzeln)
 
 
+def signal_traegt(beleg: Beleg, doc: str, konfig: Konfig) -> bool:
+    """Ruling T4-c: traegt eine Aenderung dieses gemerkten Belegs einer Aussage in `doc` ein Judge-Signal?
+
+    Nein nur fuer ganze-Datei-Belege (`datei`) auf Code-Dateien (`CODE_ENDUNGEN`, bei `.sql` nur `datei`, nicht
+    `sql`) in den neuen Doku-Zielen und nur-lesend-Dateien; KETTEN.md und alle anderen Belegarten bleiben wie
+    bisher. Auch fuer die Erstbefuellung (Task 7)."""
+    if beleg.art != "datei" or doc == konfig.ketten_md:
+        return True
+    if not (doku_ziel(konfig, doc) or nur_lesend(konfig, doc)):
+        return True
+    return Path(beleg.file).suffix.lower() not in CODE_ENDUNGEN
+
+
 def betroffene_spaces(konfig: Konfig, aussen: Sequence[str], sub: Sequence[str]) -> list[str]:
     """Spaces, die neu gebaut werden. Alle bei unbekanntem Stand (`*`), geaendertem Dienst-Register oder Loop-Konfig
     (`config/doku_loop.yaml` oder die Regeldatei `selbstbild.yaml`),
@@ -358,6 +375,8 @@ class _Lauf:
         self.n_belegt = 0
         self.n_neu = 0
         self.index_holer: Callable[[], Mapping[str, list[str]]] | None = None  # Datei-Index, einer je Lauf
+        # Ruling T4-c: Code-Datei -> (alter Digest, neuer Digest, Aussage-Ids) geaenderter Datei-Belege ohne Judge
+        self.datei_geaendert: dict[str, tuple[str, str, list[str]]] = {}
 
     # ----- Ergebnis und Stand -----
 
@@ -992,6 +1011,11 @@ class _Lauf:
                 continue  # kaputter Eintrag: verwerfen, der naechste Neubau findet das Signal wieder
             schl = (beleg.art, beleg.file, beleg.anker)
             neu_digest = str(s.get("neu_digest") or "")
+            if not signal_traegt(beleg, aussage.datei, self.konfig):
+                # Ruling T4-c: kein Judge; als erledigt fuehren -> der Neubau ohne Judge fuehrt den Beleg nach und
+                # meldet ihn als `beleg_datei_geaendert`
+                beantwortet.append(s)
+                continue
             treffer = urteil_holen(self.konfig, aussage.id, schl, beleg.digest, neu_digest)
             if treffer is not None:
                 beantwortet.append(s)
@@ -1081,6 +1105,7 @@ class _Lauf:
             texte[doc] = (roh, neu)
         aussagen_signale += self._nur_lesend_pruefen(graph)
         self._verwaiste_aussagen(graph)
+        self._datei_geaendert_melden()
         self.melden(f"Aussagen: {self.doku_gelesen} Doku-Datei(en), {self.nur_lesend_gelesen} nur lesend, "
                     f"{len(self.doku_fremd_ziele)} ausgelassen; {self.n_aussagen} Aussagen, {self.n_belegt} belegt, "
                     f"{self.n_neu} neu gemerkt")
@@ -1181,6 +1206,30 @@ class _Lauf:
             f"{alt.digest[:12]} -> {neu.digest[:12]}); Hop-Zeile prüfen", self.konfig.ketten_md,
             zeile if isinstance(zeile, int) else None, f"{hop}#{neu.digest[:12]}"))
 
+    def _stumm_nachfuehren(self, a: au.Aussage, gespeichert: Sequence[Beleg], stumm: Sequence[Beleg]
+                           ) -> tuple[Beleg, ...]:
+        """Ruling T4-c: Datei-Belege auf Code nachfuehren (neuer Digest, damit sie im naechsten Lauf nicht wieder
+        anschlagen) und je Datei die Aussage vormerken; Rueckgabe die gemerkten Belege mit den nachgefuehrten."""
+        neu: dict[tuple[str, str, str], Beleg] = {}
+        for b in stumm:
+            n = self.nachgefuehrt(b) or b
+            neu[(b.art, b.file, b.anker)] = n
+            eintrag = self.datei_geaendert.setdefault(b.file, (b.digest, n.digest, []))
+            if a.id not in eintrag[2]:
+                eintrag[2].append(a.id)
+        return tuple(neu.get((x.art, x.file, x.anker), x) for x in gespeichert)
+
+    def _datei_geaendert_melden(self) -> None:
+        """Ruling T4-c: ein Pruefpunkt `beleg_datei_geaendert` je Code-Datei (nicht je Aussage), ohne LLM;
+        dedupliziert ueber `<datei>#<neuer Digest>`."""
+        for datei, (alt, neu, aids) in sorted(self.datei_geaendert.items()):
+            liste = ", ".join(aids[:DATEI_GEAENDERT_IDS]) + (" …" if len(aids) > DATEI_GEAENDERT_IDS else "")
+            self.offen.append(Pruefpunkt(
+                "beleg_datei_geaendert", f"{datei} geändert (Digest {alt[:12]} -> {neu[:12]}); {len(aids)} Aussage(n) "
+                f"mit Datei-Beleg darauf prüfen (kein Judge): {liste}"[:2000], datei, None, f"{datei}#{neu[:12]}"))
+        if self.datei_geaendert:
+            self.melden(f"Datei-Belege auf Code: {len(self.datei_geaendert)} Datei(en) geändert – Prüfliste, kein Judge")
+
     def _verwaiste_aussagen(self, graph: Graph) -> None:
         """Fix-Runde 1, Item 2: gemerkte Aussagen eines geloeschten oder umbenannten Doku-Ziels (bzw. einer nur-lesend-
         Datei) entfernen -- nur wenn die Loeschung committet ist: die Datei trifft ein Muster, ist weder Ziel noch
@@ -1250,10 +1299,16 @@ class _Lauf:
             if any(u == "unsauber" for _, u in urteile):
                 continue  # Ruling 48a: nicht urteilen, gemerkte Belege bleiben unveraendert
             treffer = [(b, u) for b, u in urteile if u != "beleg_ok"]
+            # Ruling T4-c: geaenderte Datei-Belege auf Code in Doku-Zielen sind kein Judge-Signal -- nachfuehren,
+            # je Datei sammeln (ein Pruefpunkt nach der Doku-Schleife)
+            stumm = [(b, u) for b, u in treffer if u == "beleg_geaendert" and not signal_traegt(b, doc, self.konfig)]
+            if stumm:
+                treffer = [t for t in treffer if t not in stumm]
+                gespeichert = self._stumm_nachfuehren(a, gespeichert, [b for b, _ in stumm])
             if not treffer:
                 schluessel = {(b.art, b.file, b.anker) for b in gespeichert}
                 dazu = [b for b in aktuell if (b.art, b.file, b.anker) not in schluessel]
-                if dazu:
+                if dazu or stumm:
                     aussage_speichern(graph, a, [*gespeichert, *dazu], "extraktor")
                 continue
             signale += len(treffer)

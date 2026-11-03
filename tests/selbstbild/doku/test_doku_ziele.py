@@ -413,3 +413,115 @@ def test_umbenennung_entfernt_alte_und_merkt_neue_aussagen(fx):
     assert erg.commit is not None and erg.llm_aufrufe == 0
     assert not _aussagen(fx.repo, "docs/spaces/001_x.md")
     assert len(_aussagen(fx.repo, "docs/spaces/003_z.md")) == 1
+
+
+# ---------- Fix-Runde 1, Item 3 (Ruling T4-c): Datei-Belege auf Code tragen kein Judge-Signal ----------
+
+def _code_ziele(fx, absaetze, *, ketten_dazu=""):
+    """Ziele 001.. je mit einem Absatz; `scripts/werkzeug.py` und `notes/plan.md` als Belegdateien; Erstlauf."""
+    _schreib(fx.repo, "scripts/werkzeug.py", WERKZEUG)
+    _schreib(fx.repo, "notes/plan.md", "# Plan\n\nerster Stand\n")
+    if ketten_dazu:
+        _schreib(fx.repo, KETTEN, _text(fx) + "\n" + ketten_dazu + "\n")
+    _commit(fx.repo, "belegdateien", "scripts/werkzeug.py", "notes/plan.md", KETTEN)
+    _ziele(fx, doku_ziele=("docs/spaces/0*.md",))
+    _seed(fx)
+    for i, absatz in enumerate(absaetze, start=1):
+        _schreib(fx.repo, f"docs/spaces/{i:03d}_c{i}.md", _doku(f"C{i}", absatz))
+    if absaetze:
+        _commit(fx.repo, "ziele", "docs/spaces")
+    _anstoss(fx)
+    assert _tick(fx, erzwingen=True).llm_aufrufe == 0  # Erstlauf merkt die Belege
+
+
+def _datei_punkte(fx):
+    return [p for p in _pruefliste(fx)["offen"] if p["art"] == "beleg_datei_geaendert"]
+
+
+def test_signal_traegt(fx):
+    from selbstbild.doku.anker import Beleg
+    from selbstbild.doku.tick import signal_traegt
+
+    k = _ziele(fx, doku_ziele=("docs/spaces/0*.md",), doku_nur_lesen=("ext/*/README.md",))
+
+    def b(art, datei):
+        return Beleg(art, datei, "", "d" * 64, "c", None)
+
+    ziel, nur = "docs/spaces/001_x.md", "ext/a/README.md"
+    for datei in ("a/b.py", "a/b.PYI", "w.ts", "w.tsx", "w.js", "w.jsx", "w.mjs", "w.cjs", "w.rs", "w.go", "w.ps1",
+                  "w.psm1", "w.sh", "w.bash", "w.cmd", "w.bat", "db/x.sql"):
+        assert not signal_traegt(b("datei", datei), ziel, k), datei
+        assert not signal_traegt(b("datei", datei), nur, k), datei
+        assert signal_traegt(b("datei", datei), KETTEN, k), datei  # KETTEN.md unveraendert
+        assert signal_traegt(b("datei", datei), "docs/other.md", k), datei  # kein Ziel
+    for art, datei in (("symbol", "a/b.py"), ("sql", "db/x.sql"), ("yaml_key", "c.yaml"), ("datei", "n/p.md"),
+                       ("datei", "c.yaml"), ("datei", "c.json")):
+        assert signal_traegt(b(art, datei), ziel, k), (art, datei)
+
+
+def test_code_datei_belege_ohne_judge_ein_pruefpunkt(fx):
+    _code_ziele(fx, [f"Werkzeug {i} liegt in `scripts/werkzeug.py` und prueft die Doku." for i in range(1, 6)])
+    _schreib(fx.repo, "scripts/werkzeug.py", WERKZEUG + "\n# geaendert\n")
+    _commit(fx.repo, "werkzeug", "scripts/werkzeug.py")
+    _anstoss(fx)
+    lauf = FakeLaufzeit()
+    erg = _tick(fx, laufzeit=lauf)
+    assert lauf.aufrufe == [] and erg.llm_aufrufe == 0 and erg.umgeschrieben == 0
+    punkte = _datei_punkte(fx)
+    assert len(punkte) == 1 and punkte[0]["datei"] == "scripts/werkzeug.py"
+    assert "5 Aussage" in punkte[0]["text"] and punkte[0]["aussage_id"].startswith("scripts/werkzeug.py#")
+    for i in range(1, 6):  # die Belege sind nachgefuehrt: kein neues Signal im naechsten Lauf
+        assert f"docs/spaces/{i:03d}_c{i}.md" in punkte[0]["text"]
+    _code_aenderung(fx, 1)
+    _anstoss(fx)
+    lauf2 = FakeLaufzeit()
+    erg2 = _tick(fx, laufzeit=lauf2, erzwingen=True)
+    assert lauf2.aufrufe == [] and erg2.signale == 0 and len(_datei_punkte(fx)) == 1
+
+
+def test_offenes_signal_auf_code_datei_fragt_beim_nachholen_nicht(fx):
+    from selbstbild.doku import aussagen as au
+    from selbstbild.doku import stand as st
+    from selbstbild.doku import tick as tk
+    from selbstbild.doku.anker import Beleg
+
+    _code_ziele(fx, ["Werkzeug 1 liegt in `scripts/werkzeug.py` und prueft die Doku."])
+    aid = next(iter(_aussagen(fx.repo, "docs/spaces/001_c1.md")))[len("aussage:"):]
+    beleg = Beleg("datei", "scripts/werkzeug.py", "", "0" * 64, _head(fx.repo), None)
+    aussage = au.Aussage(aid, "docs/spaces/001_c1.md", "C1 > Was hier passiert", 5, 5,
+                         "Werkzeug 1 liegt in `scripts/werkzeug.py` und prueft die Doku.", (beleg,))
+    alt = st.stand_laden(fx.konfig)
+    st.stand_schreiben(fx.konfig, dataclasses.replace(alt, offene_signale=[{
+        "space": None, "datei": beleg.file, "aussage": tk._aussage_dict(aussage), "beleg": beleg.to_dict(),
+        "quelltext_alt": "", "quelltext_neu": "", "nachbarn": [], "neu_digest": "1" * 64}]))
+    _anstoss(fx)
+    lauf = FakeLaufzeit()
+    _tick(fx, laufzeit=lauf)
+    assert lauf.aufrufe == [] and st.stand_laden(fx.konfig).offene_signale == []
+
+
+def test_symbol_beleg_auf_code_signalisiert_weiter(fx):
+    _code_ziele(fx, ["Das Werkzeug `pruefen` in `scripts/werkzeug.py:1` prueft vor jedem Lauf."])
+    _schreib(fx.repo, "scripts/werkzeug.py", WERKZEUG.replace("return True", "return False"))
+    _commit(fx.repo, "pruefen", "scripts/werkzeug.py")
+    _anstoss(fx)
+    erg = _tick(fx, laufzeit=FakeLaufzeit(_urteil("noch_wahr"), _urteil("noch_wahr")))
+    assert erg.llm_aufrufe == 2 and not _datei_punkte(fx)
+
+
+def test_datei_beleg_auf_markdown_signalisiert_weiter(fx):
+    _code_ziele(fx, ["Der Plan fuer den Space steht in `notes/plan.md` und gilt weiter."])
+    _schreib(fx.repo, "notes/plan.md", "# Plan\n\nzweiter Stand\n")
+    _commit(fx.repo, "plan", "notes/plan.md")
+    _anstoss(fx)
+    erg = _tick(fx, laufzeit=FakeLaufzeit(_urteil("noch_wahr"), _urteil("noch_wahr")))
+    assert erg.llm_aufrufe == 2 and not _datei_punkte(fx)
+
+
+def test_ketten_datei_beleg_auf_code_signalisiert_weiter(fx):
+    _code_ziele(fx, [], ketten_dazu="Das Werkzeug fuer alle Ketten liegt in `scripts/werkzeug.py` und prueft.")
+    _schreib(fx.repo, "scripts/werkzeug.py", WERKZEUG + "\n# geaendert\n")
+    _commit(fx.repo, "werkzeug", "scripts/werkzeug.py")
+    _anstoss(fx)
+    erg = _tick(fx, laufzeit=FakeLaufzeit(_urteil("noch_wahr"), _urteil("noch_wahr")))
+    assert erg.llm_aufrufe == 2 and not _datei_punkte(fx)
