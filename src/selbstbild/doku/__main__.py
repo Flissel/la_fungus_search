@@ -11,6 +11,9 @@
     (Stand, Pruefliste und Urteils-Cache liegen lokal in %LOCALAPPDATA%/VibeMind/doku_loop, nie im Repo)
     dienste-seed                      fehlende Dienste aus Compose + vibemind.config.json in dienste.yaml
     status                            Stand, Pruefliste, Schalter (Notizen, Zweig), Budget, Marker, Sperre, Aufgabe
+    aufgabe --pruefen|--umschalten|--zurueck [--trocken]
+                                      Windows-Aufgabe "VibeMind Doku-Loop" pruefen, auf diesen Loop umschalten
+                                      (mit Sicherung des lokalen Zustands) oder zurueck (siehe aufgabe.py)
     (tick rotiert vorher logs/doku-loop.log ab 5 MB nach .1, auch waehrend die Aufgabe hinein umleitet)
 
 Exit-Codes: 0 ok (auch uebersprungen), 1 Fehler, 2 Konfigfehler. Ausgabe deutsch, eine Zeile je Schritt; es werden
@@ -73,6 +76,14 @@ def _parser() -> argparse.ArgumentParser:
     unter.add_parser("graph-schlank", parents=[gemeinsam], help="docs/graph/graph.json verschlanken (committet)")
     unter.add_parser("dienste-seed", parents=[gemeinsam], help="fehlende Eintraege in config/dienste.yaml ergaenzen")
     unter.add_parser("status", parents=[gemeinsam], help="Stand, Pruefliste, Budget")
+    a = unter.add_parser("aufgabe", parents=[gemeinsam], help="Windows-Aufgabe pruefen, umschalten oder zurueck")
+    modus = a.add_mutually_exclusive_group(required=True)
+    modus.add_argument("--pruefen", action="store_true", help="aktuelle Aktion zeigen und einordnen (nur lesend)")
+    modus.add_argument("--umschalten", action="store_true",
+                       help="Zustand sichern, alte Aktion merken, Aktion auf diesen Loop setzen")
+    modus.add_argument("--zurueck", action="store_true",
+                       help="alte Aktion setzen, eigene Rowboat-Seiten archivieren, Sicherung zurueckspielen")
+    a.add_argument("--trocken", action="store_true", help="jeden Schritt zeigen, nichts schreiben, nichts setzen")
     return p
 
 
@@ -334,9 +345,24 @@ def _status(konfig: Konfig, args: argparse.Namespace, w: Werkzeuge) -> int:
     return 0
 
 
+def _aufgabe(konfig: Konfig, args: argparse.Namespace, w: Werkzeuge) -> int:
+    """Task 10: Umschalten der Windows-Aufgabe mit Rueckweg (`aufgabe.py`). Backend, Python, Import-Pruefung und Uhr
+    sind fuer Tests injizierbar (`aufgabe_backend`, `python`, `import_pruefen`, `jetzt`)."""
+    from . import aufgabe as ag
+
+    backend = w.get("aufgabe_backend") or ag.PowerShellBackend()
+    if args.pruefen:
+        return ag.pruefen(konfig, backend=backend)
+    jetzt = _jetzt(w).replace(tzinfo=None)
+    if args.umschalten:
+        return ag.umschalten(konfig, backend=backend, python=w.get("python") or sys.executable, trocken=args.trocken,
+                             jetzt=jetzt, import_pruefen=w.get("import_pruefen") or ag.import_pruefen)
+    return ag.zurueck(konfig, backend=backend, trocken=args.trocken, jetzt=jetzt)
+
+
 BEFEHLE: dict[str, Callable[[Konfig, argparse.Namespace, Werkzeuge], int]] = {
     "tick": _tick, "seed": _seed, "messen": _messen, "render": _render, "graph-schlank": _graph_schlank,
-    "dienste-seed": _dienste_seed, "status": _status,
+    "dienste-seed": _dienste_seed, "status": _status, "aufgabe": _aufgabe,
 }
 
 
@@ -371,6 +397,9 @@ def main(argv: list[str] | None = None, *, werkzeuge: Werkzeuge | None = None) -
                 and not args.erlaube_vorgabe and not args.trocken):  # der Trockenlauf schreibt nichts
             raise KonfigFehler("tick auf der universellen Vorgabe ohne Torwaechter ist gesperrt "
                                "(falsche Wurzel? sonst mit --erlaube-vorgabe)")
+        if args.befehl == "aufgabe" and args.umschalten and not quelle.startswith(konfig_modul.QUELLE_DOKU):
+            # die Aufgabe ruft danach `doku tick <wurzel>`: ohne Abschnitt doku: liefe er auf der Vorgabe
+            raise KonfigFehler("umschalten braucht <wurzel> mit selbstbild.yaml und Abschnitt doku: (kein --konfig)")
     except (KonfigFehler, OSError, yaml.YAMLError, KeyError, TypeError, ValueError) as fehler:
         print(f"Konfigfehler: {_kurz(fehler)}", file=sys.stderr)
         return 2

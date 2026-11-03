@@ -314,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="selbstbild", description="Vermisst ein Git-Repo als Graph.")
     p.add_argument("-v", "--ausfuehrlich", action="store_true", help="Fortschritt nach stderr")
     befehle = p.add_subparsers(dest="befehl", required=True)
-    befehle.add_parser("doku", help="Doku-Loop: doku <tick|seed|messen|render|graph-schlank|dienste-seed|status> "
+    befehle.add_parser("doku", help="Doku-Loop: doku <tick|seed|messen|render|graph-schlank|dienste-seed|status|aufgabe> "
                                     "[<wurzel>] [--konfig <pfad>] (siehe `doku --help`)")
     v = befehle.add_parser("vermessen", help="Commit vermessen, Bericht als JSON")
     v.add_argument("wurzel", type=Path)
