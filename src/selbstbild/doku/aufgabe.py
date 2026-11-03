@@ -35,7 +35,9 @@
   d. (T10-d) aus `docs/graph/graph.json` des aeusseren Repos alle Knotentypen, Kantenarten und -quellen entfernen, die
      der alte Loop nicht kennt (sein `graph.py` wirft sonst `ValueError` -> jeder alte Tick stirbt), samt Kanten an
      entfernten Knoten. Die bekannten Arten liest `alte_typen` per `ast` aus `scripts/doku_loop/graph.py` (Kopie als
-     Rueckfall). Committet wird nur diese Datei ueber den gemeinsamen Schreibvorgang (Zweig, CAS, Torwaechter,
+     Rueckfall). Final-Fix M1: dazu jede Aussage, deren Datei nicht im Doku-Satz des alten Loops liegt (`ketten_md` +
+     `weitere_doku` aus `config/doku_loop.yaml`, sonst KETTEN.md), samt Kanten und dadurch verwaisten Modulen; sonst
+     faende der alte Loop Belege des neuen ohne Besitzer. Committet wird nur diese Datei ueber den gemeinsamen Schreibvorgang (Zweig, CAS, Torwaechter,
      pathspec): `docs(loop): Rueckweg – Knotenarten des neuen Loops entfernt`;
   a. alte Aktion aus `aufgabe-alt.json` setzen und nachlesen. Danach wandert `aufgabe-alt.json` in den
      Nachher-Ordner.
@@ -68,6 +70,8 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any, Protocol
 
+import yaml
+
 from . import rowboat, schreibvorgang, umschreiben
 from .graph import Graph
 from .konfig import Konfig
@@ -99,6 +103,9 @@ ALTE_TYPEN_KOPIE: dict[str, frozenset[str]] = {
     "KANTEN_QUELLEN": frozenset({"extraktor", "seed", "llm", "review"}),
 }
 ALTE_GRAPH_VERSION = 1
+# Final-Fix M1: Doku-Satz des alten Loops (ketten_md + weitere_doku) aus seiner Konfig, sonst nur KETTEN.md
+ALTE_KONFIG = ("config", "doku_loop.yaml")
+ALTER_DOKU_VORGABE = "docs/spaces/KETTEN.md"
 GRAPH_BETREFF = "docs(loop): Rueckweg – Knotenarten des neuen Loops entfernt"
 GRAPH_JSON = schreibvorgang.GRAPH_JSON
 _CMD_SONDER = set('"%^&|<>!')  # in cmd.exe auch innerhalb von Anfuehrungszeichen heikel (%, !) oder bruchgefaehrlich
@@ -661,17 +668,53 @@ class GraphBereinigung:
     neu: str | None  # None = nichts zu entfernen
     knoten_weg: dict[str, int]  # Knotentyp -> Anzahl
     kanten_weg: dict[str, int]  # Kantenart -> Anzahl (unbekannte Art/Quelle oder ein Endpunkt faellt weg)
+    aussagen_fremd: int = 0  # Final-Fix M1: Aussagen ausserhalb des alten Doku-Satzes (in `knoten_weg["aussage"]`)
+    module_verwaist: int = 0  # Final-Fix M1: Module ohne Kante danach (in `knoten_weg["modul"]`)
 
     def zeile(self) -> str:
         k = ", ".join(f"{t} ({n})" for t, n in sorted(self.knoten_weg.items())) or "-"
         e = ", ".join(f"{t} ({n})" for t, n in sorted(self.kanten_weg.items())) or "-"
-        return f"Knoten {k}; Kanten {e}"
+        return (f"Knoten {k}; Kanten {e}; davon Aussagen außerhalb des alten Doku-Satzes: {self.aussagen_fremd}, "
+                f"verwaiste Module: {self.module_verwaist}")
 
 
-def graph_bereinigen_plan(alt: bytes, typen: Mapping[str, frozenset[str]]) -> GraphBereinigung:
+def _doku_pfad(pfad: str) -> str:
+    """Vergleichsform eines repo-relativen Doku-Pfads: `/`, ohne `./`, ohne Gross-/Kleinschreibung (Windows)."""
+    p = pfad.replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.casefold()
+
+
+def alter_doku_satz(repo: Path) -> tuple[frozenset[str], str]:
+    """Final-Fix M1: die Doku-Dateien, deren Aussagen der ALTE Loop besitzt -- `ketten_md` + `weitere_doku` aus
+    `<repo>/config/doku_loop.yaml` (yaml.safe_load, nie importiert), sonst `docs/spaces/KETTEN.md`. Rueckgabe
+    `(Vergleichsformen, Quelle)`."""
+    vorgabe = frozenset({_doku_pfad(ALTER_DOKU_VORGABE)})
+    pfad = Path(repo).joinpath(*ALTE_KONFIG)
+    try:
+        roh = yaml.safe_load(pfad.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return vorgabe, f"Vorgabe {ALTER_DOKU_VORGABE} ({'/'.join(ALTE_KONFIG)} fehlt)"
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+        return vorgabe, f"Vorgabe {ALTER_DOKU_VORGABE} ({'/'.join(ALTE_KONFIG)} nicht lesbar: {type(e).__name__})"
+    ketten = roh.get("ketten_md") if isinstance(roh, dict) else None
+    weitere = (roh.get("weitere_doku") or []) if isinstance(roh, dict) else None
+    if not isinstance(ketten, str) or not ketten or not isinstance(weitere, list) \
+            or not all(isinstance(w, str) and w for w in weitere):
+        return vorgabe, f"Vorgabe {ALTER_DOKU_VORGABE} ({'/'.join(ALTE_KONFIG)} ohne gueltige ketten_md/weitere_doku)"
+    return frozenset(_doku_pfad(p) for p in (ketten, *weitere)), "/".join(ALTE_KONFIG)
+
+
+def graph_bereinigen_plan(alt: bytes, typen: Mapping[str, frozenset[str]], *,
+                          doku_satz: frozenset[str] | None = None) -> GraphBereinigung:
     """Rein: entfernt Knoten unbekannter Typen, Kanten unbekannter Art oder Quelle und Kanten, deren Endpunkt dabei
     wegfaellt; Digest neu, alles andere (auch `erzeugt`, Commits, Zusatzschluessel) bleibt. ValueError, wenn die Datei
-    kein Graph der Version 1 ist (dann kann es der alte Loop ohnehin nicht lesen)."""
+    kein Graph der Version 1 ist (dann kann es der alte Loop ohnehin nicht lesen).
+
+    Final-Fix M1, mit `doku_satz` (Vergleichsformen aus `alter_doku_satz`): auch `aussage`-Knoten, deren `datei`
+    nicht im Doku-Satz des alten Loops liegt (sie gehoeren dem neuen Loop), samt ihren Kanten, und `modul`-Knoten,
+    die dadurch keine Kante mehr haben. Ein Aussage-Knoten ohne `datei` bleibt."""
     doc = json.loads(alt.decode("utf-8"))
     if not isinstance(doc, dict) or doc.get("version") != ALTE_GRAPH_VERSION:
         raise ValueError("kein Graph der Version 1")
@@ -681,16 +724,22 @@ def graph_bereinigen_plan(alt: bytes, typen: Mapping[str, frozenset[str]]) -> Gr
     knoten_weg: dict[str, int] = {}
     weg_ids: set[str] = set()
     bleiben_k = []
+    aussagen_fremd = 0
     for k in knoten:
         if not isinstance(k, dict):
             raise ValueError("Knoten ist kein Objekt")
-        if str(k.get("typ")) in typen["KNOTEN_TYPEN"]:
+        typ, datei = str(k.get("typ")), k.get("datei")
+        fremd = (doku_satz is not None and typ == "aussage" and isinstance(datei, str) and datei
+                 and _doku_pfad(datei) not in doku_satz)
+        if typ in typen["KNOTEN_TYPEN"] and not fremd:
             bleiben_k.append(k)
         else:
-            knoten_weg[str(k.get("typ"))] = knoten_weg.get(str(k.get("typ")), 0) + 1
+            knoten_weg[typ] = knoten_weg.get(typ, 0) + 1
             weg_ids.add(str(k.get("id")))
+            aussagen_fremd += 1 if fremd else 0
     kanten_weg: dict[str, int] = {}
     bleiben_e = []
+    beruehrt: set[str] = set()  # Endpunkte entfernter Kanten (Kandidaten fuer verwaiste Module)
     for e in kanten:
         if not isinstance(e, dict):
             raise ValueError("Kante ist kein Objekt")
@@ -699,12 +748,22 @@ def graph_bereinigen_plan(alt: bytes, typen: Mapping[str, frozenset[str]]) -> Gr
             bleiben_e.append(e)
         else:
             kanten_weg[str(e.get("art"))] = kanten_weg.get(str(e.get("art")), 0) + 1
+            beruehrt |= {str(e.get("von")), str(e.get("nach"))}
+    module_verwaist = 0
+    if doku_satz is not None and beruehrt:
+        verbunden = {str(e.get(s)) for e in bleiben_e for s in ("von", "nach")}
+        verwaist = {str(k.get("id")) for k in bleiben_k if k.get("typ") == "modul" and str(k.get("id")) in beruehrt
+                    and str(k.get("id")) not in verbunden}
+        if verwaist:
+            bleiben_k = [k for k in bleiben_k if str(k.get("id")) not in verwaist]
+            knoten_weg["modul"] = knoten_weg.get("modul", 0) + len(verwaist)
+            module_verwaist = len(verwaist)
     if not knoten_weg and not kanten_weg:
         return GraphBereinigung(None, {}, {})
     neu_doc = {**doc, "knoten": bleiben_k, "kanten": bleiben_e}
     neu_doc["digest"] = Graph.aus_doc(neu_doc).digest()
     return GraphBereinigung(json.dumps(neu_doc, sort_keys=True, indent=1, ensure_ascii=False) + "\n",
-                            knoten_weg, kanten_weg)
+                            knoten_weg, kanten_weg, aussagen_fremd, module_verwaist)
 
 
 @dataclass
@@ -720,10 +779,12 @@ def _graph_vorpruefung(konfig: Konfig, *, git_pruefen: bool = True) -> _Graphvor
     repo = konfig.repo
     pfad = repo / GRAPH_JSON
     typen, quelle = alte_typen(repo)
+    satz, satz_quelle = alter_doku_satz(repo)
+    quelle = f"{quelle}; Doku-Satz: {satz_quelle}"
     if not pfad.is_file():
         return _Graphvorpruefung(None, quelle)
     try:
-        plan = graph_bereinigen_plan(pfad.read_bytes(), typen)
+        plan = graph_bereinigen_plan(pfad.read_bytes(), typen, doku_satz=satz)
     except (OSError, ValueError) as e:
         return _Graphvorpruefung(None, quelle, f"{GRAPH_JSON} nicht lesbar ({type(e).__name__})")
     if plan.neu is None:
@@ -754,7 +815,7 @@ def _graph_bereinigen(konfig: Konfig, jetzt: datetime, aus: Aus) -> bool:
         return True
     repo = konfig.repo
     alt = (repo / GRAPH_JSON).read_bytes()
-    plan = graph_bereinigen_plan(alt, alte_typen(repo)[0])
+    plan = graph_bereinigen_plan(alt, alte_typen(repo)[0], doku_satz=alter_doku_satz(repo)[0])
     if plan.neu is None:
         aus("d. Graph: nichts zu entfernen")
         return True
@@ -780,9 +841,9 @@ def _graph_zeile(vor: _Graphvorpruefung) -> str:
     if vor.plan is None or vor.plan.neu is None:
         return (f"Graph ({GRAPH_JSON}): " + (vor.fehler or "nur Arten, die der alte Loop kennt")
                 + f" (Typen: {vor.quelle})")
-    return (f"Graph ({GRAPH_JSON}): Arten, die der alte Loop nicht kennt: {vor.plan.zeile()} – `--zurueck` entfernt "
-            f"sie und committet nur diese Datei (Typen: {vor.quelle})" + (f"; Achtung: {vor.fehler}" if vor.fehler
-                                                                            else ""))
+    return (f"Graph ({GRAPH_JSON}): Arten, die der alte Loop nicht kennt, und Aussagen, die ihm nicht gehören: "
+            f"{vor.plan.zeile()} – `--zurueck` entfernt sie und committet nur diese Datei (Typen: {vor.quelle})"
+            + (f"; Achtung: {vor.fehler}" if vor.fehler else ""))
 
 
 # ---------- gemerkte alte Aktion ----------

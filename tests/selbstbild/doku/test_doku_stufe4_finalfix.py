@@ -15,6 +15,7 @@ from selbstbild.doku import tick as tk
 from selbstbild.doku.anker import Beleg
 from selbstbild.doku.aussagen import Aussage
 from selbstbild.doku.graph import Graph
+from test_doku_aufgabe import umg  # noqa: E402,F401  (Fixture fuer M1)
 from test_doku_erstbefuellung import D1, Abo, _aussage_im_prompt, _nachtlauf  # noqa: E402
 from test_doku_erstbefuellung import NOCH_WAHR as ERST_NOCH_WAHR  # noqa: E402
 from test_doku_erstbefuellung import _start as _erst_start  # noqa: E402
@@ -314,6 +315,104 @@ def test_m3_seite_nur_mit_restzeit_fuer_einen_ganzen_aufruf(fx):
     _anstoss(fx)
     erg2 = _tick(fx, erzwingen=True, budget=ErstBudget(), laufzeit=abo2, uhr=_Uhr(60))
     assert abo2.arten().count("seite") == 2 and erg2.erzaehlt_aufrufe == 2
+
+
+# ---------- M1: Rueckweg entfernt Aussagen ausserhalb des alten Doku-Satzes ----------
+
+KETTEN_DOC = "docs/spaces/KETTEN.md"
+SPACE_DOC = "docs/spaces/001_x.md"
+
+
+def _graph_mit_space_aussagen() -> Graph:
+    from selbstbild.doku.belegspeicher import aussage_speichern
+    from selbstbild.doku.graph import Knoten
+
+    g = Graph({}, {}, "c" * 40, "d" * 40)
+    g.knoten_hinzu(Knoten("space:a", "space", "a"))
+    for datei in ("sp/a/client.py", "sp/b/api.py"):
+        g.knoten_hinzu(Knoten(f"modul:{datei}", "modul", datei, datei=datei))
+    b_client = Beleg("symbol", "sp/a/client.py", "client.senden", "d" * 64, "c", 7)
+    b_api = Beleg("symbol", "sp/b/api.py", "api.x", "e" * 64, "c", 7)
+    aussage_speichern(g, Aussage(f"{KETTEN_DOC}#K#1", KETTEN_DOC, "K", 3, 3, "Ketten-Satz.", ()), [b_client],
+                      "extraktor")
+    aussage_speichern(g, Aussage(f"{SPACE_DOC}#X#1", SPACE_DOC, "X", 3, 3, "Space-Satz.", ()), [b_client, b_api],
+                      "extraktor")
+    return g
+
+
+def test_m1_alter_doku_satz_aus_der_alten_konfig(tmp_path):
+    from selbstbild.doku import aufgabe as ag
+
+    satz, quelle = ag.alter_doku_satz(tmp_path)
+    assert satz == frozenset({"docs/spaces/ketten.md"}) and "Vorgabe" in quelle
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/doku_loop.yaml").write_text(
+        "ketten_md: docs/spaces/KETTEN.md\nweitere_doku: [docs\\spaces\\README.md, ./docs/x.md]\n", encoding="utf-8")
+    satz, quelle = ag.alter_doku_satz(tmp_path)
+    assert satz == frozenset({"docs/spaces/ketten.md", "docs/spaces/readme.md", "docs/x.md"})
+    assert quelle == "config/doku_loop.yaml"
+    (tmp_path / "config/doku_loop.yaml").write_text("ketten_md: [kaputt\n", encoding="utf-8")
+    satz, quelle = ag.alter_doku_satz(tmp_path)
+    assert satz == frozenset({"docs/spaces/ketten.md"}) and "Vorgabe" in quelle
+
+
+def test_m1_graph_bereinigen_entfernt_aussagen_ausserhalb_und_verwaiste_module(monkeypatch):
+    from selbstbild.doku import aufgabe as ag
+    from test_doku_aufgabe import ERZEUGT, _alter_graph
+
+    alt_mod = _alter_graph(monkeypatch)
+    text = ag._graph_json_text(_graph_mit_space_aussagen(), ERZEUGT)
+    plan = ag.graph_bereinigen_plan(text.encode("utf-8"), ag.ALTE_TYPEN_KOPIE,
+                                    doku_satz=frozenset({"docs/spaces/ketten.md"}))
+    assert plan.knoten_weg == {"aussage": 1, "modul": 1} and plan.kanten_weg == {"belegt_durch": 2}
+    assert plan.aussagen_fremd == 1 and plan.module_verwaist == 1
+    g = alt_mod.Graph.aus_text(plan.neu)  # der alte Loop laedt das Ergebnis
+    aussagen = {k.id: k.datei for k in g.knoten.values() if k.typ == "aussage"}
+    assert aussagen == {f"aussage:{KETTEN_DOC}#K#1": KETTEN_DOC}
+    assert "modul:sp/a/client.py" in g.knoten and "modul:sp/b/api.py" not in g.knoten
+    assert {e.von for e in g.kanten.values()} == {f"aussage:{KETTEN_DOC}#K#1"}
+    # wiederholbar: nichts mehr zu tun; ohne Doku-Satz (alter Aufruf) bleiben Aussagen unangetastet
+    assert ag.graph_bereinigen_plan(plan.neu.encode("utf-8"), ag.ALTE_TYPEN_KOPIE,
+                                    doku_satz=frozenset({"docs/spaces/ketten.md"})).neu is None
+    assert ag.graph_bereinigen_plan(text.encode("utf-8"), ag.ALTE_TYPEN_KOPIE).neu is None
+
+
+@pytest.fixture()
+def umg_aussagen(umg, git_repo):
+    from test_doku_aufgabe import ERZEUGT
+
+    import dataclasses
+    u = umg
+    git_repo.git("checkout", "-q", "-b", u.k.zweig or "main")
+    _graph_mit_space_aussagen().speichern(u.repo / "docs" / "graph" / "graph.json", ERZEUGT)
+    (u.repo / ".gitignore").write_bytes(b"logs/\n")
+    git_repo.commit("seed")
+    u.k = dataclasses.replace(u.k, torwaechter=())
+    u.git = git_repo
+    return u
+
+
+def test_m1_rueckweg_pruefen_trocken_und_echt(umg_aussagen, monkeypatch):
+    from selbstbild.doku import aufgabe as ag
+    from test_doku_aufgabe import _alter_graph, _um, _zu
+
+    u = umg_aussagen
+    alt_mod = _alter_graph(monkeypatch)
+    zeilen: list[str] = []
+    assert ag.pruefen(u.k, backend=u.backend, aus=zeilen.append) == 0
+    assert "Aussagen außerhalb des alten Doku-Satzes: 1" in "\n".join(zeilen)
+    assert _um(u)[0] == 0
+    graph = u.repo / "docs" / "graph" / "graph.json"
+    vorher = graph.read_bytes()
+    rc, text = _zu(u, trocken=True)
+    assert rc == 0, text
+    assert "Aussagen außerhalb des alten Doku-Satzes: 1" in text and "verwaiste Module: 1" in text
+    assert graph.read_bytes() == vorher
+    rc, text = _zu(u)
+    assert rc == 0, text
+    g = alt_mod.Graph.aus_text(graph.read_text(encoding="utf-8"))
+    assert {k.datei for k in g.knoten.values() if k.typ == "aussage"} == {KETTEN_DOC}
+    assert u.git.git("show", "--name-only", "--format=", "HEAD").splitlines() == ["docs/graph/graph.json"]
 
 
 # ---------- I5: Struktur-Hinweise in Pruefliste.md gruppiert ----------
