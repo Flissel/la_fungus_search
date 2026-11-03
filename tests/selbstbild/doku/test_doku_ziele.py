@@ -518,6 +518,37 @@ def test_datei_beleg_auf_markdown_signalisiert_weiter(fx):
     assert erg.llm_aufrufe == 2 and not _datei_punkte(fx)
 
 
+def test_fremdes_ziel_in_anderer_schreibweise_bleibt_unberuehrt(fx):
+    """Fix-Runde 1, Item 4: auf der Platte `001_X.md`, im Index `001_x.md` (core.ignorecase/Windows): die fremde
+    Aenderung wird erkannt, die Datei nicht angefasst und unter der git-Schreibweise gefuehrt."""
+    import os
+
+    _zwei_ziele(fx)
+    assert _git(fx.repo, "config", "--bool", "core.ignorecase").strip() == "true"
+    gross = fx.repo / "docs/spaces/001_X.md"
+    os.rename(fx.repo / "docs/spaces/001_x.md", gross)  # nur die Schreibweise auf der Platte, git bleibt bei 001_x
+    assert sv.doku_dateien(fx.konfig) == [KETTEN, "docs/spaces/001_x.md", "docs/spaces/002_y.md"]
+    _umbenennen(fx)
+    dreckig = gross.read_bytes() + b"\nfremde Notiz\n"
+    gross.write_bytes(dreckig)
+    assert sv.fremde_doku_ziele(fx.konfig) == ["docs/spaces/001_x.md"]
+    _anstoss(fx)
+    erg = _tick(fx, laufzeit=FakeLaufzeit(*[_urteil()] * 4))
+    assert erg.doku_uebersprungen == ["docs/spaces/001_x.md"] and erg.umgeschrieben == 2
+    assert gross.read_bytes() == dreckig
+    assert "docs/spaces/001_x.md" not in _namen_im_commit(fx) and "docs/spaces/001_X.md" not in _namen_im_commit(fx)
+
+
+def test_muster_und_nie_ziel_ohne_gross_klein(fx):
+    k = _ziele(fx, doku_ziele=("docs/spaces/0*.md",), doku_nur_lesen=("ext/*/readme.md",))
+    assert sv.doku_ziel(k, "Docs/Spaces/001_A.MD") and sv.nur_lesend(k, "ext/a/README.md")
+    assert not sv.doku_ziel(k, "docs/spaces/0x/readme.MD")
+    k2 = _ziele(fx, doku_ziele=("docs/*/*.md",))
+    assert not sv.doku_ziel(k2, "docs/spaces/Readme.md") and not sv.doku_ziel(k2, "docs/spaces/massnahmen.MD")
+    assert sv.muster_trifft("docs/0*.md", "docs/001.md") and not sv.muster_trifft("docs/0*.md", "Docs/001.md")
+    assert sv.muster_trifft("docs/0*.md", "Docs/001.md", ignorecase=True)
+
+
 def test_ketten_datei_beleg_auf_code_signalisiert_weiter(fx):
     _code_ziele(fx, [], ketten_dazu="Das Werkzeug fuer alle Ketten liegt in `scripts/werkzeug.py` und prueft.")
     _schreib(fx.repo, "scripts/werkzeug.py", WERKZEUG + "\n# geaendert\n")

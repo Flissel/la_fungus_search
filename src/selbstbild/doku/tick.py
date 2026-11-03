@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
 import hashlib
 import os
 import subprocess
@@ -88,8 +89,8 @@ from .pruefliste import (
 from .schreibvorgang import (
     GRAPH_DIR, GRAPH_JSON, LEDGER, SUBMODUL, Aenderung, Ausgang, doku_dateien, doku_ziel, eigene_datei,
     fremde_aenderungen, fremde_doku_ziele, git, graph_text, halbschreibung_aufraeumen, hat_submodul, kopf, kopf_pruefen,
-    ledger_commit_von, nur_lesend, nur_lesend_dateien, schreiben_pruefen_committen, submodul_kopf, unsaubere_dateien,
-    versionierte_dateien,
+    ledger_commit_von, nur_lesend, nur_lesend_dateien, pfad_schluessel, schreiben_pruefen_committen, submodul_kopf,
+    unsaubere_dateien, versionierte_dateien,
 )
 from .seed_befehl import RenderBericht, SchlankBericht, SeedErgebnis, graph_schlank, neu_rendern, seed, seed_deckung
 from .stand import (
@@ -959,10 +960,14 @@ class _Lauf:
                 "ausgelassen, gemerkte Aussagen bleiben, bis die Änderung committet ist", datei, None,
                 f"{datei}#{stand}"))
 
+    def _fremd(self, doc: str) -> bool:
+        """Ruling T4-b/Item 4: `doc` ist ein fremd geaendertes Ziel (ohne Gross-/Kleinschreibung, wo sie egal ist)."""
+        return pfad_schluessel(self.repo, doc) in {pfad_schluessel(self.repo, d) for d in self.doku_fremd_ziele}
+
     def _doku_roh_lesen(self) -> None:
         """CAS-Basis der Doku jetzt festhalten (nicht erst nach dem Judge); fremd geaenderte Ziele nie."""
         for doc in doku_dateien(self.konfig):
-            if doc in self.doku_fremd_ziele:
+            if self._fremd(doc):
                 continue
             try:
                 self.doku_roh[doc] = (self.repo / doc).read_bytes()
@@ -1089,7 +1094,7 @@ class _Lauf:
         texte: dict[str, tuple[bytes, str]] = {}
         aussagen_signale = 0
         for doc in doku_dateien(konfig):
-            if doc in self.doku_fremd_ziele:  # Ruling T4-b: gemerkte Aussagen bleiben unveraendert im Graph
+            if self._fremd(doc):  # Ruling T4-b: gemerkte Aussagen bleiben unveraendert im Graph
                 continue
             pfad = repo / doc
             roh = self.doku_roh.get(doc)
@@ -1236,14 +1241,15 @@ class _Lauf:
         nur-lesend-Datei dieses Laufs, nicht versioniert, nicht unsauber (ein fremdes `git rm` ohne Commit ist
         unsauber) und auf der Platte weder im Arbeitsbaum noch im Messbaum."""
         konfig = self.konfig
-        bekannt = (set(doku_dateien(konfig)) | set(nur_lesend_dateien(konfig, self.mess_repo))
-                   | set(self.doku_fremd_ziele))
+        schl = functools.partial(pfad_schluessel, self.repo)  # Item 4: ohne Gross-/Kleinschreibung vergleichen
+        bekannt = {schl(d) for d in (*doku_dateien(konfig), *nur_lesend_dateien(konfig, self.mess_repo),
+                                     *self.doku_fremd_ziele, *self.versioniert, *self.unsauber)}
         weg: list[str] = []
         for k in list(graph.knoten.values()):
             d = k.datei
             if k.typ != "aussage" or not d or not (doku_ziel(konfig, d) or nur_lesend(konfig, d)):
                 continue
-            if d in bekannt or d in self.versioniert or d in self.unsauber:
+            if schl(d) in bekannt:
                 continue
             if (self.repo / d).exists() or (self.mess_repo / d).exists():
                 continue

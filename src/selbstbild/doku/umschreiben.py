@@ -233,6 +233,10 @@ def fremde_aenderungen(repo: Path, dateien: Sequence[str]) -> list[str]:
         return []
     ic = _ignorecase(repo)
     pfade = [_kanonisch(repo, d, ic) for d in dateien]
+    if ic:  # Fix-Runde 1 (Task 4), Item 4: (literale) Pathspecs sind auch mit core.ignorecase gross/klein-genau ->
+        # zusaetzlich die Schreibweise des Index nennen (die Platte kann eine andere haben)
+        index = {p.casefold(): p for p in _nul_liste(_git(repo, "ls-files", "-z", pruefen=False).text)}
+        pfade = list(dict.fromkeys([*pfade, *(index[p.casefold()] for p in pfade if p.casefold() in index)]))
     ausgabe = _git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", *pfade).text
     tokens = ausgabe.split("\0")
     gefunden: dict[str, None] = {}
