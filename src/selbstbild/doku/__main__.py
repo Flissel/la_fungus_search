@@ -84,6 +84,8 @@ def _parser() -> argparse.ArgumentParser:
     modus.add_argument("--zurueck", action="store_true",
                        help="alte Aktion setzen, eigene Rowboat-Seiten archivieren, Sicherung zurueckspielen")
     a.add_argument("--trocken", action="store_true", help="jeden Schritt zeigen, nichts schreiben, nichts setzen")
+    a.add_argument("--python", help="Python der neuen Aktion (Standard: das feste .venv-selbstbild in "
+                                    "wt-fungus-gate1; nie sys.executable); muss selbstbild ohne PYTHONPATH laden")
     return p
 
 
@@ -346,8 +348,8 @@ def _status(konfig: Konfig, args: argparse.Namespace, w: Werkzeuge) -> int:
 
 
 def _aufgabe(konfig: Konfig, args: argparse.Namespace, w: Werkzeuge) -> int:
-    """Task 10: Umschalten der Windows-Aufgabe mit Rueckweg (`aufgabe.py`). Backend, Python, Import-Pruefung und Uhr
-    sind fuer Tests injizierbar (`aufgabe_backend`, `python`, `import_pruefen`, `jetzt`)."""
+    """Task 10: Umschalten der Windows-Aufgabe mit Rueckweg (`aufgabe.py`). Backend, Import-Pruefung und Uhr sind
+    fuer Tests injizierbar (`aufgabe_backend`, `import_pruefen`, `jetzt`); das Python kommt nur aus `--python`."""
     from . import aufgabe as ag
 
     backend = w.get("aufgabe_backend") or ag.PowerShellBackend()
@@ -355,7 +357,7 @@ def _aufgabe(konfig: Konfig, args: argparse.Namespace, w: Werkzeuge) -> int:
         return ag.pruefen(konfig, backend=backend)
     jetzt = _jetzt(w).replace(tzinfo=None)
     if args.umschalten:
-        return ag.umschalten(konfig, backend=backend, python=w.get("python") or sys.executable, trocken=args.trocken,
+        return ag.umschalten(konfig, backend=backend, python=args.python, trocken=args.trocken,
                              jetzt=jetzt, import_pruefen=w.get("import_pruefen") or ag.import_pruefen)
     return ag.zurueck(konfig, backend=backend, trocken=args.trocken, jetzt=jetzt)
 

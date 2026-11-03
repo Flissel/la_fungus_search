@@ -3,7 +3,10 @@
 `python -m selbstbild doku aufgabe <wurzel> --pruefen | --umschalten | --zurueck [--trocken]`
 
 - `--pruefen` (nur lesend): aktuelle Aktion, Einordnung `alt` | `neu` | `unbekannt`, gemerkte alte Aktion, neueste
-  Sicherung, Archiv der erzaehlten Seiten, Zustand von `tick.lock`.
+  Sicherung, Archiv der erzaehlten Seiten, Zustand von `tick.lock`, und welche Arten im Repo-Graph der alte Loop
+  nicht kennt (die `--zurueck` entfernen wuerde).
+- Python der neuen Aktion: genau `STANDARD_PYTHON` oder `--python <pfad>`; es muss existieren und `selbstbild.doku`
+  ohne PYTHONPATH laden. Nie stillschweigend `sys.executable`.
 - `--umschalten` (nur von `alt`), unter der Sperre `tick.lock` (frisch gehalten -> Exit 2, nichts geaendert):
   1. lokalen Ordner (`%LOCALAPPDATA%\\VibeMind\\doku_loop\\`) ohne `messbaum-*` nach
      `...\\doku_loop-sicherung-<JJJJMMTT-hhmmss>\\` sichern (mtimes bleiben; erst unter `.tmp`, dann umbenannt);
@@ -13,20 +16,29 @@
   5. Zusammenfassung.
   Scheitert Schritt 3, bleibt die Sicherung liegen und sonst aendert sich nichts (aufgabe-alt.json wird entfernt,
   wenn die Aktion nachweislich noch die alte ist; sonst bleibt sie fuer `--zurueck`).
-- `--zurueck` (Ruling T10-a/b), ebenso unter der Sperre:
-  a. alte Aktion aus `aufgabe-alt.json` setzen;
+- `--zurueck` (Ruling T10-a/b/d), ebenso unter der Sperre, in der Reihenfolge c, b, d, ZULETZT a (Fix-Runde 1): bis a
+  bleibt der neue Loop geplant, jeder Fehler davor laesst einen stimmigen Stand, ein erneutes `--zurueck` macht fertig.
+  Vorher (Exit 2, nichts geaendert): `aufgabe-alt.json` lesbar, Aktion `neu` oder schon die gemerkte, Sicherung da
+  (die in `aufgabe-alt.json` gemerkte; weicht die neueste ab -> Warnung), und falls d etwas zu tun hat: keine fremde,
+  nicht committete Aenderung an `docs/graph/graph.json`, Kopf schreibbar (Zweig, keine Git-Operation).
   c. VOR b: jede eigene Rowboat-Seite des neuen Loops (`Mitbauen/...`, `Zustand.md`, `Was ist VibeMind.md`,
      `Spaces/*`, `Abläufe/*` -- laut aktuellem Notizen-Manifest UND Frontmatter `erzeugt_von: selbstbild`):
-     unveraendert (Hash = Manifest) -> mit Pfad und Manifest-Eintrag ins Archiv, Eintrag weg, Datei weg; von Hand
-     geaendert -> bleibt. Leer gewordene `Mitbauen/` und `Abläufe/` werden entfernt (nur diese);
-  b. juengste Sicherung ueber den Ordner zurueckspielen (ohne `messbaum-*`); was jetzt da ist, aber nicht in der
+     unveraendert (Hash = Manifest) -> mit Pfad und Manifest-Eintrag ins Archiv, Eintrag weg, Datei weg (Seite fuer
+     Seite, Manifeste nach jeder Seite); von Hand geaendert -> bleibt. Leer gewordene `Mitbauen/` und `Abläufe/`
+     werden entfernt (nur diese);
+  b. die Sicherung ueber den Ordner zurueckspielen (ohne `messbaum-*`); was jetzt da ist, aber nicht in der
      Sicherung, wandert nach `...\\doku_loop-nachher-<zeit>\\` (nie geloescht). Danach Manifest-Abgleich: jede
      deterministische Notiz, die der neue Loop unveraendert hinterlassen hat (Datei-Hash = aktueller Manifest-Eintrag),
      behaelt ihren jetzigen Hash im zurueckgespielten Manifest -- sonst hielte der alte Loop sie fuer von Hand
      geaendert (`notiz_von_hand`-Flut, Review-Fokus 4) und schriebe `Index (Loop).md` daneben;
-  d. `seiten-fehlversuche-<hash>.json` bleibt (Task 9 haelt ihn bewusst ausserhalb des Stands).
-  Zuletzt wandert `aufgabe-alt.json` in den Nachher-Ordner; ein abgebrochener Rueckweg laesst sich deshalb einfach
-  wiederholen.
+     `seiten-fehlversuche-<hash>.json` bleibt (Task 9 haelt ihn bewusst ausserhalb des Stands);
+  d. (T10-d) aus `docs/graph/graph.json` des aeusseren Repos alle Knotentypen, Kantenarten und -quellen entfernen, die
+     der alte Loop nicht kennt (sein `graph.py` wirft sonst `ValueError` -> jeder alte Tick stirbt), samt Kanten an
+     entfernten Knoten. Die bekannten Arten liest `alte_typen` per `ast` aus `scripts/doku_loop/graph.py` (Kopie als
+     Rueckfall). Committet wird nur diese Datei ueber den gemeinsamen Schreibvorgang (Zweig, CAS, Torwaechter,
+     pathspec): `docs(loop): Rueckweg – Knotenarten des neuen Loops entfernt`;
+  a. alte Aktion aus `aufgabe-alt.json` setzen und nachlesen. Danach wandert `aufgabe-alt.json` in den
+     Nachher-Ordner.
 - `--trocken` zeigt jeden Schritt (Dateien, Aktionen, Archiv-Eintraege) und schreibt nichts.
 
 Nie gesichert oder zurueckgespielt: `messbaum-*` (Worktrees des Loops), `tick.lock*`, `erzaehlt-archiv`,
@@ -42,6 +54,7 @@ Exit-Codes: 0 ok, 1 Fehler mitten im Ablauf (Meldung sagt, was steht), 2 abgeleh
 
 from __future__ import annotations
 
+import ast
 import filecmp
 import json
 import os
@@ -55,12 +68,13 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any, Protocol
 
-from . import rowboat
+from . import rowboat, schreibvorgang, umschreiben
+from .graph import Graph
 from .konfig import Konfig
 from .rowboat_erzaehlt import ABLAEUFE, SPACES, WAS_IST_REL
 from .rowboat_seiten import MARKER as SEITEN_MARKER
 from .rowboat_seiten import MITBAUEN_REL, ZUSTAND_REL
-from .stand import SPERRE_DATEI, lokaler_ordner, sperre, sperre_frisch, sperre_zustand
+from .stand import SPERRE_DATEI, lokaler_ordner, schreibvermerk_pfad, sperre, sperre_frisch, sperre_zustand
 
 AUFGABE = "VibeMind Doku-Loop"
 ALT_DATEI = "aufgabe-alt.json"
@@ -72,6 +86,21 @@ LOG_REL = ("logs", "doku-loop.log")  # wie `__main__.LOG_DATEI`; dort rotiert `t
 ZEIT_FORMAT = "%Y%m%d-%H%M%S"
 PS_TIMEOUT_S = 60
 IMPORT_TIMEOUT_S = 120
+# Fix-Runde 1 (Minor 4): das Python der neuen Aktion -- genau dieses, oder ausdruecklich `--python <pfad>`
+STANDARD_PYTHON = r"C:\Users\User\ClaudeWork\wt-fungus-gate1\.venv-selbstbild\Scripts\python.exe"
+# Fix-Runde 1 (Ruling T10-d): Knoten-/Kantenarten, die der ALTE Loop kennt (`scripts/doku_loop/graph.py`, Stand
+# 40e05ec0). Gelesen wird per `ast` aus dem aeusseren Repo; diese Kopie gilt nur, wenn das nicht geht.
+ALTER_GRAPH_PY = ("scripts", "doku_loop", "graph.py")
+ALTE_TYPEN_KOPIE: dict[str, frozenset[str]] = {
+    "KNOTEN_TYPEN": frozenset({"space", "dienst", "modul", "symbol", "route", "tabelle", "sql_funktion",
+                               "mcp_werkzeug", "mensch", "aussage", "kette", "komponente"}),
+    "KANTEN_ARTEN": frozenset({"ruft_auf", "definiert_route", "liest_schreibt", "registriert", "verbindet",
+                               "nutzt_dienst", "gehoert_zu", "hop", "belegt_durch", "geaendert_durch"}),
+    "KANTEN_QUELLEN": frozenset({"extraktor", "seed", "llm", "review"}),
+}
+ALTE_GRAPH_VERSION = 1
+GRAPH_BETREFF = "docs(loop): Rueckweg – Knotenarten des neuen Loops entfernt"
+GRAPH_JSON = schreibvorgang.GRAPH_JSON
 _CMD_SONDER = set('"%^&|<>!')  # in cmd.exe auch innerhalb von Anfuehrungszeichen heikel (%, !) oder bruchgefaehrlich
 _NEU = re.compile(r"(?:^|\s)-m\s+selbstbild\s+doku\s+tick(?:\s|$)", re.IGNORECASE)
 _ALT = re.compile(r"scripts\\doku-loop\.cmd\s+tick(?:\s|$)", re.IGNORECASE)
@@ -189,6 +218,14 @@ class PowerShellBackend:
         self.laufzeit, self.powershell, self.timeout_s = laufzeit, powershell, timeout_s
 
     def _ps(self, skript: str, werte: Mapping[str, str]) -> str:
+        try:
+            return self._ps_in_temp(skript, werte)
+        except AufgabeFehler:
+            raise
+        except OSError as e:  # Fix-Runde 1 (Minor 5): z. B. der Temp-Ordner laesst sich nicht aufraeumen
+            raise AufgabeFehler(f"Temp-Ordner: {type(e).__name__}") from None
+
+    def _ps_in_temp(self, skript: str, werte: Mapping[str, str]) -> str:
         with tempfile.TemporaryDirectory(prefix="selbstbild-aufgabe-") as tmp:
             aus, fehler = Path(tmp) / "aus.json", Path(tmp) / "fehler.txt"
             env = dict(os.environ)
@@ -233,6 +270,8 @@ class PowerShellBackend:
 def import_pruefen(python: str, wurzel: Path) -> str | None:
     """Laeuft `import selbstbild.doku.__main__` mit diesem Python ohne PYTHONPATH (wie in der Aufgabe, Arbeitsordner
     = Wurzel)? None = ja, sonst Grund. Nur lesend."""
+    if not Path(python).is_file():
+        return "Datei fehlt"
     env = {k: v for k, v in os.environ.items() if k.upper() != "PYTHONPATH"}
     try:
         lauf = subprocess.run([python, "-c", "import selbstbild.doku.__main__"], cwd=wurzel, env=env,
@@ -452,7 +491,9 @@ def _archiv_laden(ordner: Path) -> dict[str, str]:
 
 
 def _seiten_archivieren(ordner: Path, basis: Path, mpfad: Path, manifest: dict[str, str], plan: _Seitenplan) -> None:
-    """Ruling T10-b (c): erst alles ins Archiv (Datei + Eintrag), dann die Dateien weg, dann das Manifest."""
+    """Ruling T10-b (c), Fix-Runde 1 (Minor 2): Seite fuer Seite -- Kopie ins Archiv und Archiv-Eintrag, dann den
+    Eintrag aus dem Notizen-Manifest nehmen (geschrieben), dann die Datei loeschen. Scheitert das Loeschen, kommt der
+    Eintrag zurueck. So bleibt nie eine geloeschte Seite mit Eintrag oder eine archivierte Seite ohne Archiv-Eintrag."""
     if not plan.archivieren:
         return
     archiv = ordner / ARCHIV
@@ -460,11 +501,16 @@ def _seiten_archivieren(ordner: Path, basis: Path, mpfad: Path, manifest: dict[s
     for rel, h in plan.archivieren.items():
         _ersetzen(basis / rel, archiv / ARCHIV_SEITEN / rel)
         eintraege[rel] = h
-    rowboat._manifest_schreiben(archiv / ARCHIV_MANIFEST, eintraege)
-    for rel in plan.archivieren:
-        (basis / rel).unlink()
-        manifest.pop(rel, None)
-    rowboat._manifest_schreiben(mpfad, manifest)
+        rowboat._manifest_schreiben(archiv / ARCHIV_MANIFEST, eintraege)
+        alt = manifest.pop(rel, None)
+        rowboat._manifest_schreiben(mpfad, manifest)
+        try:
+            (basis / rel).unlink()
+        except BaseException:
+            if alt is not None:
+                manifest[rel] = alt
+                rowboat._manifest_schreiben(mpfad, manifest)
+            raise
     for name in _leere_eigene_ordner(basis, []):
         for p in sorted((basis / name).rglob("*"), key=lambda q: len(q.parts), reverse=True):
             p.rmdir()
@@ -528,20 +574,30 @@ def _archivplan(ordner: Path, basis: Path | None, manifest: dict[str, str] | str
 
 
 def _archiv_zuruecklegen(ordner: Path, basis: Path, mpfad: Path, manifest: dict[str, str], plan: _Archivplan) -> None:
+    """Fix-Runde 1 (Minor 1): Seite fuer Seite -- Eintrag ins Notizen-Manifest (geschrieben), dann die Seite; scheitert
+    das Kopieren, kommt der Eintrag wieder heraus. Danach aus dem Archiv: erst der Archiv-Eintrag, dann die Kopie."""
     if not plan.zuruecklegen:
         return
     archiv = ordner / ARCHIV
+    rest = _archiv_laden(ordner)
     for rel, h in plan.zuruecklegen.items():
-        _ersetzen(archiv / ARCHIV_SEITEN / rel, basis / rel)
+        vorher = manifest.get(rel)
         manifest[rel] = h
-    rowboat._manifest_schreiben(mpfad, manifest)
-    rest = {r: h for r, h in _archiv_laden(ordner).items() if r not in plan.zuruecklegen}
-    for rel in plan.zuruecklegen:
-        (archiv / ARCHIV_SEITEN / rel).unlink()
-    if rest:
+        rowboat._manifest_schreiben(mpfad, manifest)
+        try:
+            _ersetzen(archiv / ARCHIV_SEITEN / rel, basis / rel)
+        except BaseException:
+            if vorher is None:
+                manifest.pop(rel, None)
+            else:
+                manifest[rel] = vorher
+            rowboat._manifest_schreiben(mpfad, manifest)
+            raise
+        rest.pop(rel, None)
         rowboat._manifest_schreiben(archiv / ARCHIV_MANIFEST, rest)
-        return
-    shutil.rmtree(archiv)  # nur noch leere Ordner und das eigene Manifest
+        (archiv / ARCHIV_SEITEN / rel).unlink()
+    if not rest:
+        shutil.rmtree(archiv)  # nur noch leere Ordner und das eigene Manifest
 
 
 def _archiv_zeilen(plan: _Archivplan, aus: Aus, *, trocken: bool) -> None:
@@ -559,17 +615,189 @@ def _archiv_zeilen(plan: _Archivplan, aus: Aus, *, trocken: bool) -> None:
         aus(f"   kein Archiv – nichts {wird} zurückgelegt")
 
 
+# ---------- T10-d: Graph fuer den alten Loop lesbar machen ----------
+
+def _literal_mengen(text: str, namen: Sequence[str]) -> dict[str, frozenset[str]]:
+    """`NAME = frozenset({...})` / `set(...)` / `{...}` auf oberster Ebene, nur Literale aus Zeichenketten."""
+    aus: dict[str, frozenset[str]] = {}
+    for knoten in ast.parse(text).body:
+        if not (isinstance(knoten, ast.Assign) and len(knoten.targets) == 1
+                and isinstance(knoten.targets[0], ast.Name) and knoten.targets[0].id in namen):
+            continue
+        wert = knoten.value
+        if (isinstance(wert, ast.Call) and isinstance(wert.func, ast.Name) and wert.func.id in ("frozenset", "set")
+                and len(wert.args) == 1 and not wert.keywords):
+            wert = wert.args[0]
+        menge = ast.literal_eval(wert)  # ValueError bei allem, was kein Literal ist
+        if not isinstance(menge, (set, frozenset, list, tuple)) or not all(isinstance(x, str) for x in menge):
+            raise ValueError(f"{knoten.targets[0].id}: keine Menge aus Zeichenketten")
+        aus[knoten.targets[0].id] = frozenset(menge)
+    return aus
+
+
+def alte_typen(repo: Path) -> tuple[dict[str, frozenset[str]], str]:
+    """Knotentypen, Kantenarten und -quellen des alten Loops: per `ast` aus `<repo>/scripts/doku_loop/graph.py`
+    (nie importiert), sonst die eingebaute Kopie. Rueckgabe `(typen, quelle)`."""
+    pfad = Path(repo).joinpath(*ALTER_GRAPH_PY)
+    try:
+        mengen = _literal_mengen(pfad.read_text(encoding="utf-8"), tuple(ALTE_TYPEN_KOPIE))
+    except FileNotFoundError:
+        return dict(ALTE_TYPEN_KOPIE), "Kopie (scripts/doku_loop/graph.py fehlt)"
+    except (OSError, SyntaxError, ValueError, UnicodeDecodeError) as e:
+        return dict(ALTE_TYPEN_KOPIE), f"Kopie ({'/'.join(ALTER_GRAPH_PY)} nicht lesbar: {type(e).__name__})"
+    fehlt = [n for n in ALTE_TYPEN_KOPIE if n not in mengen]
+    if fehlt:
+        return dict(ALTE_TYPEN_KOPIE), f"Kopie (in {'/'.join(ALTER_GRAPH_PY)} kein Literal fuer {', '.join(fehlt)})"
+    return mengen, f"ast aus {'/'.join(ALTER_GRAPH_PY)}"
+
+
+def _graph_json_text(graph: Graph, erzeugt: str) -> str:
+    """Genau das Format, das der Loop schreibt (`Graph.speichern`)."""
+    return schreibvorgang.graph_text(graph, erzeugt)
+
+
+@dataclass
+class GraphBereinigung:
+    neu: str | None  # None = nichts zu entfernen
+    knoten_weg: dict[str, int]  # Knotentyp -> Anzahl
+    kanten_weg: dict[str, int]  # Kantenart -> Anzahl (unbekannte Art/Quelle oder ein Endpunkt faellt weg)
+
+    def zeile(self) -> str:
+        k = ", ".join(f"{t} ({n})" for t, n in sorted(self.knoten_weg.items())) or "-"
+        e = ", ".join(f"{t} ({n})" for t, n in sorted(self.kanten_weg.items())) or "-"
+        return f"Knoten {k}; Kanten {e}"
+
+
+def graph_bereinigen_plan(alt: bytes, typen: Mapping[str, frozenset[str]]) -> GraphBereinigung:
+    """Rein: entfernt Knoten unbekannter Typen, Kanten unbekannter Art oder Quelle und Kanten, deren Endpunkt dabei
+    wegfaellt; Digest neu, alles andere (auch `erzeugt`, Commits, Zusatzschluessel) bleibt. ValueError, wenn die Datei
+    kein Graph der Version 1 ist (dann kann es der alte Loop ohnehin nicht lesen)."""
+    doc = json.loads(alt.decode("utf-8"))
+    if not isinstance(doc, dict) or doc.get("version") != ALTE_GRAPH_VERSION:
+        raise ValueError("kein Graph der Version 1")
+    knoten, kanten = doc.get("knoten", []), doc.get("kanten", [])
+    if not isinstance(knoten, list) or not isinstance(kanten, list):
+        raise ValueError("knoten/kanten keine Listen")
+    knoten_weg: dict[str, int] = {}
+    weg_ids: set[str] = set()
+    bleiben_k = []
+    for k in knoten:
+        if not isinstance(k, dict):
+            raise ValueError("Knoten ist kein Objekt")
+        if str(k.get("typ")) in typen["KNOTEN_TYPEN"]:
+            bleiben_k.append(k)
+        else:
+            knoten_weg[str(k.get("typ"))] = knoten_weg.get(str(k.get("typ")), 0) + 1
+            weg_ids.add(str(k.get("id")))
+    kanten_weg: dict[str, int] = {}
+    bleiben_e = []
+    for e in kanten:
+        if not isinstance(e, dict):
+            raise ValueError("Kante ist kein Objekt")
+        if (str(e.get("art")) in typen["KANTEN_ARTEN"] and str(e.get("quelle")) in typen["KANTEN_QUELLEN"]
+                and str(e.get("von")) not in weg_ids and str(e.get("nach")) not in weg_ids):
+            bleiben_e.append(e)
+        else:
+            kanten_weg[str(e.get("art"))] = kanten_weg.get(str(e.get("art")), 0) + 1
+    if not knoten_weg and not kanten_weg:
+        return GraphBereinigung(None, {}, {})
+    neu_doc = {**doc, "knoten": bleiben_k, "kanten": bleiben_e}
+    neu_doc["digest"] = Graph.aus_doc(neu_doc).digest()
+    return GraphBereinigung(json.dumps(neu_doc, sort_keys=True, indent=1, ensure_ascii=False) + "\n",
+                            knoten_weg, kanten_weg)
+
+
+@dataclass
+class _Graphvorpruefung:
+    plan: GraphBereinigung | None  # None = keine Datei oder nichts zu tun
+    quelle: str
+    fehler: str | None = None  # gesetzt -> Rueckweg verweigert (Exit 2)
+
+
+def _graph_vorpruefung(konfig: Konfig, *, git_pruefen: bool = True) -> _Graphvorpruefung:
+    """Nur lesend. Ist etwas zu entfernen, muss die Datei sauber sein (keine fremde, nicht committete Aenderung) und
+    der Kopf schreibbar (Zweig, keine laufende Git-Operation) -- sonst verweigert der Rueckweg VOR jedem Schritt."""
+    repo = konfig.repo
+    pfad = repo / GRAPH_JSON
+    typen, quelle = alte_typen(repo)
+    if not pfad.is_file():
+        return _Graphvorpruefung(None, quelle)
+    try:
+        plan = graph_bereinigen_plan(pfad.read_bytes(), typen)
+    except (OSError, ValueError) as e:
+        return _Graphvorpruefung(None, quelle, f"{GRAPH_JSON} nicht lesbar ({type(e).__name__})")
+    if plan.neu is None:
+        return _Graphvorpruefung(None, quelle)
+    if git_pruefen:
+        try:
+            fremd = umschreiben.fremde_aenderungen(repo, [GRAPH_JSON])
+        except (umschreiben.GitFehler, OSError) as e:
+            return _Graphvorpruefung(plan, quelle, f"git status für {GRAPH_JSON} gescheitert ({type(e).__name__})")
+        if fremd:
+            return _Graphvorpruefung(plan, quelle, f"{GRAPH_JSON} hat eine fremde, nicht committete Änderung – "
+                                                   "erst klären (committen oder verwerfen), dann erneut")
+        grund = schreibvorgang.kopf_pruefen(repo, konfig.zweig)
+        if grund is not None:
+            return _Graphvorpruefung(plan, quelle, f"Kopf: {grund} – {GRAPH_JSON} ließe sich nicht committen")
+    return _Graphvorpruefung(plan, quelle)
+
+
+def _graph_bereinigen(konfig: Konfig, jetzt: datetime, aus: Aus) -> bool:
+    """Ruling T10-d: unbekannte Arten aus `docs/graph/graph.json` entfernen und nur diese Datei ueber den gemeinsamen
+    Schreibvorgang committen (Zweig, CAS, Torwaechter, pathspec). True = erledigt oder nichts zu tun."""
+    vor = _graph_vorpruefung(konfig)  # noch einmal unmittelbar davor: die CAS-Basis darf nichts Fremdes tragen
+    if vor.fehler is not None:
+        aus(f"d. Graph: {vor.fehler}")
+        return False
+    if vor.plan is None or vor.plan.neu is None:
+        aus("d. Graph: nichts zu entfernen")
+        return True
+    repo = konfig.repo
+    alt = (repo / GRAPH_JSON).read_bytes()
+    plan = graph_bereinigen_plan(alt, alte_typen(repo)[0])
+    if plan.neu is None:
+        aus("d. Graph: nichts zu entfernen")
+        return True
+    drift = umschreiben.drift_fuer(konfig)
+    try:
+        vorher = drift(repo)
+    except umschreiben.TorwaechterFehler:
+        aus("d. Graph: Torwächter vorher gescheitert – nichts geschrieben")
+        return False
+    lauf = f"rueckweg-{jetzt:{ZEIT_FORMAT}}"
+    erg = schreibvorgang.schreiben_pruefen_committen(
+        repo, [schreibvorgang.Aenderung(GRAPH_JSON, alt, plan.neu)], GRAPH_BETREFF, lauf, vorher=vorher, drift=drift,
+        melden=lambda z: aus(f"   {z}"), pp_datei=GRAPH_JSON, zweig=konfig.zweig, vermerk=schreibvermerk_pfad(konfig))
+    if erg.commit is None and erg.uebersprungen not in (None, "commit_fremd_uebernommen"):
+        aus(f"d. Graph: nicht committet ({erg.uebersprungen}); {GRAPH_JSON} zurückgesetzt")
+        return False
+    aus(f"d. Graph: entfernt {plan.zeile()} ({vor.quelle}); Commit {(erg.commit or erg.fremd_commit or '-')[:7]} "
+        f"„{GRAPH_BETREFF}“")
+    return True
+
+
+def _graph_zeile(vor: _Graphvorpruefung) -> str:
+    if vor.plan is None or vor.plan.neu is None:
+        return (f"Graph ({GRAPH_JSON}): " + (vor.fehler or "nur Arten, die der alte Loop kennt")
+                + f" (Typen: {vor.quelle})")
+    return (f"Graph ({GRAPH_JSON}): Arten, die der alte Loop nicht kennt: {vor.plan.zeile()} – `--zurueck` entfernt "
+            f"sie und committet nur diese Datei (Typen: {vor.quelle})" + (f"; Achtung: {vor.fehler}" if vor.fehler
+                                                                            else ""))
+
+
 # ---------- gemerkte alte Aktion ----------
 
-def _alt_laden(ordner: Path) -> tuple[Aktion | None, str]:
+def _alt_laden(ordner: Path) -> tuple[Aktion | None, str, str | None]:
+    """`(alte Aktion, Grund, Name der gemerkten Sicherung)`."""
     pfad = ordner / ALT_DATEI
     try:
         roh = json.loads(pfad.read_bytes().decode("utf-8"))
-        return Aktion.aus_dict(roh["aktion"]), "ok"
+        sicherung = roh.get("sicherung")
+        return Aktion.aus_dict(roh["aktion"]), "ok", sicherung if isinstance(sicherung, str) and sicherung else None
     except FileNotFoundError:
-        return None, "fehlt"
-    except (OSError, ValueError, KeyError, TypeError):
-        return None, "unlesbar"
+        return None, "fehlt", None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None, "unlesbar", None
 
 
 def _alt_schreiben(ordner: Path, alt: Aktion, jetzt: datetime, sicherung: Path) -> None:
@@ -611,20 +839,24 @@ def pruefen(konfig: Konfig, *, backend: Backend, aus: Aus = print) -> int:
     aus(f"Aufgabe: {AUFGABE}")
     _aktion_zeigen(aus, "jetzt", aktionen)
     aus(f"Loop: {einordnen(aktionen)}")
-    alt, grund = _alt_laden(ordner)
-    aus(f"Gemerkte alte Aktion ({ALT_DATEI}): " + ("vorhanden" if alt else grund))
+    alt, grund, gemerkt = _alt_laden(ordner)
+    aus(f"Gemerkte alte Aktion ({ALT_DATEI}): " + (f"vorhanden (Sicherung {gemerkt or '-'})" if alt else grund))
     s = sicherungen(ordner)
     aus(f"Sicherung: {s[-1].name} (neueste von {len(s)})" if s else "Sicherung: keine")
     archiv = _archiv_laden(ordner)
     aus(f"Archiv erzählter Seiten ({ARCHIV}): {len(archiv)} Seite(n) vorhanden" if archiv
         else f"Archiv erzählter Seiten ({ARCHIV}): keins")
     aus(f"Sperre tick.lock: {_sperre_text(ordner)}")
+    aus(_graph_zeile(_graph_vorpruefung(konfig)))
     return 0
 
 
-def umschalten(konfig: Konfig, *, backend: Backend, python: str, trocken: bool = False,
+def umschalten(konfig: Konfig, *, backend: Backend, python: str | None = None, trocken: bool = False,
                jetzt: datetime | None = None, aus: Aus = print,
                import_pruefen: ImportPruefen = import_pruefen) -> int:
+    """`python` None = `STANDARD_PYTHON` (nie `sys.executable`); ein angegebener Pfad (`--python`) muss existieren und
+    `selbstbild.doku` ohne PYTHONPATH importieren (`import_pruefen`)."""
+    python = python or STANDARD_PYTHON
     ordner = lokaler_ordner(konfig)
     jetzt = jetzt or datetime.now()
     aktionen = _lesen(backend, aus)
@@ -727,22 +959,43 @@ def umschalten(konfig: Konfig, *, backend: Backend, python: str, trocken: bool =
     return 0
 
 
+def _sicherung_waehlen(ordner: Path, gemerkt: str | None, aus: Aus) -> Path | None:
+    """Fix-Runde 1 (Minor 3): die in aufgabe-alt.json gemerkte Sicherung; weicht die neueste ab -> Warnung. Fehlt die
+    gemerkte, die neueste (mit Warnung). Keine -> None."""
+    alle = sicherungen(ordner)
+    neueste = alle[-1] if alle else None
+    if gemerkt is not None:
+        p = ordner.parent / gemerkt
+        if p in alle:
+            if neueste is not None and neueste != p:
+                aus(f"Warnung: es gibt eine neuere Sicherung {neueste.name}; zurückgespielt wird die beim Umschalten "
+                    f"gemerkte {p.name}")
+            return p
+        if neueste is not None:
+            aus(f"Warnung: die gemerkte Sicherung {gemerkt} fehlt – zurückgespielt wird die neueste {neueste.name}")
+    elif neueste is not None:
+        aus(f"Warnung: {ALT_DATEI} nennt keine Sicherung – zurückgespielt wird die neueste {neueste.name}")
+    return neueste
+
+
 def zurueck(konfig: Konfig, *, backend: Backend, trocken: bool = False, jetzt: datetime | None = None,
             aus: Aus = print) -> int:
+    """Fix-Runde 1 (Item 2): Reihenfolge c (Seiten archivieren), b (Sicherung zurueckspielen), d (Graph bereinigen,
+    T10-d), ZULETZT a (alte Aktion). Bis a bleibt der neue Loop geplant; jeder Schritt ist wiederholbar, ein erneutes
+    `--zurueck` macht fertig."""
     ordner = lokaler_ordner(konfig)
     jetzt = jetzt or datetime.now()
-    alt, grund = _alt_laden(ordner)
+    alt, grund, gemerkt = _alt_laden(ordner)
     if alt is None:
         aus(f"Abbruch: {ordner / ALT_DATEI} {grund} – nichts geändert")
         return 2
     if einordnen([alt]) != "alt":
         aus(f"Abbruch: {ALT_DATEI} enthält nicht die Aktion des alten Loops – nichts geändert")
         return 2
-    alle = sicherungen(ordner)
-    if not alle:
+    sicherung = _sicherung_waehlen(ordner, gemerkt, aus)
+    if sicherung is None:
         aus(f"Abbruch: keine Sicherung {ordner.name}-sicherung-* neben {ordner} – nichts geändert")
         return 2
-    sicherung = alle[-1]
     aktionen = _lesen(backend, aus)
     if aktionen is None:
         return 1
@@ -753,24 +1006,22 @@ def zurueck(konfig: Konfig, *, backend: Backend, trocken: bool = False, jetzt: d
     if setzen and art != "neu":
         aus("Abbruch: die Aufgabe hat weder die neue noch die gemerkte alte Aktion – nichts geändert")
         return 2
+    vor = _graph_vorpruefung(konfig)
+    if vor.fehler is not None:  # T10-d: VOR jedem Schritt, laut
+        aus(f"Abbruch: {vor.fehler} – nichts geändert, die Aufgabe bleibt beim neuen Loop")
+        return 2
     basis = _notizordner(konfig)
     mpfad = rowboat.manifest_pfad(konfig)
     nachher = _freier_name(ordner.parent, f"{ordner.name}-nachher-{jetzt:{ZEIT_FORMAT}}")
 
-    if trocken:
-        aus(f"Sperre tick.lock: {_sperre_text(ordner)}" + (" – ein echter Aufruf bräche jetzt mit Exit 2 ab"
-                                                             if sperre_frisch(ordner) else ""))
-    else:
-        return _zurueck_echt(konfig, backend, alt, setzen, sicherung, basis, mpfad, nachher, aus)
+    if not trocken:
+        return _zurueck_echt(konfig, backend, alt, setzen, sicherung, basis, mpfad, nachher, jetzt, aus)
 
-    aus(f"a. Alte Aktion setzen: {alt.zeile()}" if setzen else "a. Aktion ist schon die alte – nichts zu setzen")
-    if setzen:
-        aus(f"   Execute: {alt.execute}")
-        aus(f"   Arguments: {alt.arguments}")
-        aus(f"   WorkingDirectory: {alt.working_directory}")
+    aus(f"Sperre tick.lock: {_sperre_text(ordner)}" + (" – ein echter Aufruf bräche jetzt mit Exit 2 ab"
+                                                         if sperre_frisch(ordner) else ""))
     manifest = rowboat._manifest_laden(mpfad)
     plan = _seitenplan(basis, manifest)
-    aus(f"c. Eigene Rowboat-Seiten (vor b; Archiv {ordner / ARCHIV}):")
+    aus(f"c. Eigene Rowboat-Seiten archivieren (Archiv {ordner / ARCHIV}):")
     if plan.hinweis:
         aus(f"   {plan.hinweis}")
     for rel, h in plan.archivieren.items():
@@ -799,31 +1050,30 @@ def zurueck(konfig: Konfig, *, backend: Backend, trocken: bool = False, jetzt: d
     zurueck_manifest = rowboat._manifest_laden(sicherung / mpfad.name)
     for rel in _abgleich(zurueck_manifest, kandidaten):
         aus(f"   Manifest-Abgleich: {rel} behält den jetzigen Hash (vom Loop unverändert hinterlassen)")
+    if vor.plan is not None and vor.plan.neu is not None:
+        aus(f"d. Graph bereinigen: aus {GRAPH_JSON} entfernen {vor.plan.zeile()} (Typen: {vor.quelle}); nur diese "
+            f"Datei committen: „{GRAPH_BETREFF}“")
+    else:
+        aus(f"d. Graph: nichts zu entfernen (Typen: {vor.quelle})")
+    aus(f"a. Zuletzt die alte Aktion setzen: {alt.zeile()}" if setzen
+        else "a. Aktion ist schon die alte – nichts zu setzen")
+    if setzen:
+        aus(f"   Execute: {alt.execute}")
+        aus(f"   Arguments: {alt.arguments}")
+        aus(f"   WorkingDirectory: {alt.working_directory}")
     aus(f"   {ALT_DATEI} -> {nachher.name}")
     aus("Trocken: nichts geschrieben, Aufgabe unverändert")
     return 0
 
 
 def _zurueck_echt(konfig: Konfig, backend: Backend, alt: Aktion, setzen: bool, sicherung: Path, basis: Path | None,
-                  mpfad: Path, nachher: Path, aus: Aus) -> int:
+                  mpfad: Path, nachher: Path, jetzt: datetime, aus: Aus) -> int:
     ordner = lokaler_ordner(konfig)
+    erneut = "die Aufgabe bleibt beim neuen Loop – `aufgabe --zurueck` erneut ausführen (wiederholbar)"
     with sperre(ordner) as frei:
         if not frei:
             aus("Abbruch: tick.lock ist frisch (ein Lauf arbeitet gerade) – nichts geändert")
             return 2
-        # a.
-        if setzen:
-            try:
-                backend.setzen(AUFGABE, alt)
-                if backend.lesen(AUFGABE) != [alt]:
-                    raise AufgabeFehler("nach dem Setzen steht eine andere Aktion in der Aufgabe")
-            except AufgabeFehler as e:
-                aus(f"Fehler beim Setzen der alten Aktion: {e} – Zustand und Seiten unverändert; "
-                    "`aufgabe --zurueck` erneut versuchen")
-                return 1
-            aus(f"a. Alte Aktion gesetzt: {alt.zeile()}")
-        else:
-            aus("a. Aktion war schon die alte")
         try:
             # c. (vor b: das Manifest der Sicherung kennt die neuen Seiten nicht)
             manifest = rowboat._manifest_laden(mpfad)
@@ -853,13 +1103,31 @@ def _zurueck_echt(konfig: Konfig, backend: Backend, alt: Aktion, setzen: bool, s
                 rowboat._manifest_schreiben(mpfad, zurueck_manifest)
             aus(f"   Manifest-Abgleich: {len(abgleich)} Notiz(en) behalten ihren jetzigen Hash"
                 + (f" ({', '.join(abgleich)})" if abgleich else ""))
-            # zuletzt: so laesst sich ein abgebrochener Rueckweg wiederholen
-            (nachher).mkdir(parents=True, exist_ok=True)
+            # d. (T10-d)
+            if not _graph_bereinigen(konfig, jetzt, aus):
+                aus(f"Fehler im Graph-Schritt; {erneut}")
+                return 1
+        except OSError as e:
+            aus(f"Fehler im Rückweg ({type(e).__name__}); {erneut}")
+            return 1
+        # a. zuletzt
+        if setzen:
+            try:
+                backend.setzen(AUFGABE, alt)
+                if backend.lesen(AUFGABE) != [alt]:
+                    raise AufgabeFehler("nach dem Setzen steht eine andere Aktion in der Aufgabe")
+            except AufgabeFehler as e:
+                aus(f"Fehler beim Setzen der alten Aktion: {e}; Zustand, Seiten und Graph sind schon zurück – "
+                    f"{ALT_DATEI} bleibt, `aufgabe --zurueck` erneut ausführen")
+                return 1
+            aus(f"a. Alte Aktion gesetzt: {alt.zeile()}")
+        else:
+            aus("a. Aktion war schon die alte")
+        try:
+            nachher.mkdir(parents=True, exist_ok=True)
             os.replace(ordner / ALT_DATEI, nachher / ALT_DATEI)
         except OSError as e:
-            aus(f"Fehler im Rückweg ({type(e).__name__}); die alte Aktion ist gesetzt – `aufgabe --zurueck` erneut "
-                "ausführen (wiederholbar)")
-            return 1
-    aus(f"d. seiten-fehlversuche-* behalten; {ALT_DATEI} liegt in {nachher.name}")
-    aus("Fertig: Aufgabe und Zustand auf den alten Loop zurückgesetzt")
+            aus(f"Hinweis: {ALT_DATEI} nicht verschoben ({type(e).__name__}); der Rückweg ist trotzdem fertig")
+    aus(f"seiten-fehlversuche-* behalten; {ALT_DATEI} liegt in {nachher.name}")
+    aus("Fertig: Aufgabe, Zustand, Seiten und Graph auf den alten Loop zurückgesetzt")
     return 0

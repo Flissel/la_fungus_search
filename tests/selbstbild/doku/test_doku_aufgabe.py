@@ -39,6 +39,8 @@ class FakeBackend:
         self.aktionen = [aktion]
         self.gesetzt: list[ag.Aktion] = []
         self.fehler_beim_setzen, self.setzt_trotzdem = fehler_beim_setzen, setzt_trotzdem
+        self.wirkung = None  # Fix-Runde 1 (Minor 7): "nichts" oder eine andere Aktion -> Rueckmeldung weicht ab
+        self.beim_setzen = None  # Rueckruf vor dem Setzen (Reihenfolge-Pruefung)
 
     def lesen(self, aufgabe):
         assert aufgabe == ag.AUFGABE
@@ -47,6 +49,13 @@ class FakeBackend:
     def setzen(self, aufgabe, aktion):
         assert aufgabe == ag.AUFGABE
         self.gesetzt.append(aktion)
+        if self.beim_setzen is not None:
+            self.beim_setzen(aktion)
+        if self.wirkung == "nichts":
+            return
+        if isinstance(self.wirkung, ag.Aktion):
+            self.aktionen = [self.wirkung]
+            return
         if self.fehler_beim_setzen:
             if self.setzt_trotzdem:
                 self.aktionen = [aktion]
@@ -599,13 +608,12 @@ def test_cli_aufgabe(umg):
     vorlage = "\n".join(next((v for k, v in ersatz.items() if z.startswith(k)), z) for z in vorlage.splitlines())
     eingerueckt = "".join(f"  {z}\n" if z.strip() else "\n" for z in vorlage.splitlines())
     (u.repo / "selbstbild.yaml").write_text("name: probe\ndoku:\n" + eingerueckt, encoding="utf-8")
-    w = {"aufgabe_backend": u.backend, "python": PY, "import_pruefen": lambda python, wurzel: None,
-         "jetzt": lambda: T1}
+    w = {"aufgabe_backend": u.backend, "import_pruefen": lambda python, wurzel: None, "jetzt": lambda: T1}
     assert cli.main(["aufgabe", str(u.repo), "--pruefen"], werkzeuge=w) == 0
     vorher = _alles(u.tmp)
-    assert cli.main(["aufgabe", str(u.repo), "--umschalten", "--trocken"], werkzeuge=w) == 0
+    assert cli.main(["aufgabe", str(u.repo), "--umschalten", "--trocken", "--python", PY], werkzeuge=w) == 0
     assert _alles(u.tmp) == vorher and u.backend.gesetzt == []
-    assert cli.main(["aufgabe", str(u.repo), "--umschalten"], werkzeuge=w) == 0
+    assert cli.main(["aufgabe", str(u.repo), "--umschalten", "--python", PY], werkzeuge=w) == 0
     assert u.backend.aktionen == [ag.neue_aktion(PY, u.repo.resolve())]
     w["jetzt"] = lambda: T2
     assert cli.main(["aufgabe", str(u.repo), "--zurueck"], werkzeuge=w) == 0
@@ -617,7 +625,417 @@ def test_cli_aufgabe(umg):
 def test_cli_umschalten_braucht_doku_abschnitt(umg):
     u = umg
     (u.repo / "selbstbild.yaml").write_text("name: probe\n", encoding="utf-8")
-    w = {"aufgabe_backend": u.backend, "python": PY, "import_pruefen": lambda python, wurzel: None}
-    assert cli.main(["aufgabe", str(u.repo), "--umschalten", "--trocken"], werkzeuge=w) == 2
+    w = {"aufgabe_backend": u.backend, "import_pruefen": lambda python, wurzel: None}
+    assert cli.main(["aufgabe", str(u.repo), "--umschalten", "--trocken", "--python", PY], werkzeuge=w) == 2
     assert u.backend.gesetzt == []
 
+
+
+# =====================================================================================================================
+# Fix-Runde 1
+# =====================================================================================================================
+
+import importlib  # noqa: E402
+import importlib.util  # noqa: E402
+import shutil  # noqa: E402
+
+from doku_vm import HAT_VM, REPO  # noqa: E402
+from selbstbild.doku.graph import Graph, Kante, Knoten, kante_id  # noqa: E402
+
+ALT_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "alter_loop" / "doku_loop"
+ERZEUGT = "2026-11-03T12:00:00+01:00"
+EREIGNIS = "ereignis:a:a.start"
+
+
+def _alter_graph(monkeypatch):
+    """`graph`-Modul des ALTEN Loops, per Dateipfad geladen (nie ueber sys.path): mit SELBSTBILD_VIBEMIND aus dem
+    aeusseren Repo, sonst die Fixture-Kopie. Ohne .pyc (das aeussere Repo bleibt unberuehrt)."""
+    wurzel = REPO / "scripts" / "doku_loop" if HAT_VM else ALT_FIXTURE
+    name = "_alter_doku_loop_vm" if HAT_VM else "_alter_doku_loop_fx"
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, wurzel / "__init__.py",
+                                                      submodule_search_locations=[str(wurzel)])
+        paket = importlib.util.module_from_spec(spec)
+        sys.modules[name] = paket
+        spec.loader.exec_module(paket)
+    return importlib.import_module(name + ".graph")
+
+
+def _graph_mit_ereignis() -> Graph:
+    g = Graph({}, {}, "c" * 40, "d" * 40)
+    g.knoten_hinzu(Knoten("space:a", "space", "a"))
+    g.knoten_hinzu(Knoten("space:b", "space", "b"))
+    g.knoten_hinzu(Knoten(EREIGNIS, "ereignis", "a.start", "a", "reg.yml", {"werkzeug": "starten"}))
+    g.kante_hinzu(Kante(kante_id("ereignis_von", EREIGNIS, "space:a"), "ereignis_von", EREIGNIS, "space:a",
+                        "extraktor"))
+    g.kante_hinzu(Kante(kante_id("verbindet", "space:a", "space:b"), "verbindet", "space:a", "space:b", "seed"))
+    # bekannte Kantenart, aber ein Endpunkt faellt weg -> muss mit
+    g.kante_hinzu(Kante(kante_id("belegt_durch", "space:b", EREIGNIS), "belegt_durch", "space:b", EREIGNIS,
+                        "extraktor"))
+    return g
+
+
+def _graph_ohne_ereignis() -> Graph:
+    g = Graph({}, {}, "c" * 40, "d" * 40)
+    g.knoten_hinzu(Knoten("space:a", "space", "a"))
+    g.knoten_hinzu(Knoten("space:b", "space", "b"))
+    g.kante_hinzu(Kante(kante_id("verbindet", "space:a", "space:b"), "verbindet", "space:a", "space:b", "seed"))
+    return g
+
+
+@pytest.fixture()
+def umg_git(umg, git_repo):
+    """Wie `umg`, aber die Wurzel ist ein Git-Repo auf dem Loop-Zweig mit committetem graph.json, das einen
+    `ereignis`-Knoten des neuen Loops traegt; kein Torwaechter."""
+    u = umg
+    assert git_repo.wurzel == u.repo
+    git_repo.git("checkout", "-q", "-b", u.k.zweig or "main")
+    _graph_mit_ereignis().speichern(u.repo / "docs" / "graph" / "graph.json", ERZEUGT)
+    (u.repo / ".gitignore").write_bytes(b"logs/\n")
+    git_repo.commit("seed")
+    u.k = dataclasses.replace(u.k, torwaechter=())
+    u.git = git_repo
+    return u
+
+
+def _ohne_git(tmp: Path) -> dict[str, object]:
+    return {k: v for k, v in _alles(tmp).items() if not k.startswith("repo/.git/") and k != "repo/.git"}
+
+
+# ---------- T10-d: alte Typen ----------
+
+def test_alte_typen_aus_ast_sonst_kopie(tmp_path):
+    typen, quelle = ag.alte_typen(tmp_path)  # keine Datei -> eingebaute Kopie
+    assert quelle.startswith("Kopie")
+    assert typen == ag.ALTE_TYPEN_KOPIE
+    ziel = tmp_path / "scripts" / "doku_loop" / "graph.py"
+    ziel.parent.mkdir(parents=True)
+    shutil.copyfile(ALT_FIXTURE / "graph.py", ziel)
+    typen, quelle = ag.alte_typen(tmp_path)
+    assert quelle.startswith("ast") and typen == ag.ALTE_TYPEN_KOPIE  # die Kopie stimmt mit dem alten Loop
+    ziel.write_text(ziel.read_text(encoding="utf-8").replace('"komponente",', ""), encoding="utf-8")
+    typen, _ = ag.alte_typen(tmp_path)
+    assert "komponente" not in typen["KNOTEN_TYPEN"] and "kette" in typen["KNOTEN_TYPEN"]
+    ziel.write_text("KNOTEN_TYPEN = frozenset(irgendwas())\n", encoding="utf-8")  # kein Literal -> Kopie
+    assert ag.alte_typen(tmp_path)[1].startswith("Kopie")
+
+
+@braucht_vm
+def test_fixture_gleich_dem_alten_loop():
+    echt = (REPO / "scripts" / "doku_loop" / "graph.py").read_bytes().replace(b"\r\n", b"\n")
+    assert (ALT_FIXTURE / "graph.py").read_bytes() == echt
+    typen, quelle = ag.alte_typen(REPO)
+    assert typen == ag.ALTE_TYPEN_KOPIE and quelle.startswith("ast")
+
+
+def test_graph_bereinigen_rein(monkeypatch):
+    alt_mod = _alter_graph(monkeypatch)
+    text = ag._graph_json_text(_graph_mit_ereignis(), ERZEUGT)
+    with pytest.raises(ValueError, match="ereignis"):
+        alt_mod.Graph.aus_text(text)  # genau das liesse jeden alten Tick sterben
+    plan = ag.graph_bereinigen_plan(text.encode("utf-8"), ag.ALTE_TYPEN_KOPIE)
+    assert plan.knoten_weg == {"ereignis": 1} and plan.kanten_weg == {"ereignis_von": 1, "belegt_durch": 1}
+    assert plan.neu == ag._graph_json_text(_graph_ohne_ereignis(), ERZEUGT)
+    g = alt_mod.Graph.aus_text(plan.neu)
+    assert set(g.knoten) == {"space:a", "space:b"} and len(g.kanten) == 1
+    assert ag.graph_bereinigen_plan(plan.neu.encode("utf-8"), ag.ALTE_TYPEN_KOPIE).neu is None  # nichts mehr zu tun
+
+
+# ---------- T10-d im Rueckweg ----------
+
+def test_zurueck_bereinigt_graph_und_committet(umg_git, monkeypatch):
+    u = umg_git
+    alt_mod = _alter_graph(monkeypatch)
+    graph = u.repo / "docs" / "graph" / "graph.json"
+    kopf_vorher = u.git.git("rev-parse", "HEAD")
+    assert _um(u)[0] == 0
+    rc, text = _zu(u)
+    assert rc == 0, text
+    assert u.backend.aktionen == [u.alt]
+    g = alt_mod.Graph.aus_text(graph.read_text(encoding="utf-8"))  # der alte Loop liest ihn wieder
+    assert set(g.knoten) == {"space:a", "space:b"}
+    assert u.git.git("log", "-1", "--format=%s") == ag.GRAPH_BETREFF
+    assert u.git.git("rev-parse", "HEAD~1") == kopf_vorher
+    assert u.git.git("show", "--name-only", "--format=", "HEAD").splitlines() == ["docs/graph/graph.json"]
+    assert "Lauf: rueckweg-20261103-183000" in u.git.git("log", "-1", "--format=%B")
+    assert u.git.git("status", "--porcelain") == ""
+    assert "ereignis (1)" in text and "ereignis_von (1)" in text
+    assert ag.graph_bereinigen_plan(graph.read_bytes(), ag.ALTE_TYPEN_KOPIE).neu is None
+
+
+def test_zurueck_verweigert_bei_fremder_aenderung_am_graph(umg_git):
+    u = umg_git
+    assert _um(u)[0] == 0
+    _neuer_loop_schreibt_seiten(u, EIGENE)
+    graph = u.repo / "docs" / "graph" / "graph.json"
+    graph.write_bytes(graph.read_bytes().replace(b'"name": "b"', b'"name": "b-von-hand"'))
+    vorher, gesetzt, kopf = _ohne_git(u.tmp), list(u.backend.gesetzt), u.git.git("rev-parse", "HEAD")
+    rc, text = _zu(u)
+    assert rc == 2 and "graph.json" in text and "fremd" in text
+    assert _ohne_git(u.tmp) == vorher and u.backend.gesetzt == gesetzt
+    assert u.backend.aktionen == [ag.neue_aktion(PY, u.repo)] and u.git.git("rev-parse", "HEAD") == kopf
+    rc, text = _zu(u, trocken=True)
+    assert rc == 2 and "fremd" in text
+
+
+def test_zurueck_verweigert_auf_falschem_zweig(umg_git):
+    u = umg_git
+    assert _um(u)[0] == 0
+    u.git.git("checkout", "-q", "-b", "anderer-zweig")
+    vorher = _ohne_git(u.tmp)
+    rc, text = _zu(u)
+    assert rc == 2 and "falscher_zweig" in text and _ohne_git(u.tmp) == vorher
+    assert u.backend.aktionen == [ag.neue_aktion(PY, u.repo)]
+
+
+def test_pruefen_und_trocken_nennen_unbekannte_arten(umg_git):
+    u = umg_git
+    zeilen: list[str] = []
+    ag.pruefen(u.k, backend=u.backend, aus=zeilen.append)
+    text = "\n".join(zeilen)
+    assert "ereignis (1)" in text and "ereignis_von (1)" in text and "--zurueck" in text
+    assert _um(u)[0] == 0
+    vorher, kopf = _ohne_git(u.tmp), u.git.git("rev-parse", "HEAD")
+    rc, text = _zu(u, trocken=True)
+    assert rc == 0, text
+    assert "ereignis (1)" in text and ag.GRAPH_BETREFF in text
+    assert _ohne_git(u.tmp) == vorher and u.git.git("rev-parse", "HEAD") == kopf
+
+
+# ---------- Reihenfolge: c, b, Graph, zuletzt a ----------
+
+def test_zurueck_setzt_die_alte_aktion_zuletzt(umg_git):
+    u = umg_git
+    assert _um(u)[0] == 0
+    _neuer_loop_schreibt_seiten(u, EIGENE)
+    (u.ordner / f"stand-{u.h}.json").write_text('{"lauf_nr": 99}\n', encoding="utf-8")
+    beobachtet = []
+
+    def pruefen(aktion):
+        beobachtet.append((aktion == u.alt,
+                           not (u.basis / "Zustand.md").exists(),
+                           (u.ordner / f"stand-{u.h}.json").read_text(encoding="utf-8") == '{"lauf_nr": 7}\n',
+                           b"ereignis" not in (u.repo / "docs" / "graph" / "graph.json").read_bytes(),
+                           u.git.git("log", "-1", "--format=%s") == ag.GRAPH_BETREFF))
+    u.backend.beim_setzen = pruefen
+    assert _zu(u)[0] == 0
+    assert beobachtet == [(True, True, True, True, True)]
+
+
+@pytest.mark.parametrize("ort", ["_seiten_archivieren", "_zurueckspielen", "_graph_bereinigen"])
+def test_fehler_vor_dem_setzen_laesst_den_neuen_loop_und_ist_wiederholbar(umg_git, monkeypatch, ort):
+    u = umg_git
+    zustand_vorher = _baum(u.ordner, ohne=("messbaum-*",), mtime=True)
+    rowboat_vorher = _baum(u.basis, mtime=True)
+    assert _um(u)[0] == 0
+    neu = ag.neue_aktion(PY, u.repo)
+    _neuer_loop_schreibt_seiten(u, EIGENE)
+    original = getattr(ag, ort)
+
+    def kaputt(*a, **kw):
+        raise OSError("Platte voll")
+    monkeypatch.setattr(ag, ort, kaputt)
+    rc, text = _zu(u)
+    assert rc == 1 and "erneut" in text
+    assert u.backend.aktionen == [neu] and u.backend.gesetzt == [neu]  # der neue Loop bleibt geplant
+    assert (u.ordner / ag.ALT_DATEI).is_file()
+    monkeypatch.setattr(ag, ort, original)
+    rc, text = _zu(u, jetzt=T3)
+    assert rc == 0, text
+    assert u.backend.aktionen == [u.alt]
+    assert _baum(u.ordner, ohne=("messbaum-*", ag.ARCHIV), mtime=True) == zustand_vorher
+    assert _baum(u.basis, mtime=True) == rowboat_vorher
+    assert b"ereignis" not in (u.repo / "docs" / "graph" / "graph.json").read_bytes()
+
+
+def test_graph_commit_scheitert_setzt_nicht(umg_git, monkeypatch):
+    """Der gemeinsame Schreibvorgang setzt zurueck (hier: Torwaechter nachher kaputt): exit 1, alte Aktion NICHT
+    gesetzt, graph.json unveraendert und sauber."""
+    u = umg_git
+    assert _um(u)[0] == 0
+    from selbstbild.doku import umschreiben as us
+
+    aufrufe = [0]
+
+    def drift(repo):
+        aufrufe[0] += 1
+        if aufrufe[0] > 1:
+            raise us.TorwaechterFehler("waechter kaputt")
+        return set()
+    monkeypatch.setattr(us, "drift_fuer", lambda konfig: drift)
+    graph_vorher = (u.repo / "docs" / "graph" / "graph.json").read_bytes()
+    rc, text = _zu(u)
+    assert rc == 1 and "Torwächter" in text
+    assert u.backend.aktionen == [ag.neue_aktion(PY, u.repo)]
+    assert (u.repo / "docs" / "graph" / "graph.json").read_bytes() == graph_vorher
+    assert u.git.git("status", "--porcelain") == ""
+
+
+# ---------- Minor 1, 2: Manifest nach jeder Seite ----------
+
+def _ersetzen_scheitert_beim(monkeypatch, n):
+    original, zaehler = ag._ersetzen, [0]
+
+    def ersetzen(quelle, ziel):
+        zaehler[0] += 1
+        if zaehler[0] == n:
+            raise OSError("Platte voll")
+        original(quelle, ziel)
+    monkeypatch.setattr(ag, "_ersetzen", ersetzen)
+    return original
+
+
+def _stimmig(u):
+    """Keine Seite ohne Eintrag, kein Eintrag ohne Seite (im Notizordner wie im Archiv)."""
+    m = _manifest(u)
+    for rel in EIGENE:
+        assert (rel in m) == (u.basis / rel).is_file(), rel
+    archiv = rb._manifest_laden(u.ordner / ag.ARCHIV / ag.ARCHIV_MANIFEST)
+    archiv = archiv if isinstance(archiv, dict) else {}
+    for rel in archiv:
+        assert (u.ordner / ag.ARCHIV / ag.ARCHIV_SEITEN / rel).is_file(), rel
+    return m, archiv
+
+
+def test_archivieren_halb_bleibt_stimmig(umg, monkeypatch):
+    u = umg
+    assert _um(u)[0] == 0
+    _neuer_loop_schreibt_seiten(u, EIGENE)
+    original = _ersetzen_scheitert_beim(monkeypatch, 2)
+    assert _zu(u)[0] == 1
+    m, archiv = _stimmig(u)
+    assert len(archiv) == 1 and not (set(archiv) & set(m))
+    monkeypatch.setattr(ag, "_ersetzen", original)
+    assert _zu(u, jetzt=T3)[0] == 0
+    m, archiv = _stimmig(u)
+    assert set(archiv) == set(EIGENE)
+
+
+def test_zuruecklegen_halb_bleibt_stimmig(umg, monkeypatch):
+    u = umg
+    assert _um(u)[0] == 0
+    _neuer_loop_schreibt_seiten(u, EIGENE)
+    assert _zu(u)[0] == 0
+    _ersetzen_scheitert_beim(monkeypatch, 2)
+    rc, text = _um(u, jetzt=T3)
+    assert rc == 1
+    m, archiv = _stimmig(u)
+    assert len([r for r in EIGENE if r in m]) == 1 and len(archiv) == 3 and not (set(archiv) & set(m))
+
+
+# ---------- Minor 3: die gemerkte Sicherung ----------
+
+def test_zurueck_nimmt_die_gemerkte_sicherung(umg):
+    u = umg
+    zustand_vorher = _baum(u.ordner, ohne=("messbaum-*",), mtime=True)
+    assert _um(u)[0] == 0
+    juenger = u.ordner.parent / "doku_loop-sicherung-20261103-190000"
+    juenger.mkdir()
+    (juenger / "falsch.json").write_text("{}", encoding="utf-8")
+    rc, text = _zu(u, jetzt=T3)
+    assert rc == 0, text
+    assert "Warnung" in text and "doku_loop-sicherung-20261103-180000" in text and juenger.name in text
+    assert _baum(u.ordner, ohne=("messbaum-*", ag.ARCHIV), mtime=True) == zustand_vorher
+
+
+def test_zurueck_ohne_die_gemerkte_sicherung_nimmt_die_neueste_mit_warnung(umg):
+    u = umg
+    assert _um(u)[0] == 0
+    gemerkt = u.ordner.parent / "doku_loop-sicherung-20261103-180000"
+    gemerkt.rename(u.ordner.parent / "doku_loop-sicherung-20261103-175900")
+    rc, text = _zu(u, jetzt=T3)
+    assert rc == 0, text
+    assert "Warnung" in text and "fehlt" in text
+
+
+# ---------- Minor 4: welches Python ----------
+
+def test_umschalten_ohne_python_nimmt_das_feste(umg):
+    u = umg
+    gesehen: list[str] = []
+    zeilen: list[str] = []
+    rc = ag.umschalten(u.k, backend=u.backend, jetzt=T1, aus=zeilen.append, trocken=True,
+                       import_pruefen=lambda python, wurzel: gesehen.append(python))
+    assert rc == 0 and gesehen == [ag.STANDARD_PYTHON]
+    assert ag.neue_aktion(ag.STANDARD_PYTHON, u.repo).arguments in "\n".join(zeilen)
+    assert ag.STANDARD_PYTHON == r"C:\Users\User\ClaudeWork\wt-fungus-gate1\.venv-selbstbild\Scripts\python.exe"
+
+
+def test_umschalten_mit_fehlendem_python_abgelehnt(umg):
+    u = umg
+    vorher = _alles(u.tmp)
+    zeilen: list[str] = []
+    rc = ag.umschalten(u.k, backend=u.backend, python=str(u.tmp / "gibt es nicht" / "python.exe"), jetzt=T1,
+                       aus=zeilen.append)  # echte Import-Pruefung
+    assert rc == 2 and "python" in "\n".join(zeilen).lower() and _alles(u.tmp) == vorher
+    assert u.backend.gesetzt == []
+
+
+def test_cli_ohne_python_nimmt_das_feste_nicht_sys_executable(umg):
+    u = umg
+    vorlage = VORLAGE.read_text(encoding="utf-8")
+    ersatz = {"rowboat_wissen:": f"rowboat_wissen: {u.k.rowboat_wissen.as_posix()}",
+              "marker:": f"marker: {u.k.marker.as_posix()}"}
+    vorlage = "\n".join(next((v for k, v in ersatz.items() if z.startswith(k)), z) for z in vorlage.splitlines())
+    (u.repo / "selbstbild.yaml").write_text("name: probe\ndoku:\n" + "".join(
+        f"  {z}\n" if z.strip() else "\n" for z in vorlage.splitlines()), encoding="utf-8")
+    gesehen: list[str] = []
+    w = {"aufgabe_backend": u.backend, "import_pruefen": lambda python, wurzel: gesehen.append(python)}
+    assert cli.main(["aufgabe", str(u.repo), "--umschalten", "--trocken"], werkzeuge=w) == 0
+    assert gesehen == [ag.STANDARD_PYTHON]
+
+
+# ---------- Minor 5: Aufraeumfehler der Temp-Ordner ----------
+
+def test_temp_aufraeumfehler_wird_aufgabefehler(monkeypatch):
+    class Ordner:
+        def __init__(self, *a, **kw):
+            import tempfile
+            self._echt = tempfile.mkdtemp(prefix="selbstbild-aufgabe-test-")
+
+        def __enter__(self):
+            return self._echt
+
+        def __exit__(self, *exc):
+            shutil.rmtree(self._echt, ignore_errors=True)
+            raise PermissionError("Datei in Benutzung")
+
+    monkeypatch.setattr(ag.tempfile, "TemporaryDirectory", Ordner)
+    roh = json.dumps([{"Execute": "conhost.exe", "Arguments": ALT_ARGS, "WorkingDirectory": "C:\\w"}])
+    with pytest.raises(ag.AufgabeFehler, match="Temp"):
+        ag.PowerShellBackend(laufzeit=FakePs(roh)).lesen(ag.AUFGABE)
+
+
+# ---------- Minor 7: Rueckmeldung weicht ohne Ausnahme ab ----------
+
+def test_rueckmeldung_weicht_ab_setzen_wirkt_nicht(umg):
+    u = umg
+    u.backend.wirkung = "nichts"
+    vorher = _baum(u.ordner, mtime=True)
+    rc, text = _um(u)
+    assert rc == 1 and "andere Aktion" in text
+    assert u.backend.aktionen == [u.alt] and _baum(u.ordner, mtime=True) == vorher  # ohne aufgabe-alt.json
+    assert (u.ordner.parent / "doku_loop-sicherung-20261103-180000").is_dir()
+
+
+def test_rueckmeldung_weicht_ab_dritte_aktion(umg):
+    u = umg
+    dritte = ag.Aktion("conhost.exe", '--headless cmd /c "normalisiert"', str(u.repo))
+    u.backend.wirkung = dritte
+    rc, text = _um(u)
+    assert rc == 1 and u.backend.aktionen == [dritte]
+    gemerkt = json.loads((u.ordner / ag.ALT_DATEI).read_text(encoding="utf-8"))
+    assert ag.Aktion.aus_dict(gemerkt["aktion"]) == u.alt  # die alte Aktion bleibt gemerkt
+    assert (u.ordner.parent / "doku_loop-sicherung-20261103-180000").is_dir()
+
+
+def test_zurueck_rueckmeldung_weicht_ab(umg):
+    u = umg
+    assert _um(u)[0] == 0
+    u.backend.wirkung = "nichts"
+    rc, text = _zu(u)
+    assert rc == 1 and u.backend.aktionen == [ag.neue_aktion(PY, u.repo)]
+    assert (u.ordner / ag.ALT_DATEI).is_file()  # wiederholbar
+    u.backend.wirkung = None
+    assert _zu(u, jetzt=T3)[0] == 0 and u.backend.aktionen == [u.alt]
