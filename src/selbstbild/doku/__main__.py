@@ -161,7 +161,9 @@ def _tick(konfig: Konfig, args: argparse.Namespace, w: Werkzeuge) -> int:
     erg = tk.tick(konfig, jetzt=_jetzt(w), erzwingen=args.erzwingen, ohne_llm=args.ohne_llm, melden=print, **extra)
     print(f"Ergebnis: Lauf {erg.lauf}; Spaces {', '.join(erg.spaces) or '-'}; Signale {erg.signale}; "
           f"LLM {erg.llm_aufrufe}; umgeschrieben {erg.umgeschrieben}; Prüfliste +{erg.pruefliste}; "
-          f"Commit {_sha7(erg.commit)}" + (f"; übersprungen: {erg.uebersprungen}" if erg.uebersprungen else ""))
+          f"Commit {_sha7(erg.commit)}" + (f"; übersprungen: {erg.uebersprungen}" if erg.uebersprungen else "")
+          + (f"; Erstbefüllung: {erg.erst_geprueft} geprüft ({erg.erst_aufrufe} LLM), {erg.erst_offen} offen"
+             if erg.erst_faellig and not args.ohne_llm else ""))
     return 0
 
 

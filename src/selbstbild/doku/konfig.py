@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -166,8 +167,28 @@ def _aussen(roh: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(erst.get("aktiv", False), bool):
         raise KonfigFehler("erstbefuellung.aktiv muss true oder false sein")
     erst.setdefault("aktiv", False)
+    _erstbefuellung_pruefen(erst)
     aus["erstbefuellung"] = erst
     return aus
+
+
+ERST_SCHLUESSEL = frozenset({"aktiv", "von", "bis", "agent"})
+_UHRZEIT = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def _erstbefuellung_pruefen(erst: dict[str, Any]) -> None:
+    """Task 7 (D10): `{aktiv, von, bis, agent}`; `von`/`bis` als `HH:MM` (Ortszeit, nicht gleich), `agent` ein nicht
+    leerer Budget-Agent. Fehlende Schluessel: Vorgaben in `erstbefuellung.einstellung`."""
+    unbekannt = sorted(map(str, set(erst) - ERST_SCHLUESSEL))
+    if unbekannt:
+        raise KonfigFehler(f"erstbefuellung: unbekannte Schluessel {', '.join(unbekannt)}")
+    for k in ("von", "bis"):
+        if k in erst and not (isinstance(erst[k], str) and _UHRZEIT.match(erst[k])):
+            raise KonfigFehler(f"erstbefuellung.{k} muss eine Uhrzeit HH:MM sein")
+    if erst.get("von", "00:00") == erst.get("bis", "06:00"):
+        raise KonfigFehler("erstbefuellung: von und bis duerfen nicht gleich sein")
+    if "agent" in erst and not (isinstance(erst["agent"], str) and erst["agent"].strip()):
+        raise KonfigFehler("erstbefuellung.agent muss ein Agentenname sein")
 
 
 # Schluessel des Abschnitts `doku:` (alle der alten config/doku_loop.yaml plus die der Stufe 4)

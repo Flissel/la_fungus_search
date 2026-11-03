@@ -82,6 +82,10 @@ class Stand:
     # nicht fortgeschrieben hat. D6 vergleicht nur damit (sonst loeste ein haengender Zeiger alle 5 min einen Tick aus).
     # Additiv: der alte Loop liest den Stand mit `d.get` und ignoriert das Feld; fehlt es, gelten die Zeiger.
     koepfe_gesehen: dict[str, str] = field(default_factory=dict)
+    # Stufe 4, Task 7 (D10): Fortschritt der Erstbefuellung -- Ids der einmal geprueften Aussagen und ob sie fertig ist.
+    # Additiv wie `koepfe_gesehen`: der alte Loop liest nur seine Felder (`d.get`) und ignoriert diese beiden.
+    erstgeprueft: list[str] = field(default_factory=list)
+    erstbefuellung_fertig: bool = False
 
     @property
     def offene_spaces(self) -> list[str]:
@@ -102,11 +106,14 @@ class Stand:
 
         offen = d.get("offene_signale")
         nr = d.get("lauf_nr")
+        erst = d.get("erstgeprueft")
         return cls(text("letzter_commit_aussen"), text("letzter_commit_sub"), text("letzter_tick"),
                    zuordnung("render_hashes"), int(nr) if isinstance(nr, int) else 0, zuordnung("hand_edit_gemeldet"),
                    [dict(s) for s in offen if isinstance(s, dict)] if isinstance(offen, list) else [],
                    text("vollgraph_kennung"), zuordnung("submodul_commits"), zuordnung("gemessen_ausstehend"),
-                   zuordnung("koepfe_gesehen"))
+                   zuordnung("koepfe_gesehen"),
+                   [s for s in erst if isinstance(s, str)] if isinstance(erst, list) else [],
+                   d.get("erstbefuellung_fertig") is True)
 
 
 def stand_pfad(konfig: Konfig) -> Path:
@@ -405,8 +412,13 @@ def fremd_commits_laden(konfig: Konfig) -> dict[str, str]:
 
 # ---------- Urteils-Cache ----------
 
-def _urteil_schluessel(aussage_id: str, art: str, datei: str, anker: str, alt_digest: str) -> str:
-    return json.dumps([aussage_id, art, datei, anker, alt_digest], ensure_ascii=False)
+def _urteil_schluessel(aussage_id: str, art: str, datei: str, anker: str, alt_digest: str,
+                       fragetyp: str = "signal") -> str:
+    """Schluessel im Urteils-Cache. Signale (wie im alten Loop, byte-gleich): `[aussage_id, art, datei, anker,
+    alt_digest]`. Task 7: andere Fragetypen (`erstpruefung`) stehen vorn im Schluessel -- ein Erst-Urteil (alt = neu =
+    heutiger Digest) und ein Signal-Urteil teilen sich nie einen Eintrag."""
+    teile = [aussage_id, art, datei, anker, alt_digest]
+    return json.dumps(teile if fragetyp == "signal" else [fragetyp, *teile], ensure_ascii=False)
 
 
 def urteile_pfad(konfig: Konfig) -> Path:
@@ -414,9 +426,9 @@ def urteile_pfad(konfig: Konfig) -> Path:
 
 
 def urteil_holen(konfig: Konfig, aussage_id: str, beleg: Sequence[str], alt_digest: str,
-                 neu_digest: str) -> dict[str, object] | None:
+                 neu_digest: str, *, fragetyp: str = "signal") -> dict[str, object] | None:
     """Gespeichertes Urteil, wenn es fuer genau diesen Code-Stand (`neu_digest`) gilt; sonst None."""
-    schluessel = _urteil_schluessel(aussage_id, *beleg, alt_digest)
+    schluessel = _urteil_schluessel(aussage_id, *beleg, alt_digest, fragetyp=fragetyp)
     treffer: dict[str, object] | None = None
     try:
         zeilen = urteile_pfad(konfig).read_text(encoding="utf-8").splitlines()
@@ -471,8 +483,9 @@ def urteile_kuerzen(konfig: Konfig, *, max_bytes: int = URTEILE_MAX_BYTES) -> in
 
 
 def urteil_merken(konfig: Konfig, aussage_id: str, beleg: Sequence[str], alt_digest: str, neu_digest: str,
-                  eintrag: Mapping[str, object]) -> None:
-    daten = {**eintrag, "schluessel": _urteil_schluessel(aussage_id, *beleg, alt_digest), "neu_digest": neu_digest}
+                  eintrag: Mapping[str, object], *, fragetyp: str = "signal") -> None:
+    daten = {**eintrag, "schluessel": _urteil_schluessel(aussage_id, *beleg, alt_digest, fragetyp=fragetyp),
+             "neu_digest": neu_digest}
     pfad = urteile_pfad(konfig)
     pfad.parent.mkdir(parents=True, exist_ok=True)
     with open(pfad, "a", encoding="utf-8") as f:

@@ -89,6 +89,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import anker, bauen, ketten_seed, korpus, messbaum, render_ereignisse, render_ketten, rowboat, umschreiben
+from . import erstbefuellung as erst_mod
 from . import neue_spaces as neue_spaces_mod
 from . import aussagen as au
 from . import waechter
@@ -195,6 +196,12 @@ class TickErgebnis:
     ereignisse: int = 0  # Task 5: Space-Events (Space, Name) aus den Quellen im Messbaum
     neue_spaces: list[str] = dataclasses.field(default_factory=list)  # Task 6: Space-Ordner ohne Doku (Messbaum)
     neue_dateien: list[str] = dataclasses.field(default_factory=list)  # Task 6: angelegte (trocken: geplante) Dokus
+    # Task 7 (D10): Erstbefuellung -- faellig (aktiv, nicht fertig, im Fenster), offene Aussagen danach, in diesem Lauf
+    # geprueft (auch aus dem Cache) und LLM-Aufrufe unter dem Agenten der Erstbefuellung (in `llm_aufrufe` enthalten)
+    erst_faellig: bool = False
+    erst_offen: int = 0
+    erst_geprueft: int = 0
+    erst_aufrufe: int = 0
 
 
 # ---------- Aenderungen ----------
@@ -454,6 +461,20 @@ class _Lauf:
         self.readme: render_ketten.RenderErgebnis | None = None  # gerenderter Block `neue-spaces`
         self.readme_text = ""  # dekodierte CAS-Basis der README (nur gesetzt, wenn `readme` gesetzt ist)
         self.gitlinks: list[str] = []  # Ruling T6-a: Gitlinks des Messbaums (initialisiert und nicht)
+        # Task 7 (D10): Erstbefuellung
+        self.erst_faellig = False  # aktiv, nicht fertig, Ortszeit im Fenster (fuer das Ergebnis)
+        self.erst_fragen = False  # faellig und weder Trockenlauf noch --ohne-llm: der Judge wird gefragt
+        self.erst_sammeln = False  # aktiv und nicht fertig: Aussagen fuer die Erstpruefung sammeln (auch trocken)
+        self.erst_pool: list[tuple[au.Aussage, tuple[Beleg, ...], bool, bool]] = []  # (Aussage, Belege, fragbar, nur_l.)
+        self.erst_zurueck = False  # Aussagen dieses Laufs nicht vollstaendig gesehen -> nicht `fertig`
+        self.erst_umgeschrieben_docs: set[str] = set()  # Doku mit Ersetzung aus einem echten Signal (Zeilen verschoben)
+        self.erst_markiert: set[str] = set()  # geprueft ohne Schreiben (oder per Signal-Urteil): sofort in den Stand
+        self.erst_ersetzt: set[str] = set()  # Ids alt/neu ersetzter Aussagen: erst nach dem Commit in den Stand
+        self.erst_fertig = False
+        self.erst_offen = 0
+        self.erst_geprueft = 0
+        self.erst_aufrufe = 0
+        self.erst_umgeschrieben = 0
 
     # ----- Ergebnis und Stand -----
 
@@ -465,12 +486,20 @@ class _Lauf:
                             doku_gelesen=self.doku_gelesen, nur_lesend_gelesen=self.nur_lesend_gelesen,
                             aussagen=self.n_aussagen, aussagen_belegt=self.n_belegt, aussagen_neu=self.n_neu,
                             doku_uebersprungen=list(self.doku_fremd_ziele), ereignisse=self.n_ereignisse,
-                            neue_spaces=list(self.neue_spaces), neue_dateien=list(self.neu_angelegt))
+                            neue_spaces=list(self.neue_spaces), neue_dateien=list(self.neu_angelegt),
+                            erst_faellig=self.erst_faellig, erst_offen=self.erst_offen,
+                            erst_geprueft=self.erst_geprueft, erst_aufrufe=self.erst_aufrufe)
 
     def stand_speichern(self, *, fortschreiben: bool, render_hashes: Mapping[str, str] | None = None,
                         hand_edit: Mapping[str, str] | None = None,
-                        offene: Sequence[Mapping[str, object]] | None = None) -> None:
+                        offene: Sequence[Mapping[str, object]] | None = None, committet: bool = False) -> None:
+        """`committet` (Task 7): die Schreibung dieses Laufs ist committet -- erst dann zaehlen ersetzte Aussagen
+        (alte und neue Id) als erstgeprueft; ohne Commit bleiben sie offen (das Urteil steht im Cache)."""
         alt = self.stand_alt or Stand()
+        erst = set(alt.erstgeprueft)
+        if self.erst_sammeln:  # nur waehrend der Erstbefuellung (sonst waechst die Liste mit jedem Signal)
+            erst |= self.erst_markiert | (self.erst_ersetzt if committet else set())
+        fertig = alt.erstbefuellung_fertig or (self.erst_fertig and (committet or not self.erst_ersetzt))
         stand_schreiben(self.konfig, Stand(
             letzter_commit_aussen=self.kopf_aussen if fortschreiben else alt.letzter_commit_aussen,
             letzter_commit_sub=(self.kopf_sub or None) if fortschreiben else alt.letzter_commit_sub,
@@ -483,6 +512,7 @@ class _Lauf:
             submodul_commits=dict(self.sub_koepfe if fortschreiben else alt.submodul_commits),
             koepfe_gesehen=dict(self.gesehen if self.gesehen is not None else alt.koepfe_gesehen),
             gemessen_ausstehend=dict(self.ausstehend if self.ausstehend is not None else alt.gemessen_ausstehend),
+            erstgeprueft=sorted(erst), erstbefuellung_fertig=fertig,
         ))
 
     def _abschluss(self, ergebnis: TickErgebnis) -> TickErgebnis:
@@ -822,6 +852,8 @@ class _Lauf:
         self.lauf_nr = (self.stand_alt.lauf_nr if self.stand_alt else 0) + 1
         self.lauf = f"{self.jetzt:%Y-%m-%dT%H:%M:%S}#{self.lauf_nr}"
         self.vollgraph_kennung = self.stand_alt.vollgraph_kennung if self.stand_alt else None
+        self._erst_einstellen()
+        self.erst_fragen = self.erst_faellig and not self.ohne_llm
 
         # 1. Anstoss
         try:
@@ -902,7 +934,10 @@ class _Lauf:
                     f"Doku geändert: {len(doku_geaendert)} (Ereignis-Quellen {len(ereignis_geaendert)}, "
                     f"Space-Ordner {len(space_geaendert)}); "
                     f"offene Signale: {len(offene)}")
-        if not spaces and not belegdateien and not offene and not self.render_noetig and not doku_geaendert:
+        if self.erst_fragen:
+            self.melden("Erstbefüllung: fällig (im Fenster, nicht fertig) – Lauf auch ohne Änderung")
+        if not spaces and not belegdateien and not offene and not self.render_noetig and not doku_geaendert \
+                and not self.erst_fragen:
             self.stand_speichern(fortschreiben=True)
             self.melden(f"Stand: Lauf {self.lauf_nr} fortgeschrieben – übersprungen (keine_aenderung)")
             return self._abschluss(self.ergebnis(uebersprungen="keine_aenderung"))
@@ -935,10 +970,11 @@ class _Lauf:
 
         # Ruling 45c: nur offene Signale -> ohne Neubau erneut fragen; neu gebaut wird nur nach einem Urteil
         # (Task 17 M2: nach einem Revert wird ohne Neubau gerendert, `_voll` mit leerer Space-Liste)
+        # Task 7: die echten (offenen) Signale zuerst; die Erstbefuellung laeuft danach in `_voll` mit der Rest-Deadline
         if not spaces and not belegdateien and not self.render_noetig and not doku_geaendert:
             beantwortet, rest = self._offene_fragen(offene)
             self.signale = len(offene)
-            if not beantwortet:
+            if not beantwortet and not self.erst_fragen:
                 self.stand_speichern(fortschreiben=True, offene=rest)
                 self.melden(f"Offene Signale: {len(offene)}, kein neues Urteil – kein Neubau, kein Commit")
                 return self._abschluss(self.ergebnis(uebersprungen="offene_signale_ohne_urteil"))
@@ -949,8 +985,11 @@ class _Lauf:
                 else:
                     belegdateien.add(str(s.get("datei")))
             self.spaces = spaces = sorted(set(spaces))
-            self.melden(f"Offene Signale: {len(beantwortet)} beantwortet -> Spaces: {', '.join(spaces) or 'keine'}")
-            uebrig = rest  # Item 4: in diesem Lauf schon gefragt -> bleiben offen, `_voll` fragt sie nicht erneut
+            if beantwortet:
+                self.melden(f"Offene Signale: {len(beantwortet)} beantwortet -> Spaces: {', '.join(spaces) or 'keine'}")
+                uebrig = rest  # Item 4: in diesem Lauf schon gefragt -> bleiben offen, `_voll` fragt sie nicht erneut
+            else:  # Task 7: nur wegen der Erstbefuellung weiter -- wie unten: was `_voll` neu findet, nicht doppelt
+                uebrig = [s for s in rest if isinstance(s.get("space"), str) and s["space"] not in spaces]
         else:
             uebrig = [s for s in offene if isinstance(s.get("space"), str) and s["space"] not in spaces]
         return self._voll(basis, basis_roh, schlank(repo_graph), vorher, uebrig)
@@ -1019,6 +1058,7 @@ class _Lauf:
         self.stand_alt = stand_laden(konfig)
         self.lauf_nr = (self.stand_alt.lauf_nr if self.stand_alt else 0) + 1
         self.lauf = f"{self.jetzt:%Y-%m-%dT%H:%M:%S}#trocken"
+        self._erst_einstellen()  # Task 7: nur zaehlen und melden, nie fragen (`erst_fragen` bleibt falsch)
         if sperre_frisch(lokaler_ordner(konfig)):
             self.melden("Trockenlauf: tick.lock ist frisch – der alte Loop läuft (alter_loop_laeuft)")
             return self.ergebnis(uebersprungen="alter_loop_laeuft")
@@ -1232,11 +1272,14 @@ class _Lauf:
                 continue
             neu, n = self._aussagen(graph, doc, pfad, text)
             aussagen_signale += n
+            if neu != text:  # Task 7: Ersetzung aus einem echten Signal -> Zeilen verschoben, keine Erstpruefung jetzt
+                self.erst_umgeschrieben_docs.add(doc)
             self.doku_gelesen += 1
             texte[doc] = (roh, neu)
         aussagen_signale += self._nur_lesend_pruefen(graph)
         self._verwaiste_aussagen(graph)
         self._datei_geaendert_melden()
+        self._erstbefuellung(graph, texte)  # Task 7: nach allen echten Signalen, mit der Rest-Deadline
         self.melden(f"Aussagen: {self.doku_gelesen} Doku-Datei(en), {self.nur_lesend_gelesen} nur lesend, "
                     f"{len(self.doku_fremd_ziele)} ausgelassen; {self.n_aussagen} Aussagen, {self.n_belegt} belegt, "
                     f"{self.n_neu} neu gemerkt")
@@ -1289,8 +1332,8 @@ class _Lauf:
             return self._abschluss(self.ergebnis(pruefliste=neu_offen))
 
         m = neue_offene(konfig, self.offen)
-        betreff = f"docs(loop): {', '.join(self.spaces) or 'Belege'} – {self.umgeschrieben} Aussagen nachgeführt, " \
-                  f"{m} in Prüfliste"
+        was = ', '.join(self.spaces) or ('Erstbefüllung' if self.erst_umgeschrieben else 'Belege')
+        betreff = f"docs(loop): {was} – {self.umgeschrieben} Aussagen nachgeführt, {m} in Prüfliste"
         if self.neu_angelegt:
             betreff += f"; neue Space-Doku {', '.join(self.neu_angelegt)}"
         aus: Ausgang = schreiben_pruefen_committen(repo, aenderungen, betreff, self.lauf, vorher=vorher,
@@ -1305,7 +1348,8 @@ class _Lauf:
             except OSError as fehler:
                 self.melden(f"Ledger-Vermerk: {type(fehler).__name__}")
         if aus.commit is not None or aus.fremd_commit is not None:
-            self.stand_speichern(fortschreiben=True, render_hashes=render_hashes, hand_edit=hand_edit, offene=offene)
+            self.stand_speichern(fortschreiben=True, render_hashes=render_hashes, hand_edit=hand_edit, offene=offene,
+                                 committet=True)
         else:
             self.stand_speichern(fortschreiben=aus.fortschreiben, hand_edit=hand_edit, offene=offene)
         self.melden(f"Stand: Lauf {self.lauf_nr}" + (" (Commit-Zeiger nicht fortgeschrieben)"
@@ -1408,6 +1452,7 @@ class _Lauf:
                 text = (self.mess_repo / rel).read_bytes().decode("utf-8")
             except (OSError, UnicodeDecodeError) as fehler:
                 self.melden(f"Aussagen: {rel} (nur lesend) nicht lesbar ({type(fehler).__name__})")
+                self.erst_zurueck = True
                 continue
             if au.handgepflegt(text):
                 continue
@@ -1440,9 +1485,11 @@ class _Lauf:
             if gespeichert is None:
                 aussage_speichern(graph, a, aktuell, "extraktor")
                 self.n_neu += 1 if aktuell else 0
+                self._erst_merken(a, aktuell, fragbar=True, nur_lesend=nur_lesend)
                 continue
             urteile = [(b, self.urteil(b)) for b in gespeichert]
             if any(u == "unsauber" for _, u in urteile):
+                self._erst_merken(a, gespeichert, fragbar=False, nur_lesend=nur_lesend)  # Task 7: offen, nicht jetzt
                 continue  # Ruling 48a: nicht urteilen, gemerkte Belege bleiben unveraendert
             treffer = [(b, u) for b, u in urteile if u != "beleg_ok"]
             # Ruling T4-c: geaenderte Datei-Belege auf Code in Doku-Zielen sind kein Judge-Signal -- nachfuehren,
@@ -1456,8 +1503,10 @@ class _Lauf:
                 dazu = [b for b in aktuell if (b.art, b.file, b.anker) not in schluessel]
                 if dazu or stumm:
                     aussage_speichern(graph, a, [*gespeichert, *dazu], "extraktor")
+                self._erst_merken(a, [*gespeichert, *dazu], fragbar=True, nur_lesend=nur_lesend)
                 continue
             signale += len(treffer)
+            self._erst_merken(a, gespeichert, fragbar=False, nur_lesend=nur_lesend)  # Task 7: das Signal geht vor
             if self.ohne_llm:
                 b, u = treffer[0]
                 self.offen.append(Pruefpunkt("signal_ohne_llm", f"{u}: {b.art} {b.anker or '-'} in {b.file}",
@@ -1466,6 +1515,26 @@ class _Lauf:
             ergebnis = self._urteilen(graph, a, gespeichert, treffer, aktuell)
             if ergebnis is not None:
                 ersetzungen.append(ergebnis)
+        text, getan = self._ersetzen(graph, text, ersetzungen, nur_lesend=nur_lesend)
+        for alt_id, neu_id in getan:
+            ids.discard(alt_id)
+            ids.add(neu_id)
+            self.erst_ersetzt.add(neu_id)  # Task 7: ein frisch umgeschriebener Satz gilt nach dem Commit als geprueft
+        weg = [k.id[len("aussage:"):] for k in graph.knoten.values()
+               if k.typ == "aussage" and k.datei == doc and k.id[len("aussage:"):] not in ids]
+        for aid in weg:
+            aussage_entfernen(graph, aid)
+        self.n_aussagen += len(liste)
+        self.n_belegt += sum(1 for aid in ids if knoten_id(aid) in graph.knoten)
+        return text, signale
+
+    def _ersetzen(self, graph: Graph, text: str, ersetzungen: Sequence[tuple[au.Aussage, str, Beleg, list[Beleg]]],
+                  *, nur_lesend: bool) -> tuple[str, list[tuple[str, str]]]:
+        """Der gemeinsame Schreibweg fuer `veraltet` (echtes Signal und Erstbefuellung): von unten nach oben ersetzen,
+        neue Id, Belege mit dem gewaehlten Anker vorn (Quelle `llm`), Ledger-Eintrag; CAS, Torwaechter und pathspec-
+        Commit folgen in `_voll`. `nur_lesend` (D7): nie ersetzen, Pruefpunkt `nur_lesend_veraltet` mit dem Vorschlag.
+        Rueckgabe (neuer Text, [(alte Id, neue Id)] der ausgefuehrten Ersetzungen)."""
+        getan: list[tuple[str, str]] = []
         for a, neuer_text, gewaehlt, belege in sorted(ersetzungen, key=lambda e: e[0].zeile_start, reverse=True):
             if nur_lesend:  # D7: nie ersetzen; der Vorschlag geht in die Pruefliste, die Belege werden nachgefuehrt
                 self.offen.append(Pruefpunkt(
@@ -1482,8 +1551,6 @@ class _Lauf:
                 continue
             neu_id = au.aussage_id(a.datei, a.ueberschrift, neuer_text)
             aussage_entfernen(graph, a.id)
-            ids.discard(a.id)
-            ids.add(neu_id)
             rest = [b for b in belege if (b.art, b.file, b.anker) != (gewaehlt.art, gewaehlt.file, gewaehlt.anker)]
             aussage_speichern(graph, a, [gewaehlt, *rest], "llm", aid=neu_id, text=neuer_text)
             self.umgeschrieben += 1
@@ -1491,13 +1558,85 @@ class _Lauf:
                 lauf=self.lauf, zeit=self.jetzt.isoformat(), aussage_id=a.id, datei=a.datei, alt=a.text,
                 neu="\n".join(au._ersatz_zeilen(neuer_text)), beleg=gewaehlt, urteil="veraltet", quelle="llm",
                 basis_commit=self.kopf_aussen))
-        weg = [k.id[len("aussage:"):] for k in graph.knoten.values()
-               if k.typ == "aussage" and k.datei == doc and k.id[len("aussage:"):] not in ids]
-        for aid in weg:
-            aussage_entfernen(graph, aid)
-        self.n_aussagen += len(liste)
-        self.n_belegt += sum(1 for aid in ids if knoten_id(aid) in graph.knoten)
-        return text, signale
+            getan.append((a.id, neu_id))
+        return text, getan
+
+    # ----- Erstbefuellung (Task 7, D10) -----
+
+    def _erst_einstellen(self) -> None:
+        """Faellig (fuer das Ergebnis) und ob gesammelt wird; gefragt wird nur im echten Tick ohne `--ohne-llm`."""
+        e = erst_mod.einstellung(self.konfig)
+        self.erst_sammeln = e.aktiv and not (self.stand_alt is not None and self.stand_alt.erstbefuellung_fertig)
+        self.erst_faellig = erst_mod.erstbefuellung_faellig(self.konfig, self.stand_alt, self.jetzt)
+
+    def _erst_merken(self, a: au.Aussage, belege: Sequence[Beleg], *, fragbar: bool, nur_lesend: bool) -> None:
+        if self.erst_sammeln and belege:
+            self.erst_pool.append((a, tuple(belege), fragbar, nur_lesend))
+
+    def _erstbefuellung(self, graph: Graph, texte: dict[str, tuple[bytes, str]]) -> None:
+        """Task 7: die noch nicht erstgeprueften, signaltragend gebundenen Aussagen dieses Laufs (Ruling T7-a) unter dem
+        Agenten der Erstbefuellung pruefen -- nach allen echten Signalen, mit der Rest-Deadline. Ohne `erst_fragen`
+        (Trockenlauf, `--ohne-llm`, ausserhalb des Fensters) nur zaehlen. `veraltet` mit aufloesbarem Anker geht ueber
+        `_ersetzen` (derselbe Weg wie ein Signal); sonst Pruefpunkt. Aussagen mit einem echten Signal in diesem Lauf
+        und Dateien, die ein Signal schon umgeschrieben hat, bleiben offen (naechster Lauf)."""
+        if not self.erst_sammeln:
+            return
+        alt = self.stand_alt or Stand()
+        bekannt = set(alt.erstgeprueft) | self.erst_markiert | self.erst_ersetzt
+        posten = erst_mod.posten_waehlen(self.konfig, [
+            (a, belege, fragbar and a.datei not in self.erst_umgeschrieben_docs, nur)
+            for a, belege, fragbar, nur in self.erst_pool])
+        vollstaendig = not self.doku_fremd_ziele and not self.erst_zurueck
+        if not self.erst_fragen:
+            self.erst_offen = sum(1 for p in posten if p.aussage.id not in bekannt)
+            self.melden(f"Erstbefüllung: {self.erst_offen} Aussage(n) offen; "
+                        f"{'fällig' if self.erst_faellig else 'nicht fällig'}, hier nicht gefragt")
+            return
+        vorher = self.llm_aufrufe
+        erg = erst_mod.erstbefuellung_schritt(
+            self.konfig, graph, dataclasses.replace(alt, erstgeprueft=sorted(bekannt)), budget=self.budget,
+            laufzeit=self.laufzeit, deadline=self._deadline, posten=posten,
+            quelltext=lambda b: self.quelltext(b, alt=False), digest=self.digest_jetzt,
+            nachbarn=lambda b: self.nachbarn(graph, b), vollstaendig=vollstaendig, jetzt=self.jetzt)
+        self.erst_aufrufe = self.llm_aufrufe - vorher
+        self.erst_geprueft, self.erst_offen, self.erst_fertig = erg.geprueft, erg.offen, erg.fertig
+        ersetzungen: dict[tuple[str, bool], list[tuple[au.Aussage, str, Beleg, list[Beleg]]]] = {}
+        for u in erg.urteile:
+            a, b, antwort = u.posten.aussage, u.posten.beleg, u.antwort
+            ort = f"Erstprüfung {b.art} {b.anker or '-'} in {b.file}"
+            if antwort is not None and antwort.urteil == "veraltet":
+                gewaehlt = next((x for x in a.belege if x.anker == antwort.beleg_anker and self.urteil(x) == "beleg_ok"),
+                                None)
+                if gewaehlt is not None and antwort.neuer_text and (u.posten.nur_lesend or a.datei in texte):
+                    ersetzungen.setdefault((a.datei, u.posten.nur_lesend), []).append(
+                        (a, antwort.neuer_text, gewaehlt, list(a.belege)))
+                    if u.posten.nur_lesend:
+                        self.erst_markiert.add(a.id)
+                    continue
+                self.offen.append(Pruefpunkt("beleg_nicht_aufloesbar",
+                                             f"{ort}: Judge nennt {antwort.beleg_anker!r}, nicht aufloesbar",
+                                             a.datei, a.zeile_start, a.id))
+            elif antwort is None:
+                self.offen.append(Pruefpunkt(f"judge_{u.grund.split(':', 1)[0]}", f"{ort}: {u.grund}", a.datei,
+                                             a.zeile_start, a.id))
+            elif antwort.urteil == "unklar":
+                self.offen.append(Pruefpunkt("judge_unklar", f"{ort}: {antwort.begruendung[:200]}", a.datei,
+                                             a.zeile_start, a.id))
+            self.erst_markiert.add(a.id)
+        for (doc, nur), liste in sorted(ersetzungen.items()):
+            if nur:
+                self._ersetzen(graph, "", liste, nur_lesend=True)
+                continue
+            roh, text = texte[doc]
+            neu, getan = self._ersetzen(graph, text, liste, nur_lesend=False)
+            texte[doc] = (roh, neu)
+            self.erst_umgeschrieben += len(getan)
+            for alt_id, neu_id in getan:
+                self.erst_ersetzt |= {alt_id, neu_id}
+        self.melden(f"Erstbefüllung: {erg.geprueft} geprüft ({self.erst_aufrufe} Aufruf(e) unter "
+                    f"{erst_mod.einstellung(self.konfig).agent}), {self.erst_umgeschrieben} umgeschrieben, "
+                    f"{erg.offen} offen" + (f"; Abbruch: {erg.abbruch}" if erg.abbruch else "")
+                    + ("; fertig" if erg.fertig else ""))
 
     def _urteilen(self, graph: Graph, a: au.Aussage, gespeichert: Sequence[Beleg],
                   treffer: Sequence[tuple[Beleg, str]], aktuell: Sequence[Beleg]
@@ -1547,6 +1686,8 @@ class _Lauf:
                     "quelltext_neu": frage.quelltext_neu[:QUELLTEXT_MERKEN], "nachbarn": list(frage.nachbarn),
                     "neu_digest": neu_digest})
         ort = f"{b.art} {b.anker or '-'} in {b.file}"
+        if antwort is not None or not grund.startswith(WIEDERHOLEN):
+            self.erst_markiert.add(a.id)  # Task 7: ein Signal-Urteil prueft die Aussage gegen den heutigen Code
         if antwort is None:
             if grund != "deadline":  # I7a: kein Pruefpunkt, das Signal ist nur verschoben
                 self.offen.append(Pruefpunkt(f"judge_{grund.split(':', 1)[0]}", f"{ort}: {grund}", a.datei,
