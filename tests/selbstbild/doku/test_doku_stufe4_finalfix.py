@@ -263,6 +263,59 @@ def test_m4_mit_anstoss_im_fenster_wird_vorgeprueft(fx):
     assert erg.erst_faellig and budget.tagesstand_aufrufe >= 1
 
 
+# ---------- M3: erzaehlte Seiten robust gegen Abbruch und Zeitnot ----------
+
+class _Abbruch(BaseException):
+    """Wie ein Kill mitten im Lauf: keine Ausnahme, die irgendein `except Exception` auffaengt."""
+
+
+def _notizen(tmp_path, version, pruefpunkte):
+    from selbstbild.doku import rowboat as rb
+    zusatz = [rb.Notiz(f"Spaces/{n}.md", f"---\nerzeugt_von: selbstbild\n---\n# {n}\n\nFassung {version}.\n")
+              for n in ("A", "B")]
+    return rb.notizen_schreiben(Graph({}, {}), [], [], tmp_path / "wissen", "Doku", f"L{version}",
+                                manifest_pfad=tmp_path / "notizen.json", zusatz=zusatz, pruefpunkte=pruefpunkte)
+
+
+def test_m3_abbruch_nach_einer_seite_macht_sie_nicht_zur_hand_seite(tmp_path, monkeypatch):
+    from selbstbild.doku import rowboat as rb
+
+    _notizen(tmp_path, 1, [])
+    echt = rb._atomar
+
+    def bricht_bei_b(pfad, daten):
+        if pfad.name == "B.md":
+            raise _Abbruch()
+        echt(pfad, daten)
+
+    monkeypatch.setattr(rb, "_atomar", bricht_bei_b)
+    with pytest.raises(_Abbruch):
+        _notizen(tmp_path, 2, [])  # A in Fassung 2 geschrieben, dann "Kill"
+    monkeypatch.setattr(rb, "_atomar", echt)
+    assert "Fassung 2" in (tmp_path / "wissen/Doku/Spaces/A.md").read_text(encoding="utf-8")
+    punkte: list = []
+    geschrieben = _notizen(tmp_path, 3, punkte)
+    assert [p for p in punkte if p.art == "notiz_von_hand"] == []
+    assert {p.name for p in geschrieben} == {"A.md", "B.md"}
+    assert "Fassung 3" in (tmp_path / "wissen/Doku/Spaces/A.md").read_text(encoding="utf-8")
+
+
+def test_m3_seite_nur_mit_restzeit_fuer_einen_ganzen_aufruf(fx):
+    from test_doku_rowboat_erzaehlt import ErstBudget, TickAbo, _ohne_erst
+    from test_doku_tick import _anstoss, _Uhr
+
+    _ohne_erst(fx)
+    knapp = fx.konfig.tick_deadline_min * 60 - jg.TIMEOUT_S - 1  # vor der Deadline, aber zu wenig fuer einen Aufruf
+    abo = TickAbo()
+    _anstoss(fx)
+    erg = _tick(fx, erzwingen=True, budget=ErstBudget(), laufzeit=abo, uhr=_Uhr(knapp))
+    assert "seite" not in abo.arten() and erg.erzaehlt_aufrufe == 0 and erg.erzaehlt_faellig
+    abo2 = TickAbo()
+    _anstoss(fx)
+    erg2 = _tick(fx, erzwingen=True, budget=ErstBudget(), laufzeit=abo2, uhr=_Uhr(60))
+    assert abo2.arten().count("seite") == 2 and erg2.erzaehlt_aufrufe == 2
+
+
 # ---------- I5: Struktur-Hinweise in Pruefliste.md gruppiert ----------
 
 def _pl_notiz(struktur, punkte=()):

@@ -839,6 +839,12 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
             if not trocken:
                 _atomar(basis / notiz.rel, notiz.text.encode("utf-8"))
             manifest[notiz.rel] = _stabil_hash(notiz.text)
+            if not trocken and not uebernahme:
+                # Final-Fix M3: Manifest nach jeder geschriebenen Notiz/Seite -- ein Kill mitten im Lauf macht eine
+                # schon geschriebene Seite sonst im naechsten Lauf zur falschen "von Hand"-Seite. Jeder Zwischenstand
+                # ist stimmig (jeder Eintrag passt zu seiner Datei). Nicht bei der Uebernahme ohne Manifest: ein
+                # halbes Manifest beendete sie und machte die noch nicht besuchten markierten Notizen zu "Hand".
+                _manifest_schreiben(manifest_pfad, manifest)
             geschrieben.append(basis / notiz.rel)
     soll |= set(zusatz_ausgefallen)
     weg = 0

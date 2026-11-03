@@ -148,6 +148,7 @@ REGEL_DATEI = "selbstbild.yaml"  # Stufe 4: Abschnitt `doku:` (D5); eine Aenderu
 CODE_ENDUNGEN = frozenset({".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs", ".go", ".ps1", ".psm1",
                            ".sh", ".bash", ".cmd", ".bat", ".sql"})
 DATEI_GEAENDERT_IDS = 20  # so viele Aussage-Ids nennt ein Pruefpunkt `beleg_datei_geaendert`
+SEITEN_RAND_S = 30  # Final-Fix M3: Rand zusaetzlich zu `judge.TIMEOUT_S`, bevor eine erzaehlte Seite gefragt wird
 NACHBARN_MAX = 12
 QUELLTEXT_MERKEN = 7000  # Quelltext offener Signale im lokalen Stand (der Judge kuerzt ohnehin auf 6000)
 AUSSCHNITT_ZEILEN = 40  # Minor 15: `datei`-Belege zeigt der Judge nur +-40 Zeilen um die angezeigte Zeile
@@ -416,6 +417,7 @@ class _Lauf:
         self.konfig, self.repo, self.jetzt = konfig, konfig.repo, jetzt
         self.uhr, self.start = uhr, uhr()  # I7a: Tick-Deadline fuer neue Judge-Fragen
         self.deadline_gemeldet = False
+        self.seiten_zeit_gemeldet = False  # Final-Fix M3
         self.erzwingen, self.ohne_llm = erzwingen, ohne_llm
         self.budget, self.drift, self.manifest_bauer = budget, drift, manifest_bauer
         self.nach_tick, self.melden = nach_tick, melden
@@ -814,7 +816,7 @@ class _Lauf:
         fehl = rowboat_erzaehlt.fehlversuche_laden(konfig)
         erg = rowboat_erzaehlt.seiten_lauf(plan, s, ordner=konfig.rowboat_notizen, erzaehlen=erzaehlen,
                                            max_aufrufe=konfig.rowboat_seiten_je_lauf, neue_erlaubt=neue,
-                                           deadline=self._deadline, fehlversuche=fehl)
+                                           deadline=self._seiten_deadline, fehlversuche=fehl)
         if s is None:
             self._rowboat_umgeleitet(erg.pruefpunkte)
         if not trocken and s is not None:  # Fix-Runde 1: eigene Datei, unter derselben Sperre wie der Tick
@@ -828,6 +830,23 @@ class _Lauf:
                     "geschrieben" + (f", {len(erg.pausiert)} pausiert" if erg.pausiert else "")
                     + (f"; Abbruch: {erg.abbruch}" if erg.abbruch else ""))
         return erg
+
+    def _seiten_deadline(self) -> bool:
+        """Final-Fix M3: eine Seite nur, wenn bis zur Tick-Deadline noch ein ganzer Abo-Aufruf (`judge.TIMEOUT_S`) plus
+        `SEITEN_RAND_S` passt -- sonst liefe der Lauf weit ueber `tick_deadline_min` hinaus. Nur aufgerufen, wenn
+        wirklich gefragt wird (der Judge wird hier erst dann geladen)."""
+        from . import judge
+
+        if self._deadline():
+            return True
+        rest = self.konfig.tick_deadline_min * 60 - judge.TIMEOUT_S - SEITEN_RAND_S
+        if self.uhr() - self.start < rest:
+            return False
+        if not self.seiten_zeit_gemeldet:
+            self.seiten_zeit_gemeldet = True
+            self.melden(f"Seiten: weniger als {judge.TIMEOUT_S + SEITEN_RAND_S} s bis zur Deadline – keine Seite mehr "
+                        "gefragt (nächster Lauf)")
+        return True
 
     def _erzaehlt_merken(self, erg: rowboat_erzaehlt.SeitenErgebnis) -> None:
         self.erzaehlt_faellig = list(erg.faellig)
