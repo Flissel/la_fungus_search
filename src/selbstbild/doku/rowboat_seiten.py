@@ -19,14 +19,16 @@ import hashlib
 import json
 import sqlite3
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 from .graph import Graph, Kante
 from . import rowboat
-from .rowboat import INDEX_NAME, Notiz, sicherer_name
+from .rowboat import INDEX_NAME, PRUEFLISTE_NAME, Notiz
+from .typen import Pruefpunkt
 
 MARKER = "selbstbild"
 MITBAUEN_TITEL = "Neuen Space erstellen mit Claude Code"
@@ -36,7 +38,7 @@ ZUSTAND_REL = f"{ZUSTAND_TITEL}.md"
 TOP_HOTSPOTS = 5
 
 __all__ = ["MITBAUEN_REL", "ZUSTAND_REL", "seite_mitbauen", "seite_zustand", "analyse_zusammenfassung_lesen",
-           "seiten", "index_links", "voraussichtlich_geschrieben"]
+           "seiten", "index_links", "Seite"]
 
 
 def _digest(inhalt: object) -> str:
@@ -67,15 +69,25 @@ def _ohne_titel(text: str) -> str:
 
 # ---------- Mitbauen ----------
 
-def seite_mitbauen(wurzel: Path, stand_unter: Path | None, *, ordner: str = "Doku") -> str:
+_SKILL_ABSATZ = "Diese Datei wird aus den `selbstbild.yaml`-Regeln"
+
+
+def _ohne_skill_absatz(text: str) -> str:
+    """Der Absatz, der nur in der Skill-Datei stimmt ("Diese Datei wird ... erzeugt ... Nicht von Hand aendern")."""
+    absaetze = text.split("\n\n")
+    return "\n\n".join(a for a in absaetze if not a.startswith(_SKILL_ABSATZ))
+
+
+def seite_mitbauen(wurzel: Path, stand_unter: Path | None, *, ordner: str = "Doku", index_name: str = INDEX_NAME,
+                   skill_text: str | None = None) -> str:
     """Markdown der Seite `Neuen Space erstellen mit Claude Code` (mit Kopf `erzeugt_von`/`grundlage`)."""
     from selbstbild.skill import skill_neuer_space
 
-    skill = skill_neuer_space(Path(wurzel), stand_unter)
-    inhalt = _ohne_titel(_ohne_frontmatter(skill)).rstrip("\n")
+    skill = skill_text if skill_text is not None else skill_neuer_space(Path(wurzel), stand_unter)
+    inhalt = _ohne_skill_absatz(_ohne_titel(_ohne_frontmatter(skill))).rstrip("\n")
     einleitung = [
         f"# {MITBAUEN_TITEL}", "",
-        f"Zurück: [[{ordner}/{INDEX_NAME}]]", "",
+        f"Zurück: [[{ordner}/{index_name}]]", "",
         "## So fragst du", "",
         "Öffne Claude Code im VibeMind-Repo und schreib in normalen Worten, was du brauchst, zum Beispiel: "
         "„bau mir einen neuen Space für X“. Claude Code lädt dann den Skill `neuer-space` und folgt dem Ablauf "
@@ -153,7 +165,8 @@ def _nrs(nrs: Sequence[str]) -> str:
 
 def seite_zustand(graph: Graph, analyse_zusammenfassung: Mapping[str, Any] | None,
                   pruefliste: Mapping[str, Sequence[Mapping[str, object]]] | Sequence[Mapping[str, object]],
-                  *, ordner: str = "Doku") -> str:
+                  *, ordner: str = "Doku", index_name: str = INDEX_NAME,
+                  pruefliste_name: str = PRUEFLISTE_NAME) -> str:
     """Markdown der Seite `Zustand`. `pruefliste`: das Ergebnis von `pruefliste_laden` (Schluessel `offen`) oder
     direkt die Liste offener Punkte. `analyse_zusammenfassung`: siehe `analyse_zusammenfassung_lesen`; None laesst
     den Analyse-Abschnitt weg."""
@@ -161,8 +174,9 @@ def seite_zustand(graph: Graph, analyse_zusammenfassung: Mapping[str, Any] | Non
     befund, zahlen = _ketten_befund(graph)
     arten = Counter(str(p.get("art") or "unbekannt") for p in offen)
     namen = {kid: graph.knoten[kid] for kid in befund}
+    notizen = rowboat._Notizen(graph, ordner)  # dieselben Notiznamen wie die Ketten-Notizen selbst
 
-    z: list[str] = [f"# {ZUSTAND_TITEL}", "", f"Zurück: [[{ordner}/{INDEX_NAME}]]", "",
+    z: list[str] = [f"# {ZUSTAND_TITEL}", "", f"Zurück: [[{ordner}/{index_name}]]", "",
                     "Erzeugt aus dem Datenfluss-Graph, der Prüfliste und (falls vorhanden) der Analyse. "
                     "Von Hand ändern lohnt nicht: Die Seite wird aus diesen Quellen neu geschrieben, außer du hast "
                     "sie geändert; dann lässt der Loop sie stehen.", "",
@@ -172,7 +186,7 @@ def seite_zustand(graph: Graph, analyse_zusammenfassung: Mapping[str, Any] | Non
     if befund:
         z += ["| Kette | Bricht bei Hop | Aus bei Hop |", "|---|---|---|"]
         for kid, b in befund.items():
-            link = f"[[{ordner}/Ketten/{sicherer_name(kid.split(':', 1)[1])}]]"
+            link = notizen.kette_link(kid)
             z.append(f"| {link} {namen[kid].name} | {_nrs(b['bricht']) or '—'} | {_nrs(b['aus']) or '—'} |")
     else:
         z.append("Keine Kette bricht, keine ist ausgeschaltet.")
@@ -180,12 +194,15 @@ def seite_zustand(graph: Graph, analyse_zusammenfassung: Mapping[str, Any] | Non
     if arten:
         z += ["| Art | Anzahl |", "|---|---|"]
         z += [f"| `{art}` | {n} |" for art, n in sorted(arten.items(), key=lambda kv: (-kv[1], kv[0]))]
-        z += ["", f"Alle Punkte: [[{ordner}/Prüfliste]]"]
+        z += ["", f"Alle Punkte: [[{ordner}/{pruefliste_name}]]"]
     else:
         z.append("Keine offenen Punkte.")
     if analyse_zusammenfassung is not None:
         tot = analyse_zusammenfassung.get("tot") or {}
+        stand = str(analyse_zusammenfassung.get("commit") or "")[:8] or "unbekannt"
         z += ["", "## Toter Code und Hotspots", "",
+              f"Analyse-Stand: `{stand}` (Commit der letzten Analyse; neuere Änderungen zeigt sie erst nach einem "
+              "neuen Lauf.)", "",
               f"- `sicher_tot`: {int(tot.get('sicher_tot', 0))}",
               f"- `wahrscheinlich_tot`: {int(tot.get('wahrscheinlich_tot', 0))}", "",
               f"Die {TOP_HOTSPOTS} größten Hotspots (Dateien, an denen Änderungen am meisten Wirkung haben):", ""]
@@ -196,6 +213,7 @@ def seite_zustand(graph: Graph, analyse_zusammenfassung: Mapping[str, Any] | Non
             z.append("Keine Hotspots in der Analyse.")
     grundlage = _digest({"ketten": befund, "zahlen": zahlen, "arten": dict(sorted(arten.items())),
                          "analyse": None if analyse_zusammenfassung is None else {
+                             "commit": str(analyse_zusammenfassung.get("commit") or ""),
                              "tot": dict(sorted((analyse_zusammenfassung.get("tot") or {}).items())),
                              "hotspots": [[s.get("datei"), s.get("wert")] for s in
                                           list(analyse_zusammenfassung.get("hotspots_top") or [])[:TOP_HOTSPOTS]]}})
@@ -229,48 +247,75 @@ def analyse_zusammenfassung_lesen(stand: Path | None) -> dict[str, Any] | None:
 
 # ---------- Zusammenstellen ----------
 
+@dataclass(frozen=True)
+class Seite:
+    """Eine Seite fuer `notizen_schreiben(zusatz=...)`: `mit_namen` baut sie mit den Namen der Rueckverweis-Ziele
+    (`Index`/`Prüfliste` oder deren `... (Loop)`-Umleitung)."""
+
+    rel: str
+    baue: Callable[[str, str], str]
+
+    def mit_namen(self, index_name: str, pruefliste_name: str) -> Notiz:
+        return Notiz(self.rel, self.baue(index_name, pruefliste_name))
+
+    @property
+    def text(self) -> str:
+        return self.baue(INDEX_NAME, PRUEFLISTE_NAME)
+
+
 def seiten(graph: Graph, wurzel: Path, pruefliste: Mapping[str, Sequence[Mapping[str, object]]],
-           stand_unter: Path | None = None, *, ordner: str = "Doku") -> list[Notiz]:
-    """Beide Seiten als Notizen fuer `notizen_schreiben(zusatz=...)`.
+           stand_unter: Path | None = None, *, ordner: str = "Doku", fehler: list[Pruefpunkt] | None = None,
+           ausgefallen: list[str] | None = None) -> list[Seite]:
+    """Beide Seiten fuer `notizen_schreiben(zusatz=...)`; jede in ihrem eigenen Schutz: Eine Seite, die nicht
+    gebaut werden kann, faellt weg (Pfad in `ausgefallen`, Pruefpunkt `seite_fehler` mit nur dem Ausnahme-Typ in
+    `fehler`); die andere Seite und alle Notizen werden trotzdem geschrieben.
 
     Stand-Ordner der Analyse: der des Skills (`stand_unter` oder `vermessen.stand_finden`); fehlt er, entfaellt
     der Analyse-Abschnitt."""
-    stand: Path | None = None
-    try:
-        from selbstbild import skill
-        from selbstbild.vermessen import stand_finden
+    fehler = fehler if fehler is not None else []
+    ausgefallen = ausgefallen if ausgefallen is not None else []
+    ergebnis: list[Seite] = []
 
-        stand = skill._stand_ordner(Path(wurzel), stand_unter)
-        if stand is None and stand_unter is None:
-            g = stand_finden(Path(wurzel))
-            stand = g.parent if g is not None else None
-    except Exception:  # noqa: BLE001 - ohne Stand nur ohne Analyse
-        stand = None
-    return [Notiz(MITBAUEN_REL, seite_mitbauen(wurzel, stand_unter, ordner=ordner)),
-            Notiz(ZUSTAND_REL, seite_zustand(graph, analyse_zusammenfassung_lesen(stand), pruefliste, ordner=ordner))]
+    def versuchen(rel: str, bauen: Callable[[], Seite]) -> None:
+        try:
+            seite = bauen()
+            seite.text  # noqa: B018 - einmal rendern, damit ein Fehler hier und nicht beim Schreiben auftritt
+            ergebnis.append(seite)
+        except Exception as e:  # noqa: BLE001 - nur der Typ, nie der Text (kann Dateiinhalte zitieren)
+            ausgefallen.append(rel)
+            fehler.append(Pruefpunkt("seite_fehler", f"Rowboat-Seite {ordner}/{rel} konnte nicht gebaut werden "
+                                     f"({type(e).__name__}); eine vorhandene Fassung bleibt stehen",
+                                     f"{ordner}/{rel}"))
+
+    def mitbauen() -> Seite:
+        from selbstbild.skill import skill_neuer_space
+
+        skill = skill_neuer_space(Path(wurzel), stand_unter)
+        return Seite(MITBAUEN_REL, lambda i, p: seite_mitbauen(wurzel, stand_unter, ordner=ordner, index_name=i,
+                                                                skill_text=skill))
+
+    def zustand() -> Seite:
+        stand: Path | None = None
+        try:
+            from selbstbild import skill
+            from selbstbild.vermessen import stand_finden
+
+            stand = skill._stand_ordner(Path(wurzel), stand_unter)
+            if stand is None and stand_unter is None:
+                g = stand_finden(Path(wurzel))
+                stand = g.parent if g is not None else None
+        except Exception:  # noqa: BLE001 - ohne Stand nur ohne Analyse
+            stand = None
+        analyse = analyse_zusammenfassung_lesen(stand)
+        return Seite(ZUSTAND_REL, lambda i, p: seite_zustand(graph, analyse, pruefliste, ordner=ordner, index_name=i,
+                                                              pruefliste_name=p))
+
+    versuchen(MITBAUEN_REL, mitbauen)
+    versuchen(ZUSTAND_REL, zustand)
+    return ergebnis
 
 
 def index_links(ordner: str = "Doku") -> list[str]:
     return [f"[[{ordner}/Mitbauen/{MITBAUEN_TITEL}]] – so baust du mit Claude Code einen neuen Space",
             f"[[{ordner}/{ZUSTAND_TITEL}]] – was lebt, was tot ist, was bricht"]
 
-
-def voraussichtlich_geschrieben(notizen: Sequence[Notiz], wissen: Path, ordner: str,
-                                manifest_pfad: Path | None) -> tuple[list[str], list[str]]:
-    """Trockenlauf: (Seiten, die geschrieben wuerden; Seiten, die von Hand geaendert sind und stehen blieben).
-    Liest nur (Manifest und Dateien); schreibt nichts. Kaputtes Manifest oder umgeleiteter Ordner -> ([], [])."""
-    basis = rowboat._unter(Path(wissen), ordner)
-    geladen = rowboat._manifest_laden(manifest_pfad)
-    if geladen == rowboat.KAPUTT or rowboat._umgeleitet(basis):
-        return [], []
-    manifest = {} if isinstance(geladen, str) else dict(geladen)
-    s = rowboat.Schreiber(basis, manifest, isinstance(geladen, str), ())
-    schreiben: list[str] = []
-    hand: list[str] = []
-    for n in notizen:
-        e = s.entscheiden(n.rel, n.text)
-        if e == "schreiben":
-            schreiben.append(n.rel)
-        elif e == "hand":
-            hand.append(n.rel)
-    return schreiben, hand

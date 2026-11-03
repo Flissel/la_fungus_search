@@ -206,6 +206,7 @@ class TickErgebnis:
     # Hand geaenderte (bleiben stehen), Pfade ab dem Notizordner
     seiten_geaendert: list[str] = dataclasses.field(default_factory=list)
     seiten_von_hand: list[str] = dataclasses.field(default_factory=list)
+    index_geaendert: bool = False  # trocken: Index.md wuerde neu geschrieben
 
 
 # ---------- Aenderungen ----------
@@ -439,6 +440,7 @@ class _Lauf:
         self.ausstehend: dict[str, str] | None = None  # Ruling 55a: None = unveraendert aus dem alten Stand
         self.seiten_geaendert: list[str] = []  # Task 8: Rowboat-Seiten (trocken: geplant)
         self.seiten_von_hand: list[str] = []
+        self.index_geaendert = False
         self.trocken = False  # Trockenlauf: misst wie ein Tick, schreibt nichts (`trocken_laufen`)
         self.koepfe: dict[str, str] | None = None  # D6: beim Anstoss gelesene Koepfe, im Tick wiederverwendet
         self.gesehen: dict[str, str] | None = None  # T3-b: Koepfe, die dieser Lauf gesehen hat (kommen in den Stand)
@@ -496,7 +498,8 @@ class _Lauf:
                             neue_spaces=list(self.neue_spaces), neue_dateien=list(self.neu_angelegt),
                             erst_faellig=self.erst_faellig, erst_offen=self.erst_offen,
                             erst_geprueft=self.erst_geprueft, erst_aufrufe=self.erst_aufrufe,
-                            seiten_geaendert=list(self.seiten_geaendert), seiten_von_hand=list(self.seiten_von_hand))
+                            seiten_geaendert=list(self.seiten_geaendert), seiten_von_hand=list(self.seiten_von_hand),
+                            index_geaendert=self.index_geaendert)
 
     def stand_speichern(self, *, fortschreiben: bool, render_hashes: Mapping[str, str] | None = None,
                         hand_edit: Mapping[str, str] | None = None,
@@ -634,42 +637,59 @@ class _Lauf:
         repo_graph = Graph.laden(self.repo / GRAPH_JSON)
         voll = vollgraph_laden(konfig, self.vollgraph_kennung)
         graph = repo_graph if voll is None else mit_schlank(voll.graph, repo_graph)
+        for _ in range(2):  # neue `notiz_von_hand`-Punkte erscheinen sofort in der Pruefliste
+            von_hand = self._notizen_aufruf(graph, trocken=False)[1]
+            if not von_hand or not pruefliste_ergaenzen(konfig, von_hand, [], voll=False, lauf=self.lauf):
+                break
+
+    def _notizen_aufruf(self, graph: Graph, *, trocken: bool) -> tuple[list[Path], list[Pruefpunkt]]:
+        """Ein Aufruf von `rowboat.notizen_schreiben` samt Seiten (Task 8, D11). Live und Trockenlauf gehen durch
+        genau diesen Weg (gleiche Eingaben, gleiche Filter); `trocken` schreibt nichts. Rueckgabe: (geschriebene
+        bzw. zu schreibende Dateien, Pruefpunkte: `notiz_von_hand`, `seite_fehler`, ...)."""
+        konfig = self.konfig
         ledger = rowboat.ledger_lesen(self.repo / LEDGER)
         spitzen = rowboat.datei_spitzen(self.repo, {e.datei for e in ledger})
         commits = {**fremd_commits_laden(konfig), **rowboat.lauf_commits(self.repo)}  # I11: auch fremd uebernommene
         vermerke = rowboat.vermerke_laden(rowboat.erledigt_pfad(konfig))
         bekannt = set(commits) | {e.lauf for e in ledger} | set(self._letzte_laeufe())
-        for _ in range(2):  # neue `notiz_von_hand`-Punkte erscheinen sofort in der Pruefliste
-            liste = pruefliste_laden(konfig)
-            von_hand: list[Pruefpunkt] = []
-            # Task 8 (D11): Mitbauen und Zustand, deterministisch; Zustand zaehlt dieselben offenen Punkte wie die Liste
-            zusatz = rowboat_seiten.seiten(
-                graph, self.repo, {"offen": rowboat.offene_ohne_erledigte(liste["offen"], vermerke)},
-                ordner=konfig.rowboat_notizen)
-            rowboat.notizen_schreiben(
-                graph, liste["offen"], ledger, konfig.rowboat_wissen, konfig.rowboat_notizen, self.lauf,
-                manifest_pfad=rowboat.manifest_pfad(konfig), commits=commits, spitzen=spitzen, vermerke=vermerke,
-                struktur=liste["struktur"], urteile_datei=konfig.rowboat_urteile, bekannte_laeufe=bekannt,
-                melden=self.melden, pruefpunkte=von_hand, zusatz=zusatz,
-                zusatz_links=rowboat_seiten.index_links(konfig.rowboat_notizen))
-            if not von_hand or not pruefliste_ergaenzen(konfig, von_hand, [], voll=False, lauf=self.lauf):
-                break
+        liste = pruefliste_laden(konfig)
+        punkte: list[Pruefpunkt] = []
+        ausgefallen: list[str] = []
+        # Mitbauen und Zustand, deterministisch; Zustand zaehlt dieselben offenen Punkte wie die Pruefliste
+        zusatz = rowboat_seiten.seiten(
+            graph, self.repo, {"offen": rowboat.offene_ohne_erledigte(liste["offen"], vermerke)},
+            ordner=konfig.rowboat_notizen, fehler=punkte, ausgefallen=ausgefallen)
+        geschrieben = rowboat.notizen_schreiben(
+            graph, liste["offen"], ledger, konfig.rowboat_wissen, konfig.rowboat_notizen, self.lauf,
+            manifest_pfad=rowboat.manifest_pfad(konfig), commits=commits, spitzen=spitzen, vermerke=vermerke,
+            struktur=liste["struktur"], urteile_datei=konfig.rowboat_urteile, bekannte_laeufe=bekannt,
+            melden=self.melden, pruefpunkte=punkte, zusatz=zusatz, zusatz_ausgefallen=ausgefallen,
+            zusatz_links=rowboat_seiten.index_links(konfig.rowboat_notizen), trocken=trocken)
+        return geschrieben, punkte
 
     def _seiten_trocken(self, graph: Graph) -> None:
-        """Task 8: welche Rowboat-Seiten ein echter Lauf schreiben wuerde (nur lesend; nichts wird geschrieben)."""
+        """Task 8: was ein echter Lauf an Rowboat-Seiten und `Index.md` schreiben wuerde (Entscheidung wie live,
+        aber ohne zu schreiben: weder Notizen noch Manifest noch Pruefliste)."""
         konfig = self.konfig
         if not konfig.rowboat_notizen_aktiv:
             return
         try:
-            zusatz = rowboat_seiten.seiten(graph, self.repo, pruefliste_laden(konfig), ordner=konfig.rowboat_notizen)
-            neu, hand = rowboat_seiten.voraussichtlich_geschrieben(
-                zusatz, konfig.rowboat_wissen, konfig.rowboat_notizen, rowboat.manifest_pfad(konfig))
+            geschrieben, punkte = self._notizen_aufruf(graph, trocken=True)
         except Exception as fehler:  # noqa: BLE001 - der Trockenlauf meldet, statt zu fallen
             self.melden(f"Trockenlauf: Rowboat-Seiten nicht geprüft ({type(fehler).__name__})")
             return
-        self.seiten_geaendert, self.seiten_von_hand = neu, hand
-        self.melden(f"Trockenlauf: Rowboat-Seiten würden geschrieben: {', '.join(neu) or 'keine'}"
-                    + (f"; von Hand geändert (bleiben): {', '.join(hand)}" if hand else ""))
+        basis = (konfig.rowboat_wissen / konfig.rowboat_notizen).resolve()
+        rels = {p.resolve().relative_to(basis).as_posix() for p in geschrieben}
+        seiten = (rowboat_seiten.MITBAUEN_REL, rowboat_seiten.ZUSTAND_REL)
+        self.seiten_geaendert = [r for r in seiten if r in rels]
+        self.index_geaendert = f"{rowboat.INDEX_NAME}.md" in rels
+        pfade = {f"{konfig.rowboat_notizen}/{r}" for r in seiten}
+        self.seiten_von_hand = [str(p.datei).removeprefix(f"{konfig.rowboat_notizen}/") for p in punkte
+                                if p.art == "notiz_von_hand" and p.datei in pfade]
+        self.melden(f"Trockenlauf: Rowboat-Seiten würden geschrieben: {', '.join(self.seiten_geaendert) or 'keine'}; "
+                    f"Index.md {'ändert sich' if self.index_geaendert else 'bleibt'}"
+                    + (f"; von Hand geändert (bleiben): {', '.join(self.seiten_von_hand)}" if self.seiten_von_hand
+                       else ""))
 
     # ----- Hilfen fuer Belege -----
 

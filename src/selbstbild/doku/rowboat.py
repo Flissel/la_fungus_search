@@ -121,6 +121,20 @@ def _namen_vergeben(knoten: Iterable[Knoten]) -> dict[str, str]:
     return vergeben
 
 
+def _ketten_namen(ketten: Iterable[str]) -> dict[str, str]:
+    """Ketten-ID -> eindeutiger sicherer Dateiname; wie `_namen_vergeben` mit Hash-Zusatz bei Kollision (ohne
+    Kollision unveraendert `sicherer_name` der Kurz-ID)."""
+    vergeben: dict[str, str] = {}
+    belegt: set[str] = set()
+    for kid in sorted(ketten):
+        name = sicherer_name(kid.split(":", 1)[1])
+        if name.casefold() in belegt:
+            name = f"{name[:110]} ({hashlib.sha1(kid.encode('utf-8')).hexdigest()[:6]})"
+        belegt.add(name.casefold())
+        vergeben[kid] = name
+    return vergeben
+
+
 def _zelle(text: object) -> str:
     return " ".join(str(text).split()).replace("|", "\\|")
 
@@ -298,7 +312,7 @@ class _Notizen:
         self.ketten = {i: k for i, k in graph.knoten.items() if k.typ == "kette"}
         self.dienst_name = _namen_vergeben(self.dienste.values())
         self.space_name = _namen_vergeben(self.spaces.values())
-        self.kette_name = {i: sicherer_name(i.split(":", 1)[1]) for i in self.ketten}
+        self.kette_name = _ketten_namen(self.ketten)
         self.hops: dict[str, list[Kante]] = {}
         for e in graph.kanten.values():
             if e.art == "hop":
@@ -631,7 +645,8 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
                       struktur: Sequence[Pruefpunkt | Mapping[str, object]] = (),
                       urteile_datei: str = "Doku-Urteile/Urteile.md", bekannte_laeufe: Collection[str] = (),
                       melden: Melden | None = None, pruefpunkte: list[Pruefpunkt] | None = None,
-                      zusatz: Sequence[_Notiz] = (), zusatz_links: Sequence[str] = ()) -> list[Path]:
+                      zusatz: Sequence[object] = (), zusatz_links: Sequence[str] = (),
+                      zusatz_ausgefallen: Collection[str] = (), trocken: bool = False) -> list[Path]:
     """Notizen schreiben (siehe Moduldoku); Rueckgabe die tatsaechlich geschriebenen Dateien.
 
     `pruefliste`: offene Punkte (Dicts aus `pruefliste_laden` mit `lauf`, oder Pruefpunkte); `ledger_neu`: Ledger-
@@ -643,7 +658,11 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
 
     `zusatz`: weitere Notizen (Task 8, `rowboat_seiten`) -- sie laufen durch denselben Schreibschutz und dasselbe
     Manifest wie alle anderen (sonst raeumte der Lauf sie als "nicht mehr erzeugt" wieder weg); `zusatz_links`:
-    Wiki-Link-Zeilen, die `Index.md` zusaetzlich auffuehrt."""
+    Wiki-Link-Zeilen, die `Index.md` zusaetzlich auffuehrt. Ein Eintrag von `zusatz` ist eine `Notiz` oder hat
+    `mit_namen(index_name, pruefliste_name) -> Notiz` (die Namen sind die der Rueckverweis-Ziele, `... (Loop)` bei
+    Hand-Aenderung); `zusatz_ausgefallen`: Pfade von Seiten, die in diesem Lauf nicht gebaut werden konnten -- ihre
+    Dateien bleiben stehen (kein Aufraeumen). `trocken`: entscheidet wie ein echter Lauf, schreibt/loescht aber
+    nichts (auch nicht das Manifest); Rueckgabe = die Dateien, die ein echter Lauf schreiben wuerde."""
     melden = melden or _still
     gemeldet = pruefpunkte if pruefpunkte is not None else []
     wurzel = Path(wurzel)
@@ -703,7 +722,10 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
     notizen += [n.space(sp, lauf) for sp in sorted(n.spaces)]
     notizen += [n.dienst(d, lauf) for d in sorted(n.dienste)]
     notizen += [pruefliste_notiz(hand_pl, hand_ix), index_notiz(hand_pl, hand_ix)]
-    notizen += list(zusatz)
+    idx_name = f"{INDEX_NAME} (Loop)" if hand_ix else INDEX_NAME
+    pl_name = f"{PRUEFLISTE_NAME} (Loop)" if hand_pl else PRUEFLISTE_NAME
+    for z in zusatz:
+        notizen.append(z.mit_namen(idx_name, pl_name) if hasattr(z, "mit_namen") else z)  # type: ignore[attr-defined]
 
     geschrieben: list[Path] = []
     umgeleitet = 0
@@ -719,9 +741,11 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
             von_hand.append(notiz.rel)  # nicht (mehr) vom Loop: stehen lassen
             manifest.pop(notiz.rel, None)
         else:
-            _atomar(basis / notiz.rel, notiz.text.encode("utf-8"))
+            if not trocken:
+                _atomar(basis / notiz.rel, notiz.text.encode("utf-8"))
             manifest[notiz.rel] = _stabil_hash(notiz.text)
             geschrieben.append(basis / notiz.rel)
+    soll |= set(zusatz_ausgefallen)
     weg = 0
     if uebernahme:  # die Uebernahme loescht nie; markierte Dateien ausserhalb von `soll` gelten als von Hand
         von_hand += [rel for rel in _markierte(basis) if rel not in soll and rel not in von_hand]
@@ -734,12 +758,15 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
             if _hash_von(pfad) != bekannt:
                 von_hand.append(rel)
                 continue
+            if trocken:
+                continue
             try:
                 pfad.unlink()
                 weg += 1
             except OSError:
                 pass
-    _manifest_schreiben(manifest_pfad, manifest)
+    if not trocken:
+        _manifest_schreiben(manifest_pfad, manifest)
     for rel in dict.fromkeys(von_hand):
         gemeldet.append(Pruefpunkt("notiz_von_hand", f"{ordner}/{rel} wurde von Hand angelegt oder geändert; "
                                    "der Loop lässt sie stehen und aktualisiert sie nicht mehr",

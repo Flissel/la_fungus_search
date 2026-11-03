@@ -3,6 +3,7 @@
 Alles in tmp_path; der echte Wissensordner wird nie angefasst."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -17,7 +18,8 @@ from selbstbild.doku import rowboat_seiten as rs  # noqa: E402
 from selbstbild.doku.graph import Graph, Kante, Knoten, hop_zustand_neu, kante_id  # noqa: E402
 from selbstbild.skill import skill_neuer_space  # noqa: E402
 
-from test_doku_rowboat import LAUF, _graph, _lesen, _punkt  # noqa: E402
+from selbstbild.doku.typen import Pruefpunkt  # noqa: E402
+from test_doku_rowboat import KETTEN, LAUF, _graph, _ledger_eintrag, _lesen, _punkt  # noqa: E402
 
 REGELN = (
     "name: aussen\n"
@@ -208,23 +210,136 @@ def test_unveraenderte_seite_wird_bei_neuer_grundlage_neu_geschrieben(wurzel, tm
     assert "Dritte" in _lesen(wissen / "Doku" / "Zustand.md")
 
 
-def test_ohne_zusatz_unveraendertes_verhalten(tmp_path):
-    wissen = tmp_path / "wissen"
-    g = rb.notizen_schreiben(_graph(), [_punkt()], [], wissen, "Doku", LAUF, manifest_pfad=wissen.parent / "m.json")
-    assert not (wissen / "Doku" / "Zustand.md").exists()
-    assert "Zustand" not in _lesen(wissen / "Doku" / "Index.md") and g
-
-
-def test_trocken_meldet_ohne_zu_schreiben(wurzel, tmp_path):
+def test_trocken_gleich_live(wurzel, tmp_path):
     wissen = tmp_path / "wissen"
     leer = tmp_path / "leer"
-    zusatz = rs.seiten(_graph(), wurzel, {"offen": []}, leer)
     manifest = wissen.parent / "m.json"
-    assert rs.voraussichtlich_geschrieben(zusatz, wissen, "Doku", manifest) == ([rs.MITBAUEN_REL, rs.ZUSTAND_REL], [])
-    assert not wissen.exists() and not manifest.exists()
-    _schreiben(wissen, zusatz)
-    assert rs.voraussichtlich_geschrieben(zusatz, wissen, "Doku", manifest) == ([], [])
+    zusatz = rs.seiten(_kaputter_graph(), wurzel, {"offen": [_punkt()]}, leer)
+
+    def lauf(trocken):
+        pp: list = []
+        return rb.notizen_schreiben(_kaputter_graph(), [_punkt()], [], wissen, "Doku", LAUF, manifest_pfad=manifest,
+                                    pruefpunkte=pp, zusatz=zusatz, zusatz_links=rs.index_links("Doku"),
+                                    trocken=trocken), pp
+
+    trocken, _ = lauf(True)
+    assert not wissen.exists() and not manifest.exists()  # nichts geschrieben
+    live, _ = lauf(False)
+    assert trocken == live and wissen / "Doku" / "Index.md" in trocken
+    assert lauf(True)[0] == [] and lauf(False)[0] == []
+    # von Hand geaendert: auch im Trockenlauf gemeldet, nichts angefasst
     (wissen / "Doku" / "Zustand.md").write_bytes(b"von Hand")
-    neu = rs.seiten(_kaputter_graph(), wurzel, {"offen": []}, leer)
-    schreiben, hand = rs.voraussichtlich_geschrieben(neu, wissen, "Doku", manifest)
-    assert hand == [rs.ZUSTAND_REL] and (wissen / "Doku" / "Zustand.md").read_bytes() == b"von Hand"
+    neu = rs.seiten(_graph(), wurzel, {"offen": []}, leer)
+    pp: list = []
+    rb.notizen_schreiben(_kaputter_graph(), [_punkt()], [], wissen, "Doku", LAUF, manifest_pfad=manifest,
+                         pruefpunkte=pp, zusatz=neu, trocken=True)
+    assert [p.art for p in pp] == ["notiz_von_hand"] and (wissen / "Doku" / "Zustand.md").read_bytes() == b"von Hand"
+
+
+def test_seite_fehler_laesst_den_rest_schreiben(wurzel, tmp_path, monkeypatch):
+    import selbstbild.skill as skill
+
+    def kaputt(*a, **k):
+        raise RuntimeError("geheimer Text")
+
+    monkeypatch.setattr(skill, "skill_neuer_space", kaputt)
+    fehler: list[Pruefpunkt] = []
+    ausgefallen: list[str] = []
+    zusatz = rs.seiten(_graph(), wurzel, {"offen": []}, tmp_path / "leer", fehler=fehler, ausgefallen=ausgefallen)
+    assert [z.rel for z in zusatz] == [rs.ZUSTAND_REL] and ausgefallen == [rs.MITBAUEN_REL]
+    assert [p.art for p in fehler] == ["seite_fehler"]
+    assert "RuntimeError" in fehler[0].text and "geheimer" not in fehler[0].text
+    wissen = tmp_path / "wissen"
+    geschrieben = rb.notizen_schreiben(_graph(), [_punkt()], [], wissen, "Doku", LAUF,
+                                       manifest_pfad=wissen.parent / "m.json", zusatz=zusatz,
+                                       zusatz_ausgefallen=ausgefallen)
+    doku = wissen / "Doku"
+    assert {doku / "Zustand.md", doku / "Index.md", doku / "Ketten" / "K1.md"} <= set(geschrieben)
+    assert not (doku / "Mitbauen").exists()
+
+
+def test_ausgefallene_seite_wird_nicht_geloescht(wurzel, tmp_path, monkeypatch):
+    import selbstbild.skill as skill
+
+    wissen = tmp_path / "wissen"
+    _schreiben(wissen, rs.seiten(_graph(), wurzel, {"offen": []}, tmp_path / "leer"))
+    alt = wissen / "Doku" / rs.MITBAUEN_REL
+    assert alt.is_file()
+    monkeypatch.setattr(skill, "skill_neuer_space", lambda *a, **k: 1 / 0)
+    ausgefallen: list[str] = []
+    zusatz = rs.seiten(_graph(), wurzel, {"offen": []}, tmp_path / "leer", fehler=[], ausgefallen=ausgefallen)
+    rb.notizen_schreiben(_graph(), [_punkt()], [], wissen, "Doku", LAUF, manifest_pfad=wissen.parent / "m.json",
+                         zusatz=zusatz, zusatz_ausgefallen=ausgefallen)
+    assert alt.is_file()
+
+
+def test_kettenlinks_nutzen_echte_notiznamen(tmp_path):
+    g = _graph()
+    for kid in ("A/1", "A_1"):  # sicherer_name macht aus beiden "A_1"
+        g.knoten_hinzu(Knoten(f"kette:{kid}", "kette", f"Kette {kid}", None, None, {"zustand_roh": "bricht"}))
+        z = hop_zustand_neu()
+        z["gemessen"] = {"wert": "bricht", "zeit": None}
+        g.kante_hinzu(Kante(kante_id("hop", "dienst:c", "dienst:b", kid, 1), "hop", "dienst:c", "dienst:b", "seed", (),
+                            {"kette": kid, "nr": "1", "mechanismus": "x", "zustand": z, "zustand_text": "bricht"}))
+    wissen = tmp_path / "wissen"
+    zusatz = [rs.Seite(rs.ZUSTAND_REL, lambda i, p: rs.seite_zustand(g, None, {"offen": []}, index_name=i,
+                                                                      pruefliste_name=p))]
+    rb.notizen_schreiben(g, [], [], wissen, "Doku", LAUF, manifest_pfad=wissen.parent / "m.json", zusatz=zusatz)
+    seite = _lesen(wissen / "Doku" / "Zustand.md")
+    ziele = re.findall(r"\[\[Doku/Ketten/([^\]]+)\]\] Kette (A/1|A_1)", seite)
+    assert len(ziele) == 2 and len({z for z, _ in ziele}) == 2
+    for name, _ in ziele:
+        assert (wissen / "Doku" / "Ketten" / f"{name}.md").is_file(), name
+
+
+def test_mitbauen_ohne_skill_absatz_und_digest_ueber_ganzen_skill(wurzel):
+    skill = skill_neuer_space(wurzel)
+    seite = rs.seite_mitbauen(wurzel, None)
+    assert "Diese Datei wird" not in seite and "Nicht von Hand" not in seite
+    assert f"grundlage: {json.dumps(rs._digest(skill))}" in seite
+    assert "## Wohin" in seite and "## Nie hier anlegen" in seite
+
+
+def test_zustand_zeigt_analyse_stand_im_digest():
+    an = {"commit": "abcdef1234567890", "tot": {"sicher_tot": 1, "wahrscheinlich_tot": 2}, "hotspots_top": []}
+    a = rs.seite_zustand(_graph(), an, {"offen": []})
+    b = rs.seite_zustand(_graph(), dict(an, commit="12345678aaaa"), {"offen": []})
+    assert "Analyse-Stand: `abcdef12`" in a
+    assert a.split("\n")[2] != b.split("\n")[2]
+
+
+def test_rueckverweise_folgen_der_umleitung(wurzel, tmp_path):
+    wissen = tmp_path / "wissen"
+    doku = wissen / "Doku"
+    doku.mkdir(parents=True)
+    (doku / "Index.md").write_bytes(b"von Hand")
+    (doku / "Prüfliste.md").write_bytes(b"auch von Hand")
+    _schreiben(wissen, rs.seiten(_graph(), wurzel, {"offen": [_punkt()]}, tmp_path / "leer"))
+    z = _lesen(doku / "Zustand.md")
+    m = _lesen(doku / "Mitbauen" / "Neuen Space erstellen mit Claude Code.md")
+    assert "[[Doku/Index (Loop)]]" in m and "[[Doku/Index]]" not in m
+    assert "[[Doku/Index (Loop)]]" in z and "[[Doku/Prüfliste (Loop)]]" in z and "[[Doku/Prüfliste]]" not in z
+
+
+GOLD = {
+    "Dienste/b.md": "5a2b94e5276c020aa893f4ce5d006194cf296388250a2fd5c911df385d82352e",
+    "Dienste/c.md": "07410ec3bc58564ca59ca177519521fc3d827046e19dcf1976f88e6ac53c4a85",
+    "Index.md": "514ee267193093306b2613a84d86e9630a4cfc5b2667a556eb92c33023adaac5",
+    "Ketten/K1.md": "8777a7722e40b19574629433eb16796ff4f92f5bb49a48c453224505bbd16e6c",
+    "Ketten/K2.md": "578d57d96b20e53a08902e778a6db2970fc98b837a9c6c1a22a20152c05351e6",
+    "Prüfliste.md": "1e6bbda22c171bdcc9d1a8a43d064adb49e45e7359b1a367e1b6fe946ea295a5",
+    "Spaces/a.md": "dc5486b4821b01b659d1d58de9524cc87fdfa42347d4d6010066e4102ef336f3",
+}
+GOLD_MANIFEST = "aebbf34e98e248a3623c5acef714190275e3521207874aeb117f555678d5ba9b"
+
+
+def test_ohne_zusatz_byte_identisch_zum_stand_vor_task_8(tmp_path):
+    """Goldwerte (SHA-256) stammen aus `rowboat.py` vor Task 8 (Commit 1240c9b) mit demselben Fixture."""
+    wissen = tmp_path / "wissen"
+    rb.notizen_schreiben(_graph(), [_punkt()], [_ledger_eintrag()], wissen, "Doku", LAUF,
+                         commits={LAUF: "f" * 40}, spitzen={KETTEN: "f" * 40}, manifest_pfad=tmp_path / "m.json",
+                         zusatz=[])
+    ist = {p.relative_to(wissen / "Doku").as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+           for p in (wissen / "Doku").rglob("*.md")}
+    assert ist == GOLD
+    assert hashlib.sha256((tmp_path / "m.json").read_bytes()).hexdigest() == GOLD_MANIFEST
