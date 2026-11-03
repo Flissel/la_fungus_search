@@ -4,15 +4,20 @@ Quellen (`doku.ereignisse`, Liste, gelesen unter `wurzel` = Messbaum, also der c
 
 - `{yaml: <repo-rel>, pfad: "spaces.*.events", werkzeug: "tool"}`: `*` ist die Space-ID, jeder Schluessel darunter
   ein Event-Name, `werkzeug` der Feldname des Werkzeugs. Beleg `yaml_key` (`spaces.<id>.events["<name>"]`, Digest wie
-  `anker.yaml_knoten_digest`, Zeile des Schluessels). Die Geschwister-Liste `prefixes` (gleiche Ebene wie `events`)
+  `anker.yaml_knoten_digest`, keine Zeile). Die Geschwister-Liste `prefixes` (gleiche Ebene wie `events`)
   liefert bekannte Event-Praefixe (`video.` -> `video`).
 - `{python_dict: "EVENT_TO_TOOL", wurzel: "vibemind-os/spaces"}`: Dict-Literale dieses Namens, String auf String,
   auf Modulebene oder direkt im Rumpf einer Klasse auf Modulebene (die echten Tabellen sind Klassenattribute wie
   `VideoBackendAgent.EVENT_TO_TOOL`). Der Space ist der erste Pfadteil unter `wurzel`. Testdateien und
-  `ausschluss_namen`/`ausschluss_pfade` zaehlen nicht. Beleg `symbol` (`<modulpfad>.[<Klasse>.]<Name>`, Digest der
-  Zuweisung, Zeile des Eintrags).
+  `ausschluss_namen`/`ausschluss_pfade` zaehlen nicht. Beleg `symbol` (`<modulpfad>.[<Klasse>.]<Name>`, Digest des
+  Eintragswerts, keine Zeile). Nicht lesbare Eintraege (kein Zeichenketten-Literal, `**x`) werden je Tabelle gezaehlt
+  (`ereignis_eintrag_unlesbar`).
 
-Belege tragen keinen Commit (`commit=""`): Ereignis-Knoten gehen in den schlanken Graph, ihr Digest bleibt stabil.
+Belege tragen weder Commit (`commit=""`) noch Zeile (`zeile=None`, Fix-Runde 1): Ereignis-Knoten gehen in den schlanken
+Graph; eine Zeilenverschiebung in Registry oder Agent aendert weder Block noch `digest_stabil`.
+
+`Ereignis.quelle` ist die konfigurierte Quelle (Dateiname der Registry bzw. der Tabellenname `EVENT_TO_TOOL`): zwei
+Tabellen derselben Quelle in einem Space werden vereinigt, nicht gegeneinander verglichen (Fix-Runde 1, Minor 5).
 
 Gleiche Events (Space-Schluessel, Name, Werkzeug) aus mehreren Quellen werden ein `Ereignis`; die weiteren Quellen
 stehen in `weitere`. Texte von Pruefpunkten tragen nur Namen, nie Dateiinhalte.
@@ -21,7 +26,6 @@ stehen in `weitere`. Texte von Pruefpunkten tragen nur Namen, nie Dateiinhalte.
 from __future__ import annotations
 
 import ast
-import hashlib
 import re
 import warnings
 from collections import defaultdict
@@ -45,9 +49,11 @@ DATEI_ENDUNGEN = frozenset({
     "bat", "cmd", "html", "css", "sql", "env", "lock", "log", "csv", "ini", "cfg", "rs", "go", "xml", "db", "sqlite",
     "sqlite3",
 })
-# `<praefix>.<name>`: nicht Teil eines Pfads (`/`), eines laengeren Punktnamens (`a.b.c`), eines Wortes oder eines
-# Bezeichners mit Vorsatz (`supabase:idea.move` ist eine Operation, kein Event)
-_TOKEN = re.compile(r"(?<![\w./\-:])([a-z][a-z0-9_]*)\.([a-z_][a-z0-9_]*)(?![\w/\-]|\.\w)")
+# Punktkette `<praefix>.<teil>[.<teil>...]` (Fix-Runde 1: auch dreiteilige Namen wie `desktop.task.create`): nicht
+# Teil eines Pfads (`/`), eines Wortes oder eines Bezeichners mit Vorsatz (`supabase:idea.move` ist eine Operation)
+_TOKEN = re.compile(r"(?<![\w./\-:])[a-z][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+(?![\w/\-]|\.\w)")
+_BLOCK_BEGINN = "<!-- graph:begin ereignisse "
+_BLOCK_ENDE = "<!-- graph:end -->"
 
 
 @dataclass(frozen=True)
@@ -55,16 +61,12 @@ class Ereignis:
     space: str  # wie in der Quelle geschrieben; verglichen wird ueber `namen.space_schluessel`
     name: str
     werkzeug: str
-    quelle: str  # kurzer Name der Quelle: Dateiname der Registry bzw. `[<Klasse>.]EVENT_TO_TOOL`
+    quelle: str  # konfigurierte Quelle: Dateiname der Registry bzw. Tabellenname (`EVENT_TO_TOOL`)
     beleg: Beleg
     weitere: tuple[tuple[str, Beleg], ...] = ()  # dasselbe Event (gleiches Werkzeug) in weiteren Quellen
 
     def quellen(self) -> list[tuple[str, Beleg]]:
         return [(self.quelle, self.beleg), *self.weitere]
-
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _pp(liste: list[Pruefpunkt] | None, art: str, text: str, datei: str | None) -> None:
@@ -132,7 +134,7 @@ def _yaml_lesen(q: Mapping[str, Any], wurzel: Path, praefixe: set[str] | None,
             roh = sw[name]
             werkzeug = roh.get(feld) if isinstance(roh, dict) else None
             pfad = anker.pfad_text([*teile[:stern], space, *teile[stern + 1:], name])
-            beleg = Beleg("yaml_key", rel, pfad, anker._digest_json(roh), "", k_ev.start_mark.line + 1)
+            beleg = Beleg("yaml_key", rel, pfad, anker._digest_json(roh), "", None)
             aus.append(Ereignis(space, name, str(werkzeug) if isinstance(werkzeug, (str, int)) else "", quelle,
                                 beleg))
     return aus
@@ -191,17 +193,20 @@ def _python_lesen(q: Mapping[str, Any], konfig: Konfig, wurzel: Path,
         except (OSError, UnicodeDecodeError, SyntaxError, ValueError, RecursionError) as fehler:
             _pp(pp, "ereignis_quelle_unlesbar", f"{rel}: nicht lesbar ({type(fehler).__name__})", rel)
             continue
-        zeilen = text.splitlines()
         space = unter.split("/", 1)[0]
-        for qual, zuweisung, d in _dicts(baum, name):
-            ende = getattr(zuweisung, "end_lineno", None) or zuweisung.lineno
-            digest = _sha("\n".join(zeilen[zuweisung.lineno - 1:ende]))
+        for qual, _, d in _dicts(baum, name):
             symbol = f"{anker.modulpfad(rel)}.{qual}"
+            unlesbar = 0
             for k, v in zip(d.keys, d.values):
                 if not (isinstance(k, ast.Constant) and isinstance(k.value, str)
                         and isinstance(v, ast.Constant) and isinstance(v.value, str)):
+                    unlesbar += 1  # `**basis` (Schluessel None), Aufrufe, Namen, Zahlen
                     continue
-                aus.append(Ereignis(space, k.value, v.value, qual, Beleg("symbol", rel, symbol, digest, "", k.lineno)))
+                beleg = Beleg("symbol", rel, symbol, anker._digest_json(v.value), "", None)
+                aus.append(Ereignis(space, k.value, v.value, name, beleg))
+            if unlesbar and pp is not None:
+                pp.append(Pruefpunkt("ereignis_eintrag_unlesbar", f"{rel}: {unlesbar} Eintrag/Einträge in {qual} sind "
+                                     "keine Zeichenketten-Literale und fehlen in den Events", rel, None, f"{rel}#{qual}"))
     return aus
 
 
@@ -233,13 +238,23 @@ def ereignisse_lesen(konfig: Konfig, wurzel: Path, *, praefixe: set[str] | None 
     return [gemischt[s] for s in sorted(gemischt)]
 
 
-def space_dokumente_zuordnen(spaces: Iterable[str], explizit: Mapping[str, Any],
-                             dateien: Iterable[str]) -> dict[str, str]:
+def space_dokumente_zuordnen(spaces: Iterable[str], explizit: Mapping[str, Any], dateien: Iterable[str], *,
+                             pruefpunkte: list[Pruefpunkt] | None = None) -> dict[str, str]:
     """Space-Schluessel -> Doku-Datei: zuerst `doku.space_dokumente`, sonst `docs/spaces/<NNN>_<name>.md` mit gleichem
-    normalisiertem Namen (bei mehreren Dateien die erste nach Namen). Ohne Treffer fehlt der Space."""
+    normalisiertem Namen (bei mehreren Dateien die erste nach Namen). Ohne Treffer fehlt der Space.
+
+    `dateien` sind die vorhandenen Doku-Ziele. Ein explizites Ziel, das nicht darunter ist (fehlt oder liegt ausserhalb
+    der `doku_ziele`), gibt `space_dokument_fehlt` (Fix-Runde 1); die Zuordnung bleibt, damit nicht zusaetzlich
+    `space_ohne_doku` entsteht."""
     expl = {space_schluessel(str(k)): str(v) for k, v in explizit.items() if isinstance(v, str) and v.strip()}
+    dateien = sorted(dateien)
+    vorhanden = {d.casefold() for d in dateien}
+    for s, ziel in sorted(expl.items()):
+        if ziel.strip("/").casefold() not in vorhanden and pruefpunkte is not None:
+            pruefpunkte.append(Pruefpunkt("space_dokument_fehlt", f"{s}: doku.space_dokumente nennt {ziel}, das ist "
+                                          "keine vorhandene Doku-Datei der doku_ziele", ziel, None, f"space:{s}"))
     je_name: dict[str, str] = {}
-    for d in sorted(dateien):
+    for d in dateien:
         m = SPACE_DOKU.match(d)
         if m:
             je_name.setdefault(space_schluessel(m.group("name")), d)
@@ -251,6 +266,21 @@ def space_dokumente_zuordnen(spaces: Iterable[str], explizit: Mapping[str, Any],
     return aus
 
 
+def _ohne_eigene_bloecke(text: str) -> list[str]:
+    """Zeilen des Texts; der Inhalt eigener Events-Bloecke ist leer (Fix-Runde 1): ein Event, das aus der Quelle
+    verschwunden ist, aber noch im alten generierten Block steht, ist kein `ereignis_nur_doku`."""
+    aus: list[str] = []
+    drin = False
+    for zeile in text.replace("\r\n", "\n").split("\n"):
+        klar = zeile.strip().lstrip("\ufeff")
+        if klar.startswith(_BLOCK_BEGINN):
+            drin = True
+        aus.append("" if drin else zeile)
+        if drin and klar == _BLOCK_ENDE:
+            drin = False
+    return aus
+
+
 def _namen(quellen: Iterable[tuple[str, Beleg]]) -> str:
     return ", ".join(sorted({q for q, _ in quellen}))
 
@@ -259,10 +289,11 @@ def abgleich(ereignisse: Sequence[Ereignis], doku_texte: Mapping[str, str], spac
              praefixe: Collection[str] = (), nicht_ereignisse: Collection[str] = ()) -> list[Pruefpunkt]:
     """Pruefpunkte (nur Namen im Text):
 
-    - `ereignis_quellen_abweichend`: in einem Space mit mehr als einer Quelle hat ein Name verschiedene Werkzeuge
+    - `ereignis_quellen_abweichend`: in einem Space mit mehr als einer konfigurierten Quelle hat ein Name verschiedene Werkzeuge
       oder fehlt in einer Quelle;
-    - `ereignis_nur_doku`: Token `<praefix>.<name>` in einer zugeordneten Doku (`doku_texte`), das in keiner Quelle
-      steht, dessen Praefix bekannt ist (aus den Event-Namen und `praefixe`), das kein Dateiname ist und nicht in
+    - `ereignis_nur_doku`: Punktkette `<praefix>.<teil>[.<teil>...]` in einer zugeordneten Doku (`doku_texte`, ohne
+      den Inhalt eigener Events-Bloecke), die als Ganzes in keiner Quelle steht, deren erster Teil ein bekannter
+      Praefix ist (aus den Event-Namen und `praefixe`), deren letzter Teil keine Dateiendung ist und die nicht in
       `nicht_ereignisse` steht (z. B. bekannte SQL-Objekte `schema.name`: `marketing.inhalte` ist eine Tabelle);
     - `space_ohne_doku`: Space mit Events, aber ohne Doku-Datei in `space_dokumente` (Schluessel normalisiert)."""
     pp: list[Pruefpunkt] = []
@@ -273,7 +304,7 @@ def abgleich(ereignisse: Sequence[Ereignis], doku_texte: Mapping[str, str], spac
     for key in sorted(je_space):
         evs = je_space[key]
         anzeige = evs[0].space
-        alle = {(q, b.file) for e in evs for q, b in e.quellen()}
+        alle = {q for e in evs for q, _ in e.quellen()}  # je konfigurierter Quelle, nicht je Datei
         if len(alle) > 1:
             je_name: dict[str, list[Ereignis]] = defaultdict(list)
             for e in evs:
@@ -281,14 +312,14 @@ def abgleich(ereignisse: Sequence[Ereignis], doku_texte: Mapping[str, str], spac
             for name in sorted(je_name):
                 eintraege = je_name[name]
                 werkzeuge = sorted({e.werkzeug for e in eintraege})
-                da = {(q, b.file) for e in eintraege for q, b in e.quellen()}
+                da = {q for e in eintraege for q, _ in e.quellen()}
                 if len(werkzeuge) > 1:
                     text = f"{anzeige}: `{name}` hat je Quelle ein anderes Werkzeug: " + ", ".join(
                         f"`{w or '—'}` ({_namen(q for e in eintraege if e.werkzeug == w for q in e.quellen())})"
                         for w in werkzeuge)
                 elif da != alle:
-                    fehlt = sorted({q for q, _ in alle - da})
-                    text = f"{anzeige}: `{name}` steht nur in {', '.join(sorted({q for q, _ in da}))}, nicht in " \
+                    fehlt = sorted(alle - da)
+                    text = f"{anzeige}: `{name}` steht nur in {', '.join(sorted(da))}, nicht in " \
                            f"{', '.join(fehlt)}"
                 else:
                     continue
@@ -296,8 +327,8 @@ def abgleich(ereignisse: Sequence[Ereignis], doku_texte: Mapping[str, str], spac
                 pp.append(Pruefpunkt("ereignis_quellen_abweichend", text, b.file, b.zeile, f"ereignis:{key}:{name}"))
         if key not in zuordnung:
             pp.append(Pruefpunkt(
-                "space_ohne_doku", f"{anzeige}: {len({e.name for e in evs})} Event(s) aus "
-                f"{_namen(q for e in evs for q in e.quellen())}, aber keine Space-Doku "
+                "space_ohne_doku", f"{anzeige}: Events aus {_namen(q for e in evs for q in e.quellen())}, aber keine "
+                "Space-Doku "
                 f"(docs/spaces/<NNN>_{key}.md oder doku.space_dokumente)", None, None, f"space:{key}"))
     namen = {e.name for e in ereignisse}
     andere = {n.lower() for n in nicht_ereignisse}
@@ -308,9 +339,10 @@ def abgleich(ereignisse: Sequence[Ereignis], doku_texte: Mapping[str, str], spac
         if text is None:
             continue
         gesehen: set[str] = set()
-        for nr, zeile in enumerate(text.replace("\r\n", "\n").split("\n"), 1):
+        for nr, zeile in enumerate(_ohne_eigene_bloecke(text), 1):
             for m in _TOKEN.finditer(zeile):
-                token, praefix, rest = m.group(0), m.group(1), m.group(2)
+                token = m.group(0)
+                praefix, rest = token.split(".", 1)[0], token.rsplit(".", 1)[1]
                 if token in namen or token in gesehen or praefix not in bekannt or rest in DATEI_ENDUNGEN \
                         or token in andere:
                     continue

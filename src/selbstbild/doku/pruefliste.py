@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from .konfig import Konfig
@@ -65,8 +65,11 @@ def neue_offene(konfig: Konfig, offen: Sequence[Pruefpunkt]) -> int:
 
 
 def pruefliste_ergaenzen(konfig: Konfig, offen: Sequence[Pruefpunkt], struktur: Sequence[Pruefpunkt], *,
-                         voll: bool, lauf: str) -> int:
+                         voll: bool, lauf: str,
+                         ersetzen: Callable[[Mapping[str, object]], bool] | None = None) -> int:
     """Neue offene Punkte anhaengen (dedupliziert); Struktur bei vollem Bau ersetzen, sonst vereinigen.
+    `ersetzen` (Task 5, Fix-Runde 1): alte Struktur-Eintraege, fuer die es wahr ist, fallen auch ohne vollen Bau weg
+    (Arten, die jeder Lauf vollstaendig neu berechnet, z. B. die Ereignis-Punkte). Das Dateiformat bleibt gleich.
     Rueckgabe: Zahl der neuen offenen Punkte."""
     alt = pruefliste_laden(konfig)
     bekannt = {_schluessel(e) for e in alt["offen"]}
@@ -77,7 +80,7 @@ def pruefliste_ergaenzen(konfig: Konfig, offen: Sequence[Pruefpunkt], struktur: 
             bekannt.add(_schluessel(d))
             alt["offen"].append(d)
             neu += 1
-    basis = [] if voll else alt["struktur"]
+    basis = [] if voll else [e for e in alt["struktur"] if ersetzen is None or not ersetzen(e)]
     gesehen = {_schluessel(e) for e in basis}
     for p in struktur:
         d = _pp_dict(p, lauf)

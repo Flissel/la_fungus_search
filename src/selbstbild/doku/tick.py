@@ -269,6 +269,24 @@ def signal_traegt(beleg: Beleg, doc: str, konfig: Konfig) -> bool:
     return Path(beleg.file).suffix.lower() not in CODE_ENDUNGEN
 
 
+# Task 5, Fix-Runde 1: Pruefpunkt-Arten, die jeder `_voll`-Lauf vollstaendig neu berechnet; in `struktur` werden sie
+# je Lauf ersetzt (auch ohne vollen Bau). Block-Arten nur fuer Events-Bloecke (Blockname `ereignisse <space>`).
+EREIGNIS_ARTEN = frozenset({
+    "ereignis_quellen_abweichend", "ereignis_nur_doku", "space_ohne_doku", "space_dokument_fehlt",
+    "ereignis_quelle_fehlt", "ereignis_quelle_unlesbar", "ereignis_eintrag_unlesbar",
+})
+EREIGNIS_BLOCK_ARTEN = frozenset({"block_entfernt", "block_ohne_quelle"})
+
+
+def ereignis_punkt(eintrag: Mapping[str, object]) -> bool:
+    """Ein Struktur-Eintrag der Pruefliste, den der naechste `_voll`-Lauf ersetzt (siehe `EREIGNIS_ARTEN`)."""
+    art = eintrag.get("art")
+    if art in EREIGNIS_ARTEN:
+        return True
+    return art in EREIGNIS_BLOCK_ARTEN and str(eintrag.get("aussage_id") or "").startswith(
+        render_ereignisse.BLOCK_PRAEFIX)
+
+
 def _doku_schluessel(schluessel: str) -> bool:
     """Task 5: Render-Hash einer anderen Doku als KETTEN.md (`<datei>.md#<block>`); KETTEN-Bloecke heissen ohne Datei."""
     datei, raute, _ = schluessel.partition("#")
@@ -1191,7 +1209,8 @@ class _Lauf:
         if graph_geaendert:  # Item 1: CAS gegen die Bytes, aus denen die Basis geladen wurde
             aenderungen.append(Aenderung(GRAPH_JSON, basis_roh, graph_text(neu_schlank, self.jetzt.isoformat())))
         if not aenderungen and not self.umgeschrieben:
-            neu_offen = pruefliste_ergaenzen(konfig, self.offen, self.struktur, voll=voll, lauf=self.lauf)
+            neu_offen = pruefliste_ergaenzen(konfig, self.offen, self.struktur, voll=voll, lauf=self.lauf,
+                                             ersetzen=ereignis_punkt)
             self.stand_speichern(fortschreiben=True, render_hashes=render_hashes, hand_edit=hand_edit, offene=offene)
             self.melden(f"Schreiben: nichts geändert (stabiler Digest gleich); Prüfliste +{neu_offen}; "
                         f"Stand: Lauf {self.lauf_nr}")
@@ -1205,7 +1224,7 @@ class _Lauf:
                                                    pp_datei=konfig.ketten_md, zweig=konfig.zweig,
                                                    vermerk=schreibvermerk_pfad(konfig))
         neu_offen = pruefliste_ergaenzen(konfig, [*self.offen, *aus.pruefpunkte], self.struktur, voll=voll,
-                                         lauf=self.lauf)
+                                         lauf=self.lauf, ersetzen=ereignis_punkt)
         if aus.fremd_commit is not None:  # I11: lokal vermerken, welcher fremde Commit die Ledger-Eintraege traegt
             try:
                 fremd_commits_merken(konfig, self.ledger, aus.fremd_commit)
@@ -1491,7 +1510,7 @@ class _Lauf:
         if not konfig.ereignisse:
             return
         zuordnung = ereignisse_ex.space_dokumente_zuordnen([e.space for e in evs], konfig.space_dokumente,
-                                                           doku_dateien(konfig))
+                                                           doku_dateien(konfig), pruefpunkte=pp)
         bloecke: dict[str, dict[str, str]] = {}
         for key, doc in sorted(zuordnung.items()):
             bloecke.setdefault(doc, {})[render_ereignisse.block_name(key)] = render_ereignisse.ereignisse_rendern(

@@ -8,7 +8,8 @@ Block je Space (Schluessel nach `namen.space_schluessel`):
     <!-- graph:end -->
 
 Zeilen nach Event-Name sortiert; weichen die Werkzeuge der Quellen ab, steht `⚠` in der Werkzeug-Zelle mit allen
-Werten. Gerendert und vor Hand-Edits geschuetzt wird mit demselben Kern wie KETTEN.md
+Werten. Die Beleg-Zelle nennt Datei und Anker ohne Zeile (Fix-Runde 1), damit verschobene Zeilen den Block nicht
+aendern. Gerendert und vor Hand-Edits geschuetzt wird mit demselben Kern wie KETTEN.md
 (`render_ketten.bloecke_rendern`, Render-Hashes, Pruefpunkt `hand_edit`).
 
 Fehlt ein Block, fuegt der erste Lauf ihn ein: hinter den letzten vorhandenen Events-Block, sonst als Abschnitt
@@ -24,6 +25,7 @@ import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 
+from .anker import Beleg, modulpfad
 from .belege_formate import BOM, kopf_ebene
 from .extraktoren.ereignisse import Ereignis
 from .namen import space_schluessel
@@ -48,6 +50,13 @@ def _werkzeug(w: str) -> str:
     return _code(w) if w else "—"
 
 
+def _kurzanker(b: Beleg) -> str:
+    """Anker ohne Zeile (Fix-Runde 1): YAML-Pfad wie gespeichert, Symbol ohne den Modulpfad der Datei
+    (`VideoBackendAgent.EVENT_TO_TOOL`)."""
+    modul = modulpfad(b.file) + "."
+    return b.anker[len(modul):] if b.art == "symbol" and b.anker.startswith(modul) else b.anker
+
+
 def ereignisse_rendern(space: str, ereignisse: Sequence[Ereignis]) -> str:
     """Tabelle `| Event | Werkzeug | Quelle | Beleg |` der Events dieses Space (LF-Zeilen, nach Name sortiert)."""
     key = space_schluessel(space)
@@ -65,8 +74,8 @@ def ereignisse_rendern(space: str, ereignisse: Sequence[Ereignis]) -> str:
             werkzeug = "⚠ " + " / ".join(
                 f"{_werkzeug(e.werkzeug)} ({', '.join(sorted({q for q, _ in e.quellen()}))})" for e in evs)
         quellen = sorted({q for e in evs for q, _ in e.quellen()})
-        belege = sorted({(b.file, b.zeile or 0, b.anker): b for e in evs for _, b in e.quellen()}.items())
-        stellen = ", ".join(_code(f"{b.file}:{b.zeile}" if b.zeile is not None else b.file) for _, b in belege)
+        belege = sorted({(b.file, b.anker): b for e in evs for _, b in e.quellen()}.items())
+        stellen = ", ".join(f"{_code(b.file)} {_code(_kurzanker(b))}" for _, b in belege)
         zeilen.append(_zeile([_code(name), werkzeug, _zelle(", ".join(quellen)), stellen]))
     return "".join(z + "\n" for z in zeilen)
 

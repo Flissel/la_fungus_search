@@ -80,13 +80,14 @@ def test_registry_und_dict_zusammen(tmp_path):
         ("video", "video.vision", "db_query"), ("video", "video.vision", "vision_generate")]
     status = evs[1]
     assert status.beleg.art == "yaml_key" and status.beleg.file == REGISTRY
-    assert status.beleg.anker == 'spaces.video.events["video.status"]' and status.beleg.zeile == 6
+    assert status.beleg.anker == 'spaces.video.events["video.status"]' and status.beleg.zeile is None
     assert status.beleg.commit == ""  # keine Commits in diesen Knoten (stabiler Digest)
     assert [b.art for _, b in status.weitere] == ["symbol"]  # dieselbe Zeile auch in der Tabelle
     publish = evs[0]
     assert publish.beleg.art == "symbol" and publish.beleg.file == AGENT
     assert publish.beleg.anker == "vibemind-os.spaces.video.agents.video_agent.VideoBackendAgent.EVENT_TO_TOOL"
-    assert publish.beleg.zeile == 10 and publish.beleg.commit == ""
+    assert publish.beleg.zeile is None and publish.beleg.commit == ""
+    assert publish.quelle == "EVENT_TO_TOOL" and status.quelle == "reg.yml"  # je konfigurierter Quelle
     assert ereignisse_lesen(k, tmp_path) == evs  # deterministisch
     pp = abgleich(evs, {}, {"video": "docs/spaces/018_video.md"})
     assert sorted(p.art for p in pp) == ["ereignis_quellen_abweichend"] * 2
@@ -141,6 +142,7 @@ def test_nur_doku(tmp_path):
                   {"video": "docs/spaces/018_video.md", "desktop": "docs/spaces/004_desktop.md"}, praefixe=praefixe)
     nur = [p for p in pp if p.art == "ereignis_nur_doku"]
     assert sorted(p.aussage_id for p in nur) == ["docs/spaces/018_video.md#video.reel",
+                                                 "docs/spaces/018_video.md#video.reel.alt",  # dreiteilig (Fix 4)
                                                  "docs/spaces/018_video.md#web.crawl"]
     assert all(p.datei == "docs/spaces/018_video.md" for p in nur)
     assert next(p for p in nur if "video.reel" in p.text).zeile == 3
@@ -166,7 +168,8 @@ def test_rendern_tabelle(tmp_path):
     assert [z.split("|")[1].strip() for z in zeilen[2:-1]] == ["`video.publish`", "`video.status`", "`video.vision`"]
     vision = zeilen[4]
     assert "⚠" in vision and "`db_query`" in vision and "`vision_generate`" in vision
-    assert "⚠" not in zeilen[3] and f"`{REGISTRY}:6`" in zeilen[3] and f"`{AGENT}:8`" in zeilen[3]
+    assert "⚠" not in zeilen[3] and f'`{REGISTRY}` `spaces.video.events["video.status"]`' in zeilen[3]
+    assert f"`{AGENT}` `VideoBackendAgent.EVENT_TO_TOOL`" in zeilen[3] and ":8" not in text  # keine Zeilennummern
     assert text.endswith("\n") and "\r" not in text
     assert ereignisse_rendern("anders", _evs(tmp_path)) == "| Event | Werkzeug | Quelle | Beleg |\n|---|---|---|---|\n"
 
@@ -373,3 +376,116 @@ def test_tick_liest_die_registry_aus_dem_messbaum(fx):
     assert erg.commit is None and (fx.repo / "docs/spaces/001_a.md").read_bytes() == vorher
     knoten, _, _ = _ereignis_graph(fx.repo)
     assert "dreckig" not in str(knoten["ereignis:a:a.stopp"].attribute)
+
+
+# ---------- Fix-Runde 1 ----------
+
+def _digest(evs):
+    from selbstbild.doku.bauen import ereignisse_einbauen
+    g = Graph()
+    ereignisse_einbauen(g, evs)
+    return schlank(g).digest_stabil()
+
+
+def test_fix1_keine_zeilennummern_verschiebung_aendert_nichts(tmp_path):
+    k = _video(tmp_path)
+    evs = ereignisse_lesen(k, tmp_path)
+    assert all(b.zeile is None for e in evs for _, b in e.quellen())
+    block, digest = ereignisse_rendern("video", evs), _digest(evs)
+    _schreib(tmp_path, REGISTRY, "# Kommentar oben\n\n" + REG_VIDEO)
+    _schreib(tmp_path, AGENT, "# Kommentar\n\n\n" + AGENT_VIDEO.replace('    """Agent."""\n', '    """Agent."""\n\n\n'))
+    verschoben = ereignisse_lesen(k, tmp_path)
+    assert ereignisse_rendern("video", verschoben) == block and _digest(verschoben) == digest
+    _schreib(tmp_path, REGISTRY, REG_VIDEO.replace("tool: video_status", "tool: video_zustand"))
+    anders = ereignisse_lesen(k, tmp_path)
+    assert ereignisse_rendern("video", anders) != block and _digest(anders) != digest
+
+
+def test_fix3_eigener_alter_block_kein_nur_doku(tmp_path):
+    evs = _evs(tmp_path)
+    doku = ("# Video\n\n<!-- graph:begin ereignisse video -->\n| Event | Werkzeug | Quelle | Beleg |\n|---|---|---|---|\n"
+            "| `video.entfernt` | `x` | reg.yml | `r` |\n<!-- graph:end -->\n\nDanach `video.wirklich_neu`.\n")
+    pp = abgleich(evs, {"d.md": doku}, {"video": "d.md"})
+    assert [(p.aussage_id, p.zeile) for p in pp if p.art == "ereignis_nur_doku"] == [("d.md#video.wirklich_neu", 9)]
+
+
+def test_fix4_dreiteilige_namen(tmp_path):
+    reg = "spaces:\n  desktop:\n    prefixes: [desktop.]\n    events:\n      desktop.task.create: { tool: anlegen }\n"
+    k = _video(tmp_path, reg=reg, agent=None)
+    praefixe: set[str] = set()
+    evs = ereignisse_lesen(k, tmp_path, praefixe=praefixe)
+    doku = ("Es gibt `desktop.task.create` und angeblich `desktop.task.delete`; Dateien `desktop.config.yaml`, "
+            "`config.yaml`, `desktop.json`.\n")
+    pp = abgleich(evs, {"d.md": doku}, {"desktop": "d.md"}, praefixe=praefixe)
+    assert [p.aussage_id for p in pp] == ["d.md#desktop.task.delete"]
+
+
+def test_fix5_zwei_tabellen_einer_quelle_werden_vereinigt(tmp_path):
+    reg = "spaces:\n  video:\n    events:\n      video.status: { tool: s }\n      video.publish: { tool: p }\n"
+    _schreib(tmp_path, "vibemind-os/spaces/video/a.py", 'EVENT_TO_TOOL = {"video.status": "s"}\n')
+    _schreib(tmp_path, "vibemind-os/spaces/video/b.py", 'EVENT_TO_TOOL = {"video.publish": "p"}\n')
+    evs = ereignisse_lesen(_video(tmp_path, reg=reg, agent=None), tmp_path)
+    assert abgleich(evs, {}, {"video": "d.md"}) == []
+    _schreib(tmp_path, REGISTRY, reg.replace("      video.publish: { tool: p }\n", ""))
+    pp = abgleich(ereignisse_lesen(_konfig(tmp_path), tmp_path), {}, {"video": "d.md"})
+    assert [p.text for p in pp] == ["video: `video.publish` steht nur in EVENT_TO_TOOL, nicht in reg.yml"]
+
+
+def test_fix6_nicht_lesbare_eintraege_ein_punkt_je_tabelle(tmp_path):
+    _schreib(tmp_path, "vibemind-os/spaces/video/a.py",
+             'BASIS = {}\nEVENT_TO_TOOL = {"video.status": "s", "video.x": werkzeug(), **BASIS, 3: "y"}\n')
+    pp = []
+    evs = ereignisse_lesen(_konfig(tmp_path, quellen=QUELLEN[1:]), tmp_path, pruefpunkte=pp)
+    assert [e.name for e in evs] == ["video.status"]
+    assert [(p.art, p.datei) for p in pp] == [("ereignis_eintrag_unlesbar", "vibemind-os/spaces/video/a.py")]
+    assert "3 " in pp[0].text and "werkzeug" not in pp[0].text
+
+
+def test_fix7_space_dokument_fehlt(tmp_path):
+    pp = []
+    dateien = ["docs/spaces/006_ideas.md"]
+    z = space_dokumente_zuordnen(["bubbles", "ideas"], {"bubbles": "docs/spaces/099_weg.md", "ideas": "README.md"},
+                                 dateien, pruefpunkte=pp)
+    assert sorted((p.art, p.aussage_id) for p in pp) == [("space_dokument_fehlt", "space:bubbles"),
+                                                         ("space_dokument_fehlt", "space:ideas")]
+    assert z == {"bubbles": "docs/spaces/099_weg.md", "ideas": "README.md"}  # keine zusaetzliche space_ohne_doku
+    assert space_dokumente_zuordnen(["bubbles"], {"bubbles": "docs/spaces/006_ideas.md"}, dateien, pruefpunkte=pp) \
+        == {"bubbles": "docs/spaces/006_ideas.md"} and len(pp) == 2
+
+
+REG_B = "spaces:\n  a:\n    events:\n      a.start: { tool: andere }\n"
+
+
+def test_fix2_ereignis_punkte_werden_je_lauf_ersetzt(fx):
+    _tick_ereignisse(fx)
+    fx.konfig = dataclasses.replace(fx.konfig, ereignisse=(
+        *fx.konfig.ereignisse, {"yaml": "config/reg2.yml", "pfad": "spaces.*.events", "werkzeug": "tool"}))
+    _schreib(fx.repo, "config/reg2.yml", REG_B)
+    _commit(fx.repo, "zweite quelle", "config/reg2.yml")
+    _anstoss(fx)
+    assert _tick(fx).spaces == []  # Teil-Lauf ohne Neubau (voll=False)
+
+    def punkte(art):
+        return [p for p in _pruefliste(fx)["struktur"] if p["art"] == art]
+
+    assert [p["aussage_id"] for p in punkte("ereignis_nur_doku")] == ["docs/spaces/001_a.md#a.fehlt"]
+    abw = punkte("ereignis_quellen_abweichend")
+    assert sorted(p["aussage_id"] for p in abw) == ["ereignis:a:a.start", "ereignis:a:a.stopp"]
+    assert [p["text"] for p in punkte("space_ohne_doku")] == []
+    # Werkzeug geaendert: ein Punkt, nicht zwei; Quelle repariert (a.fehlt jetzt in der Registry): Punkt weg
+    _schreib(fx.repo, "config/reg2.yml", REG_B.replace("andere", "noch_andere"))
+    _schreib(fx.repo, "config/reg.yml", REG_A + "      a.fehlt: { tool: fehlt }\n")
+    _commit(fx.repo, "quellen", "config/reg.yml", "config/reg2.yml")
+    _anstoss(fx)
+    assert _tick(fx).spaces == []
+    assert punkte("ereignis_nur_doku") == []
+    start = [p for p in punkte("ereignis_quellen_abweichend") if p["aussage_id"] == "ereignis:a:a.start"]
+    assert len(start) == 1 and "noch_andere" in start[0]["text"]
+
+def test_fix2_ersetzt_nur_ereignis_arten_und_events_bloecke():
+    from selbstbild.doku.tick import ereignis_punkt
+    assert ereignis_punkt({"art": "ereignis_nur_doku", "aussage_id": "d.md#a.b"})
+    assert ereignis_punkt({"art": "block_entfernt", "aussage_id": "ereignisse video"})
+    assert not ereignis_punkt({"art": "block_entfernt", "aussage_id": "hops K1"})
+    assert not ereignis_punkt({"art": "block_unbekannt", "aussage_id": "ereignisse video"})
+    assert not ereignis_punkt({"art": "beleg_unsicher", "aussage_id": "x"})
