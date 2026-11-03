@@ -157,3 +157,48 @@ def test_c1_erstbefuellung_veraltet_mit_schluessel(fx):
     offen = tk.pruefliste_laden(fx.konfig)["offen"]
     assert any(p["art"] == "judge_ungueltig" and p["datei"] == "docs/spaces/001_e1.md" for p in offen)
     assert all(GHP not in json.dumps(p, ensure_ascii=False) for p in offen)
+
+
+# ---------- C2b: ein Lauf nur wegen der Erstbefuellung baut alle Spaces ----------
+
+def _ohne_aussagen_im_repo_graph(fx, datei):
+    """Wie nach der Umschaltung: der committete Graph kennt die Aussagen eines Doku-Ziels noch nicht (der alte Loop
+    merkte nur KETTEN.md). Nur der Loop-Graph aendert sich -- weder Code noch Doku."""
+    pfad = fx.repo / "docs/graph/graph.json"
+    doc = json.loads(pfad.read_text(encoding="utf-8"))
+    weg = {k["id"] for k in doc["knoten"] if k.get("typ") == "aussage" and k.get("datei") == datei}
+    assert weg
+    doc["knoten"] = [k for k in doc["knoten"] if k["id"] not in weg]
+    doc["kanten"] = [e for e in doc["kanten"] if e["von"] not in weg]
+    doc["digest"] = Graph.aus_doc(doc).digest()
+    pfad.write_text(json.dumps(doc, sort_keys=True, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    _git_commit(fx, "graph ohne Aussagen", "docs/graph/graph.json")
+
+
+def _git_commit(fx, nachricht, *pfade):
+    from test_doku_tick import _commit
+    return _commit(fx.repo, nachricht, *pfade)
+
+
+def test_c2b_erstbefuellungs_lauf_ohne_aenderung_baut_alle_spaces(fx):
+    from test_doku_ziele import _aussagen, _belege_von
+
+    _erst_start(fx)
+    _ohne_aussagen_im_repo_graph(fx, "docs/spaces/001_e1.md")
+    _tick(fx, erzwingen=False)  # der bewegte HEAD wird am Tag nachgezogen (keine Aenderung an Code oder Doku)
+    bauer, abo = FakeManifestBauer(), Abo()
+    erg = _nachtlauf(fx, bauer=bauer, laufzeit=abo)
+    (kid,) = _aussagen(fx.repo, "docs/spaces/001_e1.md")
+    belege = _belege_von(fx.repo, kid)
+    assert any(art == "symbol" and anker == "client.helfer" for _, art, _, anker, _ in belege), belege
+    assert D1 in abo.aussagen()  # mit ihrem Space-Anker signaltragend -> einmal geprueft
+    assert erg.erst_faellig and sorted(bauer.gebaut) == ["a", "b"] and erg.spaces == ["a", "b"]
+
+
+def test_c2b_ohne_erstbefuellung_bleibt_der_lauf_ohne_neubau(fx):
+    _erst_start(fx)
+    _ohne_aussagen_im_repo_graph(fx, "docs/spaces/001_e1.md")
+    bauer = FakeManifestBauer()
+    from test_doku_erstbefuellung import _tag
+    erg = _tick(fx, jetzt=_tag(), bauer=bauer)  # am Tag: nicht faellig -> kein Neubau, kein LLM
+    assert not erg.erst_faellig and bauer.gebaut == [] and erg.llm_aufrufe == 0

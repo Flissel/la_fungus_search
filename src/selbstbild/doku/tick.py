@@ -1159,6 +1159,12 @@ class _Lauf:
         # Task 6: ein Commit unter einem Space-Ordner ohne Doku oder mit generierter Doku -> Lauf ohne Neubau
         space_geaendert = self._space_anstoss(geaendert)
         doku_geaendert += [p for p in space_geaendert if p not in doku_geaendert]
+        if self.erst_fragen and not spaces and not belegdateien and not doku_geaendert:
+            # Final-Fix C2b: ein Lauf, den nur die Erstbefuellung ausloest, baut alle Spaces -- sonst verankert er
+            # noch nie gemerkte Aussagen ohne Space-Manifeste (ohne Symbol-Anker, also nie erstgeprueft). Commit nur,
+            # wenn sich der stabile Digest aendert (wie immer)
+            spaces = sorted(konfig.spaces)
+            self.melden("Erstbefüllung: Lauf ohne Änderung – alle Spaces werden gebaut (Anker mit Manifesten)")
         offene = list(self.stand_alt.offene_signale) if self.stand_alt else []
         self.spaces = spaces
 
