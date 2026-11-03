@@ -302,11 +302,18 @@ def signal_traegt(beleg: Beleg, doc: str, konfig: Konfig) -> bool:
 
     Nein nur fuer ganze-Datei-Belege (`datei`) auf Code-Dateien (`CODE_ENDUNGEN`, bei `.sql` nur `datei`, nicht
     `sql`) in den neuen Doku-Zielen und nur-lesend-Dateien; KETTEN.md und alle anderen Belegarten bleiben wie
-    bisher. Auch fuer die Erstbefuellung (Task 7)."""
+    bisher. Auch fuer die Erstbefuellung (Task 7).
+
+    Ruling T4-c2: dort auch kein Signal fuer JEDEN `datei`-Beleg ohne Ankernamen, gleich welche Endung (z. B.
+    `WORKBOARD.md`, das sich mehrmals am Tag aendert). Der Judge kann dafuer nie gueltig `veraltet` sagen
+    (`erlaubte_anker` filtert leere Namen); jedes Signal kostete nur Aufrufe. Nachgefuehrt und gemeldet wird wie bei
+    T4-c (`beleg_datei_geaendert` je Datei)."""
     if beleg.art != "datei" or doc == konfig.ketten_md:
         return True
     if not (doku_ziel(konfig, doc) or nur_lesend(konfig, doc)):
         return True
+    if not beleg.anker:
+        return False
     return Path(beleg.file).suffix.lower() not in CODE_ENDUNGEN
 
 
@@ -1189,6 +1196,15 @@ class _Lauf:
             self.nur_erstbefuellung = True  # Betreff `docs(loop): Erstbefüllung – …`, nicht die Liste aller Spaces
             self.melden("Erstbefüllung: Lauf ohne Änderung – alle Spaces werden gebaut (Anker mit Manifesten)")
         offene = list(self.stand_alt.offene_signale) if self.stand_alt else []
+        # Ruling T4-c2: offene Signale, die nach T4-c/T4-c2 kein Judge-Signal tragen, sofort erledigen -- kein Judge,
+        # nicht weitertragen; der Lauf liest die Doku (Belegdatei) und fuehrt ihre Belege still nach
+        # (`beleg_datei_geaendert` je Datei), wie bei einer neuen Aenderung
+        ohne_signal = [s for s in offene if not self._offen_traegt(s)]
+        if ohne_signal:
+            offene = [s for s in offene if self._offen_traegt(s)]
+            belegdateien |= {str(s["datei"]) for s in ohne_signal if s.get("datei")}
+            self.melden(f"Offene Signale: {len(ohne_signal)} ohne Judge-Signal (T4-c2) – erledigt, Belege werden "
+                        "nachgeführt")
         self.spaces = spaces
 
         def zahl(liste: Sequence[str]) -> str:
@@ -1431,6 +1447,14 @@ class _Lauf:
         self.melden(f"Messbaum: {len(mb.commits)} Worktree(s) auf HEAD, {len(mb.nicht_messbar)} Submodul(e) nicht "
                     "messbar")
         return None
+
+    def _offen_traegt(self, s: Mapping[str, Any]) -> bool:
+        """Ruling T4-c2: traegt dieses gespeicherte offene Signal ein Judge-Signal? Kaputte Eintraege: ja (wie bisher
+        verwirft `_offene_fragen` sie, der naechste Neubau findet das Signal wieder)."""
+        try:
+            return signal_traegt(Beleg.from_dict(s["beleg"]), str(s["aussage"]["datei"]), self.konfig)
+        except (KeyError, TypeError, ValueError):
+            return True
 
     def _offene_fragen(self, offene: Sequence[Mapping[str, Any]]
                        ) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:

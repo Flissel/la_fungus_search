@@ -448,8 +448,8 @@ def test_signal_traegt(fx):
 
     k = _ziele(fx, doku_ziele=("docs/spaces/0*.md",), doku_nur_lesen=("ext/*/README.md",))
 
-    def b(art, datei):
-        return Beleg(art, datei, "", "d" * 64, "c", None)
+    def b(art, datei, anker=""):
+        return Beleg(art, datei, anker, "d" * 64, "c", None)
 
     ziel, nur = "docs/spaces/001_x.md", "ext/a/README.md"
     for datei in ("a/b.py", "a/b.PYI", "w.ts", "w.tsx", "w.js", "w.jsx", "w.mjs", "w.cjs", "w.rs", "w.go", "w.ps1",
@@ -458,9 +458,13 @@ def test_signal_traegt(fx):
         assert not signal_traegt(b("datei", datei), nur, k), datei
         assert signal_traegt(b("datei", datei), KETTEN, k), datei  # KETTEN.md unveraendert
         assert signal_traegt(b("datei", datei), "docs/other.md", k), datei  # kein Ziel
-    for art, datei in (("symbol", "a/b.py"), ("sql", "db/x.sql"), ("yaml_key", "c.yaml"), ("datei", "n/p.md"),
-                       ("datei", "c.yaml"), ("datei", "c.json")):
+    for art, datei in (("symbol", "a/b.py"), ("sql", "db/x.sql"), ("yaml_key", "c.yaml")):
         assert signal_traegt(b(art, datei), ziel, k), (art, datei)
+    # Ruling T4-c2: `datei` ohne Ankernamen traegt auch auf Nicht-Code kein Signal; mit Ankernamen wie bisher
+    for datei in ("n/p.md", "c.yaml", "c.json"):
+        assert not signal_traegt(b("datei", datei), ziel, k), datei
+        assert signal_traegt(b("datei", datei, "abschnitt"), ziel, k), datei
+        assert signal_traegt(b("datei", datei), KETTEN, k), datei
 
 
 def test_code_datei_belege_ohne_judge_ein_pruefpunkt(fx):
@@ -513,13 +517,17 @@ def test_symbol_beleg_auf_code_signalisiert_weiter(fx):
     assert erg.llm_aufrufe == 2 and not _datei_punkte(fx)
 
 
-def test_datei_beleg_auf_markdown_signalisiert_weiter(fx):
+def test_datei_beleg_auf_markdown_ohne_ankernamen_ohne_judge(fx):
+    """Ruling T4-c2 (vorher: signalisiert weiter): ein `datei`-Beleg ohne Ankernamen auf Markdown in einem Doku-Ziel
+    fragt keinen Judge mehr, sondern wird nachgefuehrt und als `beleg_datei_geaendert` gemeldet."""
     _code_ziele(fx, ["Der Plan fuer den Space steht in `notes/plan.md` und gilt weiter."])
     _schreib(fx.repo, "notes/plan.md", "# Plan\n\nzweiter Stand\n")
     _commit(fx.repo, "plan", "notes/plan.md")
     _anstoss(fx)
-    erg = _tick(fx, laufzeit=FakeLaufzeit(_urteil("noch_wahr"), _urteil("noch_wahr")))
-    assert erg.llm_aufrufe == 2 and not _datei_punkte(fx)
+    lauf = FakeLaufzeit(_urteil("noch_wahr"), _urteil("noch_wahr"))
+    erg = _tick(fx, laufzeit=lauf)
+    assert erg.llm_aufrufe == 0 and lauf.aufrufe == []
+    assert [p["datei"] for p in _datei_punkte(fx)] == ["notes/plan.md"]
 
 
 def test_fremdes_ziel_in_anderer_schreibweise_bleibt_unberuehrt(fx):

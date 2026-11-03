@@ -211,6 +211,156 @@ def test_nachtrag_erstbefuellung_unklar_begruendung_ohne_angeschnittenen_schlues
     assert "ghp_" not in punkte[0]["text"] and GHP[4:9] not in punkte[0]["text"]
 
 
+# ---------- Ruling T4-c2: Ganzdatei-Anker ohne Ankernamen tragen in Doku-Zielen kein Judge-Signal ----------
+
+WB = "WORKBOARD.md"
+WB_SAETZE = [f"Claim {i}: jede Session traegt sich in `WORKBOARD.md:5` ein, bevor sie arbeitet." for i in (1, 2, 3)]
+
+
+def _workboard_ziele(fx):
+    from test_doku_tick import _anstoss, _commit, _schreib, _seed
+    from test_doku_ziele import _doku, _ziele
+
+    _schreib(fx.repo, WB, "# Workboard\n\n| Session | Claim |\n|---|---|\n| a | x |\n")
+    _commit(fx.repo, "workboard", WB)
+    _ziele(fx, doku_ziele=("docs/spaces/0*.md",))
+    _seed(fx)
+    for i, satz in enumerate(WB_SAETZE, start=1):
+        _schreib(fx.repo, f"docs/spaces/{i:03d}_w{i}.md", _doku(f"W{i}", satz, belege=""))
+    _commit(fx.repo, "ziele", "docs/spaces")
+    _anstoss(fx)
+    assert _tick(fx, erzwingen=True).llm_aufrufe == 0
+
+
+def _wb_aendern(fx, n):
+    from test_doku_tick import _commit, _schreib
+    _schreib(fx.repo, WB, f"# Workboard\n\n| Session | Claim |\n|---|---|\n| a | x |\n| s{n} | neu {n} |\n")
+    return _commit(fx.repo, f"claim {n}", WB)
+
+
+def _wb_punkte(fx):
+    return [p for p in tk.pruefliste_laden(fx.konfig)["offen"]
+            if p["art"] == "beleg_datei_geaendert" and p["datei"] == WB]
+
+
+def _wb_belege(fx):
+    from test_doku_ziele import _aussagen, _belege_von
+    return {kid: [b for b in _belege_von(fx.repo, kid) if b[2] == WB]
+            for i in (1, 2, 3) for kid in _aussagen(fx.repo, f"docs/spaces/{i:03d}_w{i}.md")}
+
+
+def test_t4c2_signal_traegt_ganzdatei_ohne_ankernamen(fx):
+    from selbstbild.doku.tick import signal_traegt
+    from test_doku_tick import KETTEN
+    from test_doku_ziele import _ziele
+
+    k = _ziele(fx, doku_ziele=("docs/spaces/0*.md",), doku_nur_lesen=("ext/*/README.md",))
+
+    def b(art, datei, anker=""):
+        return Beleg(art, datei, anker, "d" * 64, "c", 3)
+
+    for ziel in ("docs/spaces/001_x.md", "ext/a/README.md"):
+        for datei in (WB, "notes/plan.md", "c.yaml", "c.json", "a/b.py"):
+            assert not signal_traegt(b("datei", datei), ziel, k), (ziel, datei)  # leerer Ankername, auch mit Zeile
+        assert signal_traegt(b("datei", "c.yaml", "dienste.a"), ziel, k)  # mit Ankernamen: Signal
+        assert signal_traegt(b("datei", "notes/plan.md", "Plan"), ziel, k)
+        assert not signal_traegt(b("datei", "a/b.py", "x"), ziel, k)  # Code-Endung bleibt ohne Signal (T4-c)
+        for art, datei, anker in (("symbol", "a/b.py", "m.f"), ("yaml_key", "c.yaml", "a.b"), ("sql", "d.sql", "t")):
+            assert signal_traegt(b(art, datei, anker), ziel, k), art
+    assert signal_traegt(b("datei", WB), KETTEN, k)  # KETTEN.md unveraendert
+    assert signal_traegt(b("datei", WB), "docs/other.md", k)  # kein Ziel
+
+
+def test_t4c2_workboard_aenderung_ohne_judge_ein_pruefpunkt(fx):
+    from test_doku_tick import _anstoss
+
+    _workboard_ziele(fx)
+    vorher = _wb_belege(fx)
+    assert all(vorher.values()) and len(vorher) == 3  # alle drei Aussagen tragen den Ganzdatei-Anker
+    _wb_aendern(fx, 1)
+    _anstoss(fx)
+    lauf, budget = FakeLaufzeit(), FakeBudget()
+    erg = _tick(fx, laufzeit=lauf, budget=budget)
+    assert lauf.aufrufe == [] and erg.llm_aufrufe == 0 and budget.pruefungen == [] and erg.signale == 0
+    (punkt,) = _wb_punkte(fx)
+    assert "3 Aussage" in punkt["text"]
+    nachher = _wb_belege(fx)
+    assert all(nachher[k] != vorher[k] for k in vorher)  # Digest still nachgefuehrt
+
+
+def test_t4c2_offenes_signal_im_stand_ohne_aufruf_erledigt(fx):
+    import dataclasses
+
+    from selbstbild.doku import aussagen as au
+    from selbstbild.doku import stand as st
+    from test_doku_tick import _anstoss
+    from test_doku_ziele import _aussagen
+
+    _workboard_ziele(fx)
+    _wb_aendern(fx, 1)
+    _anstoss(fx)
+    _tick(fx, ohne_llm=True)  # zieht den Commit-Zeiger nach
+    aid = next(iter(_aussagen(fx.repo, "docs/spaces/001_w1.md")))[len("aussage:"):]
+    beleg = Beleg("datei", WB, "", "0" * 64, _head(fx.repo), None)
+    aussage = au.Aussage(aid, "docs/spaces/001_w1.md", "W1 > Was hier passiert", 5, 5, WB_SAETZE[0], (beleg,))
+    alt = st.stand_laden(fx.konfig)
+    st.stand_schreiben(fx.konfig, dataclasses.replace(alt, offene_signale=[{
+        "space": None, "datei": WB, "aussage": tk._aussage_dict(aussage), "beleg": beleg.to_dict(),
+        "quelltext_alt": "", "quelltext_neu": "", "nachbarn": [], "neu_digest": "1" * 64}]))
+    lauf, budget = FakeLaufzeit(), FakeBudget()
+    _anstoss(fx)
+    erg = _tick(fx, laufzeit=lauf, budget=budget)
+    assert lauf.aufrufe == [] and erg.llm_aufrufe == 0 and budget.pruefungen == []
+    assert st.stand_laden(fx.konfig).offene_signale == []
+    assert len(_wb_punkte(fx)) == 1
+    # danach: die Belege sind nachgefuehrt, ein weiterer Lauf fragt nichts
+    _anstoss(fx)
+    lauf2 = FakeLaufzeit()
+    assert _tick(fx, laufzeit=lauf2, erzwingen=True).llm_aufrufe == 0 and lauf2.aufrufe == []
+
+
+def test_t4c2_offenes_signal_mit_space_wird_auch_neben_einem_neubau_erledigt(fx):
+    """Ein offenes Signal dieser Art mit gesetztem `space` (hier b), waehrend ein anderer Space (a) neu gebaut wird:
+    ohne Filter liefe es als `uebrig` weiter; T4-c2 erledigt es im selben Lauf, ohne Aufruf."""
+    import dataclasses
+
+    from selbstbild.doku import aussagen as au
+    from selbstbild.doku import stand as st
+    from test_doku_tick import CLIENT, _anstoss, _commit, _schreib
+    from test_doku_ziele import _aussagen
+
+    _workboard_ziele(fx)
+    aid = next(iter(_aussagen(fx.repo, "docs/spaces/001_w1.md")))[len("aussage:"):]
+    beleg = Beleg("datei", WB, "", "0" * 64, _head(fx.repo), None)
+    aussage = au.Aussage(aid, "docs/spaces/001_w1.md", "W1 > Was hier passiert", 5, 5, WB_SAETZE[0], (beleg,))
+    alt = st.stand_laden(fx.konfig)
+    st.stand_schreiben(fx.konfig, dataclasses.replace(alt, offene_signale=[{
+        "space": "b", "datei": WB, "aussage": tk._aussage_dict(aussage), "beleg": beleg.to_dict(),
+        "quelltext_alt": "", "quelltext_neu": "", "nachbarn": [], "neu_digest": "1" * 64}]))
+    _schreib(fx.repo, "sp/a/client.py", CLIENT + "\n# nur Kommentar\n")
+    _commit(fx.repo, "a", "sp/a/client.py")
+    _anstoss(fx)
+    lauf = FakeLaufzeit()
+    erg = _tick(fx, laufzeit=lauf)
+    assert erg.spaces == ["a"] and lauf.aufrufe == []
+    assert st.stand_laden(fx.konfig).offene_signale == []
+
+
+def test_t4c2_ketten_md_ganzdatei_anker_signalisiert_weiter(fx):
+    from test_doku_tick import KETTEN, _anstoss, _commit, _schreib, _text
+
+    _workboard_ziele(fx)
+    _schreib(fx.repo, KETTEN, _text(fx) + "\nAlle Sessions koordinieren sich ueber `WORKBOARD.md:5` im Repo.\n")
+    _commit(fx.repo, "ketten", KETTEN)
+    _anstoss(fx)
+    assert _tick(fx, erzwingen=True).llm_aufrufe == 0
+    _wb_aendern(fx, 2)
+    _anstoss(fx)
+    lauf = FakeLaufzeit(_urteil("noch_wahr"), _urteil("noch_wahr"))
+    erg = _tick(fx, laufzeit=lauf)
+    assert erg.llm_aufrufe == 2  # die KETTEN-Aussage fragt den Judge wie bisher; die drei Doku-Ziele nicht
+
+
 # ---------- C2b: ein Lauf nur wegen der Erstbefuellung baut alle Spaces ----------
 
 def _ohne_aussagen_im_repo_graph(fx, datei):
