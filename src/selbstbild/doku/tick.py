@@ -88,7 +88,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import anker, bauen, ketten_seed, korpus, messbaum, render_ereignisse, render_ketten, rowboat, umschreiben
+from . import anker, bauen, ketten_seed, korpus, messbaum, render_ereignisse, render_ketten, rowboat, rowboat_seiten, umschreiben
 from . import erstbefuellung as erst_mod
 from . import neue_spaces as neue_spaces_mod
 from . import aussagen as au
@@ -202,6 +202,10 @@ class TickErgebnis:
     erst_offen: int = 0
     erst_geprueft: int = 0
     erst_aufrufe: int = 0
+    # Task 8 (D11): Rowboat-Seiten Mitbauen/Zustand -- geschriebene (trocken: voraussichtlich zu schreibende) und von
+    # Hand geaenderte (bleiben stehen), Pfade ab dem Notizordner
+    seiten_geaendert: list[str] = dataclasses.field(default_factory=list)
+    seiten_von_hand: list[str] = dataclasses.field(default_factory=list)
 
 
 # ---------- Aenderungen ----------
@@ -433,6 +437,8 @@ class _Lauf:
         self.doku_fremd = False  # Task 17: fremde Aenderungen an der Doku gesehen -> keine Urteile, keine Notizen
         self.render_noetig = False  # Task 17 M2: ein Revert hat Bloecke geaendert -> im selben Lauf neu rendern
         self.ausstehend: dict[str, str] | None = None  # Ruling 55a: None = unveraendert aus dem alten Stand
+        self.seiten_geaendert: list[str] = []  # Task 8: Rowboat-Seiten (trocken: geplant)
+        self.seiten_von_hand: list[str] = []
         self.trocken = False  # Trockenlauf: misst wie ein Tick, schreibt nichts (`trocken_laufen`)
         self.koepfe: dict[str, str] | None = None  # D6: beim Anstoss gelesene Koepfe, im Tick wiederverwendet
         self.gesehen: dict[str, str] | None = None  # T3-b: Koepfe, die dieser Lauf gesehen hat (kommen in den Stand)
@@ -489,7 +495,8 @@ class _Lauf:
                             doku_uebersprungen=list(self.doku_fremd_ziele), ereignisse=self.n_ereignisse,
                             neue_spaces=list(self.neue_spaces), neue_dateien=list(self.neu_angelegt),
                             erst_faellig=self.erst_faellig, erst_offen=self.erst_offen,
-                            erst_geprueft=self.erst_geprueft, erst_aufrufe=self.erst_aufrufe)
+                            erst_geprueft=self.erst_geprueft, erst_aufrufe=self.erst_aufrufe,
+                            seiten_geaendert=list(self.seiten_geaendert), seiten_von_hand=list(self.seiten_von_hand))
 
     def stand_speichern(self, *, fortschreiben: bool, render_hashes: Mapping[str, str] | None = None,
                         hand_edit: Mapping[str, str] | None = None,
@@ -635,13 +642,34 @@ class _Lauf:
         for _ in range(2):  # neue `notiz_von_hand`-Punkte erscheinen sofort in der Pruefliste
             liste = pruefliste_laden(konfig)
             von_hand: list[Pruefpunkt] = []
+            # Task 8 (D11): Mitbauen und Zustand, deterministisch; Zustand zaehlt dieselben offenen Punkte wie die Liste
+            zusatz = rowboat_seiten.seiten(
+                graph, self.repo, {"offen": rowboat.offene_ohne_erledigte(liste["offen"], vermerke)},
+                ordner=konfig.rowboat_notizen)
             rowboat.notizen_schreiben(
                 graph, liste["offen"], ledger, konfig.rowboat_wissen, konfig.rowboat_notizen, self.lauf,
                 manifest_pfad=rowboat.manifest_pfad(konfig), commits=commits, spitzen=spitzen, vermerke=vermerke,
                 struktur=liste["struktur"], urteile_datei=konfig.rowboat_urteile, bekannte_laeufe=bekannt,
-                melden=self.melden, pruefpunkte=von_hand)
+                melden=self.melden, pruefpunkte=von_hand, zusatz=zusatz,
+                zusatz_links=rowboat_seiten.index_links(konfig.rowboat_notizen))
             if not von_hand or not pruefliste_ergaenzen(konfig, von_hand, [], voll=False, lauf=self.lauf):
                 break
+
+    def _seiten_trocken(self, graph: Graph) -> None:
+        """Task 8: welche Rowboat-Seiten ein echter Lauf schreiben wuerde (nur lesend; nichts wird geschrieben)."""
+        konfig = self.konfig
+        if not konfig.rowboat_notizen_aktiv:
+            return
+        try:
+            zusatz = rowboat_seiten.seiten(graph, self.repo, pruefliste_laden(konfig), ordner=konfig.rowboat_notizen)
+            neu, hand = rowboat_seiten.voraussichtlich_geschrieben(
+                zusatz, konfig.rowboat_wissen, konfig.rowboat_notizen, rowboat.manifest_pfad(konfig))
+        except Exception as fehler:  # noqa: BLE001 - der Trockenlauf meldet, statt zu fallen
+            self.melden(f"Trockenlauf: Rowboat-Seiten nicht geprüft ({type(fehler).__name__})")
+            return
+        self.seiten_geaendert, self.seiten_von_hand = neu, hand
+        self.melden(f"Trockenlauf: Rowboat-Seiten würden geschrieben: {', '.join(neu) or 'keine'}"
+                    + (f"; von Hand geändert (bleiben): {', '.join(hand)}" if hand else ""))
 
     # ----- Hilfen fuer Belege -----
 
@@ -1298,6 +1326,7 @@ class _Lauf:
         # 7. Rendern
         render_hashes, hand_edit = self._rendern(graph, texte)
         if self.trocken:  # nichts schreiben: weder Vollgraph noch Pruefliste noch Stand noch Commit
+            self._seiten_trocken(graph)
             return self.ergebnis(graph_digest=schlank(graph).digest_stabil(), messbaum_commit=self.kopf_aussen,
                                  hinweis=self.messbaum_hinweis)
         # Ruling 49: voller Graph lokal; seine Hops/Aussagen ueberlagert beim naechsten Lauf der Repo-Graph

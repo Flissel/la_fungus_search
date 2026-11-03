@@ -413,13 +413,14 @@ class _Notizen:
         return _Notiz(f"Spaces/{self.space_name[sid]}.md", "\n".join(zeilen) + "\n")
 
     def index(self, lauf: str, offen: int, *, rel: str = f"{INDEX_NAME}.md", pruefliste: str = PRUEFLISTE_NAME,
-              hinweis: str | None = None) -> _Notiz:
+              hinweis: str | None = None, zusatz_links: Sequence[str] = ()) -> _Notiz:
         zeilen = [_kopf({"commit": self.g.commit_aussen, "lauf": lauf}).rstrip("\n"),
                   "# Doku-Loop", "", *([f"> {hinweis}", ""] if hinweis else []),
                   "Erzeugt vom Doku-Loop aus dem Datenfluss-Graph. Von Hand angelegte oder geänderte Notizen in "
                   "diesem Ordner lässt der Loop stehen (er aktualisiert sie dann nicht mehr) und meldet sie einmal in "
                   "der Prüfliste.", "",
-                  f"- [[{self.ordner}/{pruefliste}]] – {offen} offene Punkt(e)", "", "## Ketten", ""]
+                  f"- [[{self.ordner}/{pruefliste}]] – {offen} offene Punkt(e)",
+                  *(f"- {z}" for z in zusatz_links), "", "## Ketten", ""]
         for kid in sorted(self.ketten, key=_naturlich):
             k = self.ketten[kid]
             zustand = " ".join(str(k.attribute.get("zustand_roh", "")).split())
@@ -588,8 +589,9 @@ def _markierte(basis: Path) -> list[str]:
     return aus
 
 
-class _Schreiber:
-    """Entscheidet je Notiz: schreiben | gleich | hand | umgeleitet (siehe Moduldoku)."""
+class Schreiber:
+    """Entscheidet je Notiz: schreiben | gleich | hand | umgeleitet (siehe Moduldoku). Oeffentlich (Task 8), damit
+    weitere Seiten denselben Manifest-Schreibschutz nutzen; Verhalten unveraendert."""
 
     def __init__(self, basis: Path, manifest: dict[str, str], uebernahme: bool, bekannte_laeufe: Collection[str]):
         self.basis, self.manifest, self.uebernahme = basis, manifest, uebernahme
@@ -611,13 +613,25 @@ class _Schreiber:
         return "hand"
 
 
+_Schreiber = Schreiber  # alter Name
+Notiz = _Notiz  # oeffentlicher Name: eine zu schreibende Notiz (`rel` ab Notizordner, `text`)
+
+
+def offene_ohne_erledigte(pruefliste: Sequence[Pruefpunkt | Mapping[str, object]],
+                          vermerke: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Offene Punkte ohne die, zu denen ein Urteil schon angewandt ist (wie `notizen_schreiben` sie zeigt)."""
+    aus = _Ausblendung.aus(vermerke)
+    return [d for d in map(_punkt_dict, pruefliste) if (lauf_text(d.get("lauf")), punkt_kennung(d)) not in aus.erledigt]
+
+
 def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[str, object]],
                       ledger_neu: Sequence[umschreiben.LedgerEintrag], wurzel: Path, ordner: str, lauf: str, *,
                       manifest_pfad: Path | None = None, commits: Mapping[str, str] | None = None,
                       spitzen: Mapping[str, str] | None = None, vermerke: Sequence[Mapping[str, object]] = (),
                       struktur: Sequence[Pruefpunkt | Mapping[str, object]] = (),
                       urteile_datei: str = "Doku-Urteile/Urteile.md", bekannte_laeufe: Collection[str] = (),
-                      melden: Melden | None = None, pruefpunkte: list[Pruefpunkt] | None = None) -> list[Path]:
+                      melden: Melden | None = None, pruefpunkte: list[Pruefpunkt] | None = None,
+                      zusatz: Sequence[_Notiz] = (), zusatz_links: Sequence[str] = ()) -> list[Path]:
     """Notizen schreiben (siehe Moduldoku); Rueckgabe die tatsaechlich geschriebenen Dateien.
 
     `pruefliste`: offene Punkte (Dicts aus `pruefliste_laden` mit `lauf`, oder Pruefpunkte); `ledger_neu`: Ledger-
@@ -625,7 +639,11 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
     Commits (`datei_spitzen`; `zurueck` wird nur angeboten, wenn beide gleich sind); `vermerke`: lokale Urteils-Vermerke
     (`vermerke_laden`); `struktur`: Struktur-Hinweise; `bekannte_laeufe`: Laeufe des Loops (nur fuer die Uebernahme
     ohne Manifest). Von Hand angelegte/geaenderte Notizen (`notiz_von_hand`) und ein kaputtes Manifest
-    (`notizen_manifest_kaputt`) kommen in `pruefpunkte`."""
+    (`notizen_manifest_kaputt`) kommen in `pruefpunkte`.
+
+    `zusatz`: weitere Notizen (Task 8, `rowboat_seiten`) -- sie laufen durch denselben Schreibschutz und dasselbe
+    Manifest wie alle anderen (sonst raeumte der Lauf sie als "nicht mehr erzeugt" wieder weg); `zusatz_links`:
+    Wiki-Link-Zeilen, die `Index.md` zusaetzlich auffuehrt."""
     melden = melden or _still
     gemeldet = pruefpunkte if pruefpunkte is not None else []
     wurzel = Path(wurzel)
@@ -642,7 +660,7 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
         return []
     uebernahme = geladen == FEHLT
     manifest: dict[str, str] = {} if isinstance(geladen, str) else dict(geladen)
-    s = _Schreiber(basis, manifest, uebernahme, bekannte_laeufe)
+    s = Schreiber(basis, manifest, uebernahme, bekannte_laeufe)
 
     commits, spitzen = commits or {}, spitzen or {}
     aus = _Ausblendung.aus(vermerke)
@@ -673,7 +691,8 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
         hinweis = (f"`{PRUEFLISTE_NAME}.md` ist von Hand geändert; die aktuelle Prüfliste des Loops steht in "
                    f"[[{n.ordner}/{PRUEFLISTE_NAME} (Loop)]].") if hand_pl else None
         return n.index(lauf, offen, rel=f"{INDEX_NAME} (Loop).md" if hand_ix else f"{INDEX_NAME}.md",
-                       pruefliste=f"{PRUEFLISTE_NAME} (Loop)" if hand_pl else PRUEFLISTE_NAME, hinweis=hinweis)
+                       pruefliste=f"{PRUEFLISTE_NAME} (Loop)" if hand_pl else PRUEFLISTE_NAME, hinweis=hinweis,
+                       zusatz_links=zusatz_links)
 
     # Item 3: von Hand geaenderte Pruefliste/Index -> Fassung des Loops daneben
     hand_pl = s.entscheiden(f"{PRUEFLISTE_NAME}.md", pruefliste_notiz(False, False).text) == "hand"
@@ -684,6 +703,7 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
     notizen += [n.space(sp, lauf) for sp in sorted(n.spaces)]
     notizen += [n.dienst(d, lauf) for d in sorted(n.dienste)]
     notizen += [pruefliste_notiz(hand_pl, hand_ix), index_notiz(hand_pl, hand_ix)]
+    notizen += list(zusatz)
 
     geschrieben: list[Path] = []
     umgeleitet = 0
