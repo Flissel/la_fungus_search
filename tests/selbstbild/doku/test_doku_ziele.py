@@ -556,3 +556,38 @@ def test_ketten_datei_beleg_auf_code_signalisiert_weiter(fx):
     _anstoss(fx)
     erg = _tick(fx, laufzeit=FakeLaufzeit(_urteil("noch_wahr"), _urteil("noch_wahr")))
     assert erg.llm_aufrufe == 2 and not _datei_punkte(fx)
+
+
+# ---------- Fix-Runde 2 ----------
+
+def test_nicht_messbares_submodul_behaelt_nur_lesend_aussagen(fx, tmp_path):
+    """Item 1: nach `deinit` liegt die nur-lesend-Datei weder im Arbeitsbaum noch im Messbaum und ist nicht
+    versioniert -- trotzdem keine Waise: das Submodul ist nur nicht messbar, Aussagen und Digest-Basis bleiben."""
+    vorher = _nur_lesend(fx, tmp_path)
+    alt = {aid: _belege_von(fx.repo, aid) for aid in vorher}
+    _git(fx.repo, "submodule", "deinit", "-q", "-f", "ext/doku")
+    _code_aenderung(fx, 1)
+    _anstoss(fx)
+    erg = _tick(fx, erzwingen=True)
+    assert erg.nur_lesend_gelesen == 0 and erg.llm_aufrufe == 0
+    assert {aid: _belege_von(fx.repo, aid) for aid in _aussagen(fx.repo, "ext/doku/README.md")} == alt
+
+
+def test_beleg_datei_geaendert_ein_punkt_bei_schrumpfender_liste(fx):
+    """Item 2: Pruefpunkte `beleg_datei_geaendert` werden ueber `<datei>#<digest12>` zusammengefuehrt, nicht ueber den
+    Text (der nennt Zahl und Ids der Aussagen); andere Arten deduplizieren weiter mit Text."""
+    from selbstbild.doku.pruefliste import pruefliste_ergaenzen
+    from selbstbild.doku.typen import Pruefpunkt
+
+    def punkt(ids, art="beleg_datei_geaendert"):
+        return Pruefpunkt(art, f"scripts/w.py geändert; {len(ids)} Aussage(n): {', '.join(ids)}", "scripts/w.py",
+                          None, "scripts/w.py#abcdef012345")
+
+    assert pruefliste_ergaenzen(fx.konfig, [punkt(["a", "b", "c"])], [], voll=False, lauf="L1") == 1
+    assert pruefliste_ergaenzen(fx.konfig, [punkt(["a"])], [], voll=False, lauf="L2") == 0
+    assert len(_datei_punkte(fx)) == 1 and "3 Aussage(n)" in _datei_punkte(fx)[0]["text"]
+    neu = Pruefpunkt("beleg_datei_geaendert", "anderer Digest", "scripts/w.py", None, "scripts/w.py#999999999999")
+    assert pruefliste_ergaenzen(fx.konfig, [neu], [], voll=False, lauf="L3") == 1
+    # andere Arten: weiter mit Text
+    assert pruefliste_ergaenzen(fx.konfig, [punkt(["a"], "judge_unklar"), punkt(["b"], "judge_unklar")], [],
+                                voll=False, lauf="L4") == 2

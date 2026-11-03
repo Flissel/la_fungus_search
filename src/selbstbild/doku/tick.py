@@ -1251,6 +1251,8 @@ class _Lauf:
                 continue
             if schl(d) in bekannt:
                 continue
+            if _unter(d, self.nicht_messbar):  # Fix-Runde 2: Submodul nur nicht messbar -> Aussagen/Basis bleiben
+                continue
             if (self.repo / d).exists() or (self.mess_repo / d).exists():
                 continue
             aussage_entfernen(graph, k.id[len("aussage:"):])

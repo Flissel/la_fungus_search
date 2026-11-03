@@ -37,7 +37,14 @@ def _pp_dict(p: Pruefpunkt, lauf: str) -> dict[str, object]:
             "lauf": lauf}
 
 
+# Arten, deren Text wechselnde Einzelheiten traegt (Zahl/Ids der Aussagen): zusammengefuehrt wird ueber die
+# `aussage_id` (`<datei>#<digest12>`), der erste Text bleibt (Task 4, Fix-Runde 2)
+OHNE_TEXT_ZUSAMMENFUEHREN = frozenset({"beleg_datei_geaendert"})
+
+
 def _schluessel(d: Mapping[str, object]) -> str:
+    if d.get("art") in OHNE_TEXT_ZUSAMMENFUEHREN:
+        return f"{d.get('art')}|{d.get('datei')}|{d.get('aussage_id')}"
     return f"{d.get('art')}|{d.get('datei')}|{d.get('aussage_id')}|{d.get('text')}"
 
 
