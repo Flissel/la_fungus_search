@@ -69,6 +69,14 @@ je einen `docs/spaces/<NNN>_<name>.md` nur aus markierten Bloecken an, dazu eine
 `docs/spaces/README.md` (sonst nie Schreibziel). Bereits generierte Dokus (Block `steckbrief <space>`) werden wie jede
 Doku neu gerendert; fehlt ihr Ordner, bleiben sie stehen (`space_doku_ohne_space`). Ein Commit unter einem Space-Ordner
 ohne Doku oder mit generierter Doku stoesst einen Lauf ohne Neubau an. Neue Dateien: CAS = "gibt es noch nicht".
+
+Stufe 4, Task 9 (D11): mit `rowboat_seiten_aktiv` schreibt der Abschluss die erzaehlten Seiten (`rowboat_erzaehlt`)
+durch dieselben Notizen und dasselbe Manifest; `Spaces/` gehoert dann ihnen (Ruling T9-a). Abo-Aufrufe nur in einem
+Lauf, der alle Doku gelesen und seinen Stand committet hat (sonst bleibt jede Seite stehen), nach den echten Signalen
+und der Erstbefuellung, hoechstens `rowboat_seiten_je_lauf`, mit der lesenden Budget-Vorpruefung. Agent: waehrend der
+Erstbefuellung im Fenster `selbstbild-erstbefuellung` (neue Seiten nur dort), sonst `doku-loop`; noch nie erzaehlte
+Seiten halten die Erstbefuellung offen (Plan-Ruling P3, `offene_seiten`). Der Trockenlauf meldet die faelligen Seiten
+und die geschaetzten Aufrufe ohne LLM.
 """
 
 from __future__ import annotations
@@ -89,6 +97,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import anker, bauen, ketten_seed, korpus, messbaum, render_ereignisse, render_ketten, rowboat, rowboat_seiten, umschreiben
+from . import rowboat_erzaehlt
 from . import erstbefuellung as erst_mod
 from . import neue_spaces as neue_spaces_mod
 from . import aussagen as au
@@ -207,6 +216,15 @@ class TickErgebnis:
     seiten_geaendert: list[str] = dataclasses.field(default_factory=list)
     seiten_von_hand: list[str] = dataclasses.field(default_factory=list)
     index_geaendert: bool = False  # trocken: Index.md wuerde neu geschrieben
+    # Task 9 (D11): erzaehlte Seiten (`Was ist VibeMind.md`, `Spaces/`, `Abläufe/`) -- faellig = brauchen einen
+    # Abo-Aufruf (neu oder Grundlage geaendert; trocken: geplant), in diesem Lauf erzaehlt, Aufrufe dafuer (in
+    # `llm_aufrufe` enthalten), Schaetzung fuer den Trockenlauf (ein Aufruf je faelliger Seite) und die danach noch nie
+    # erzaehlten Seiten (halten die Erstbefuellung offen, Plan-Ruling P3)
+    erzaehlt_faellig: list[str] = dataclasses.field(default_factory=list)
+    erzaehlt_geschrieben: list[str] = dataclasses.field(default_factory=list)
+    erzaehlt_aufrufe: int = 0
+    erzaehlt_aufrufe_geschaetzt: int = 0
+    erzaehlt_offen: int = 0
 
 
 # ---------- Aenderungen ----------
@@ -484,6 +502,16 @@ class _Lauf:
         self.erst_aufrufe = 0
         self.erst_umgeschrieben = 0
         self.erst_fehlversuche: dict[str, int] | None = None  # Fix-Runde 1: neuer Zaehler (None = unveraendert)
+        self.erst_abbruch: str | None = None  # Task 9: Abbruchgrund des Erst-Schritts (dann keine Seiten unter ihm)
+        # Task 9 (D11): erzaehlte Seiten
+        self.doku_aussagen: dict[str, list[au.Aussage]] = {}  # Doku -> Aussagen dieses Laufs (Texte nach Ersetzung)
+        self.seiten_bereit = False  # Plan vollstaendig und Stand committet: Seiten duerfen erzaehlt werden
+        self.bekannte_laeufe: set[str] | None = None
+        self.erzaehlt_faellig: list[str] = []
+        self.erzaehlt_geschrieben: list[str] = []
+        self.erzaehlt_aufrufe = 0
+        self.erzaehlt_aufrufe_geschaetzt = 0
+        self.erzaehlt_offen = 0
 
     # ----- Ergebnis und Stand -----
 
@@ -499,7 +527,12 @@ class _Lauf:
                             erst_faellig=self.erst_faellig, erst_offen=self.erst_offen,
                             erst_geprueft=self.erst_geprueft, erst_aufrufe=self.erst_aufrufe,
                             seiten_geaendert=list(self.seiten_geaendert), seiten_von_hand=list(self.seiten_von_hand),
-                            index_geaendert=self.index_geaendert)
+                            index_geaendert=self.index_geaendert, **self._erzaehlt_felder())
+
+    def _erzaehlt_felder(self) -> dict[str, Any]:
+        return {"erzaehlt_faellig": list(self.erzaehlt_faellig),
+                "erzaehlt_geschrieben": list(self.erzaehlt_geschrieben), "erzaehlt_aufrufe": self.erzaehlt_aufrufe,
+                "erzaehlt_aufrufe_geschaetzt": self.erzaehlt_aufrufe_geschaetzt, "erzaehlt_offen": self.erzaehlt_offen}
 
     def stand_speichern(self, *, fortschreiben: bool, render_hashes: Mapping[str, str] | None = None,
                         hand_edit: Mapping[str, str] | None = None,
@@ -535,6 +568,8 @@ class _Lauf:
                 self._notizen()
             except Exception as fehler:  # noqa: BLE001 - Rowboat darf den Tick nicht umwerfen
                 self.melden(f"Notizen: {type(fehler).__name__}")
+            # Task 9: die Seiten fragen nach dem Stand (Aufrufe zaehlen ins Ergebnis)
+            ergebnis = dataclasses.replace(ergebnis, llm_aufrufe=self.llm_aufrufe, **self._erzaehlt_felder())
         if self.nach_tick is not None:
             try:
                 self.nach_tick(ergebnis)
@@ -637,47 +672,173 @@ class _Lauf:
         repo_graph = Graph.laden(self.repo / GRAPH_JSON)
         voll = vollgraph_laden(konfig, self.vollgraph_kennung)
         graph = repo_graph if voll is None else mit_schlank(voll.graph, repo_graph)
+        erzaehlt = self._erzaehlte_seiten(graph, trocken=False)  # Task 9: Abo-Aufrufe genau einmal je Lauf
+        seiten_pp = list(erzaehlt.pruefpunkte) if erzaehlt is not None else []
         for _ in range(2):  # neue `notiz_von_hand`-Punkte erscheinen sofort in der Pruefliste
-            von_hand = self._notizen_aufruf(graph, trocken=False)[1]
+            von_hand = [*self._notizen_aufruf(graph, trocken=False, erzaehlt=erzaehlt)[1], *seiten_pp]
             if not von_hand or not pruefliste_ergaenzen(konfig, von_hand, [], voll=False, lauf=self.lauf):
                 break
 
-    def _notizen_aufruf(self, graph: Graph, *, trocken: bool) -> tuple[list[Path], list[Pruefpunkt]]:
+    def _bekannt(self) -> tuple[list[umschreiben.LedgerEintrag], dict[str, str], set[str]]:
+        """(Ledger, Lauf -> Commit, bekannte Laeufe) fuer die Notizen; die Laeufe einmal je Lauf (auch fuer Task 9)."""
+        ledger = rowboat.ledger_lesen(self.repo / LEDGER)
+        commits = {**fremd_commits_laden(self.konfig), **rowboat.lauf_commits(self.repo)}  # I11: auch fremd uebernommene
+        bekannt = set(commits) | {e.lauf for e in ledger} | set(self._letzte_laeufe())
+        self.bekannte_laeufe = bekannt
+        return ledger, commits, bekannt
+
+    def _notizen_aufruf(self, graph: Graph, *, trocken: bool,
+                        erzaehlt: rowboat_erzaehlt.SeitenErgebnis | None = None
+                        ) -> tuple[list[Path], list[Pruefpunkt]]:
         """Ein Aufruf von `rowboat.notizen_schreiben` samt Seiten (Task 8, D11). Live und Trockenlauf gehen durch
         genau diesen Weg (gleiche Eingaben, gleiche Filter); `trocken` schreibt nichts. Rueckgabe: (geschriebene
-        bzw. zu schreibende Dateien, Pruefpunkte: `notiz_von_hand`, `seite_fehler`, ...)."""
+        bzw. zu schreibende Dateien, Pruefpunkte: `notiz_von_hand`, `seite_fehler`, ...).
+
+        `erzaehlt` (Task 9, Ruling T9-a): die erzaehlten Seiten dieses Laufs; dann gehoert `Spaces/` ihnen (die alte
+        Space-Notiz entsteht nicht mehr), noch nicht erzaehlte bleiben stehen (`zusatz_ausgefallen`)."""
         konfig = self.konfig
-        ledger = rowboat.ledger_lesen(self.repo / LEDGER)
+        ledger, commits, bekannt = self._bekannt()
         spitzen = rowboat.datei_spitzen(self.repo, {e.datei for e in ledger})
-        commits = {**fremd_commits_laden(konfig), **rowboat.lauf_commits(self.repo)}  # I11: auch fremd uebernommene
         vermerke = rowboat.vermerke_laden(rowboat.erledigt_pfad(konfig))
-        bekannt = set(commits) | {e.lauf for e in ledger} | set(self._letzte_laeufe())
         liste = pruefliste_laden(konfig)
         punkte: list[Pruefpunkt] = []
         ausgefallen: list[str] = []
         # Mitbauen und Zustand, deterministisch; Zustand zaehlt dieselben offenen Punkte wie die Pruefliste
-        zusatz = rowboat_seiten.seiten(
+        zusatz: list[object] = list(rowboat_seiten.seiten(
             graph, self.repo, {"offen": rowboat.offene_ohne_erledigte(liste["offen"], vermerke)},
-            ordner=konfig.rowboat_notizen, fehler=punkte, ausgefallen=ausgefallen)
+            ordner=konfig.rowboat_notizen, fehler=punkte, ausgefallen=ausgefallen))
+        links = rowboat_seiten.index_links(konfig.rowboat_notizen)
+        if erzaehlt is not None:
+            zusatz += erzaehlt.zusatz
+            ausgefallen += erzaehlt.ausgefallen
+            links = [f"[[{konfig.rowboat_notizen}/{rowboat_erzaehlt.WAS_IST_TITEL}]] – was man mit VibeMind machen "
+                     "kann", *links]
         geschrieben = rowboat.notizen_schreiben(
             graph, liste["offen"], ledger, konfig.rowboat_wissen, konfig.rowboat_notizen, self.lauf,
             manifest_pfad=rowboat.manifest_pfad(konfig), commits=commits, spitzen=spitzen, vermerke=vermerke,
             struktur=liste["struktur"], urteile_datei=konfig.rowboat_urteile, bekannte_laeufe=bekannt,
             melden=self.melden, pruefpunkte=punkte, zusatz=zusatz, zusatz_ausgefallen=ausgefallen,
-            zusatz_links=rowboat_seiten.index_links(konfig.rowboat_notizen), trocken=trocken)
+            zusatz_links=links, trocken=trocken, spaces=erzaehlt is None)
         return geschrieben, punkte
+
+    # ----- Erzaehlte Seiten (Task 9, D11) -----
+
+    def _seiten_aktiv(self) -> bool:
+        return self.konfig.rowboat_notizen_aktiv and self.konfig.rowboat_seiten_aktiv
+
+    def _seiten_plan(self, graph: Graph) -> list[rowboat_erzaehlt.SeitenAuftrag]:
+        """Plan aus dem Graph und den Aussagen dieses Laufs; die Belege einer Aussage sind die im Graph gemerkten."""
+        idx: dict[str, list[Beleg]] = {}
+        for e in sorted(graph.kanten.values(), key=lambda e: e.id):
+            if e.art == "belegt_durch" and e.von.startswith("aussage:"):
+                idx.setdefault(e.von[len("aussage:"):], []).extend(e.belege)
+        doku = {doc: [dataclasses.replace(a, belege=tuple(idx.get(a.id, ()))) for a in liste]
+                for doc, liste in self.doku_aussagen.items()}
+        return rowboat_erzaehlt.seiten_plan(graph, doku, space_dokumente=self.konfig.space_dokumente,
+                                            ordner=self.konfig.rowboat_notizen)
+
+    def _seiten_schreiber(self) -> rowboat.Schreiber | None:
+        bekannt = self.bekannte_laeufe if self.bekannte_laeufe is not None else self._bekannt()[2]
+        return rowboat.schreiber_fuer(self.konfig.rowboat_wissen, self.konfig.rowboat_notizen,
+                                      rowboat.manifest_pfad(self.konfig), bekannt)
+
+    def _seiten_nie_geschrieben(self, graph: Graph) -> int:
+        """Plan-Ruling P3: Zahl der noch nie erzaehlten Seiten (`offene_seiten` der Erstbefuellung). Unvollstaendiger
+        Plan oder ein Fehler -> 1 (die Erstbefuellung bleibt offen, lieber einen Lauf zu viel)."""
+        if not self._seiten_aktiv():
+            return 0
+        if self.doku_fremd_ziele or self.erst_zurueck:
+            return 1
+        try:
+            s = self._seiten_schreiber()
+            plan = self._seiten_plan(graph)
+            return sum(1 for a in plan if rowboat_erzaehlt.zustand(a, s)[0] == "neu") if s is not None else len(plan)
+        except Exception:  # noqa: BLE001
+            return 1
+
+    def _seiten_agent(self) -> tuple[str, bool, bool]:
+        """(Budget-Agent, neue Seiten erlaubt, ueberhaupt fragen). Plan-Ruling P3: waehrend der Erstbefuellung im
+        Fenster der Agent der Erstbefuellung (nur wenn er in diesem Lauf fragen durfte und sein Schritt nicht
+        abgebrochen hat); waehrend der Erstbefuellung ausserhalb des Fensters nur geaenderte Seiten unter `doku-loop`
+        (neue warten auf die Nacht); danach `doku-loop` fuer alle."""
+        konfig = self.konfig
+        if self.erst_sammeln and self.erst_faellig:
+            return erst_mod.einstellung(konfig).agent, True, self.erst_fragen and self.erst_abbruch is None
+        return konfig.agent, not self.erst_sammeln, not self.ohne_llm
+
+    def _erzaehlte_seiten(self, graph: Graph, *, trocken: bool) -> rowboat_erzaehlt.SeitenErgebnis | None:
+        """Task 9: Zustand je erzaehlter Seite und -- nur live, mit vollstaendigem Plan und committetem Stand -- hoechstens
+        `rowboat_seiten_je_lauf` Abo-Aufrufe (nach allen echten Signalen und der Erstbefuellung: dieser Schritt laeuft im
+        Abschluss). None = Seiten aus (Task-8-Verhalten, Spaces/ schreibt die alte Space-Notiz)."""
+        if not self._seiten_aktiv():
+            return None
+        konfig = self.konfig
+        s = self._seiten_schreiber()
+        if not self.seiten_bereit:  # ohne gelesene Doku kein Plan: nichts erzaehlen, nichts aufraeumen
+            erg = rowboat_erzaehlt.SeitenErgebnis(
+                ausgefallen=rowboat_erzaehlt.gesicherte_pfade(s.manifest if s is not None else {}))
+            self.melden("Seiten: kein vollständiger Plan in diesem Lauf – erzählte Seiten bleiben, wie sie sind")
+            return erg
+        plan = self._seiten_plan(graph)
+        agent, neue, fragen = self._seiten_agent()
+        erzaehlen = None
+        if fragen and not trocken and not self.ohne_llm:
+            vorpruefung: list[str | None] = []
+
+            def erzaehlen(a: rowboat_erzaehlt.SeitenAuftrag) -> tuple[str | None, str]:
+                if not vorpruefung:  # lesende Vorpruefung (Task 7) einmal, erst wenn wirklich eine Seite faellig ist
+                    vorpruefung.append(self._budget_grund(agent))
+                    if vorpruefung[0] is not None:
+                        self.melden(f"Seiten: Budget {agent} heute erschöpft oder pausiert ({vorpruefung[0]}) – "
+                                    "keine Seite gefragt")
+                if vorpruefung[0] is not None:
+                    return None, "budget:vorpruefung"
+                return rowboat_erzaehlt.seite_erzaehlen(a, konfig, agent=agent, **self._judge_kw())
+
+        erg = rowboat_erzaehlt.seiten_lauf(plan, s, ordner=konfig.rowboat_notizen, erzaehlen=erzaehlen,
+                                           max_aufrufe=konfig.rowboat_seiten_je_lauf, neue_erlaubt=neue,
+                                           deadline=self._deadline)
+        self._erzaehlt_merken(erg)
+        self.melden(f"Seiten: {len(plan)} erzählte Seite(n), {len(erg.faellig)} fällig, {len(erg.erzaehlt)} erzählt "
+                    f"({erg.aufrufe} Aufruf(e) unter {agent if erzaehlen else '-'}), {erg.nie_geschrieben} noch nie "
+                    "geschrieben" + (f"; Abbruch: {erg.abbruch}" if erg.abbruch else ""))
+        return erg
+
+    def _erzaehlt_merken(self, erg: rowboat_erzaehlt.SeitenErgebnis) -> None:
+        self.erzaehlt_faellig = list(erg.faellig)
+        self.erzaehlt_geschrieben = list(erg.erzaehlt)
+        self.erzaehlt_aufrufe = erg.aufrufe
+        self.erzaehlt_offen = erg.nie_geschrieben
+
+    def _doku_aussagen_nachfuehren(self, doc: str, ersetzungen: Sequence[tuple[au.Aussage, str, Beleg, list[Beleg]]],
+                                   getan: Sequence[tuple[str, str]]) -> None:
+        """Ersetzte Aussagen (neue Id, neuer Text) auch in den Aussagen dieses Laufs fuer die Seiten nachfuehren."""
+        if not getan or doc not in self.doku_aussagen:
+            return
+        texte = {a.id: t for a, t, _, _ in ersetzungen}
+        neu_id = dict(getan)
+        self.doku_aussagen[doc] = [
+            dataclasses.replace(a, id=neu_id[a.id], text="\n".join(au._ersatz_zeilen(texte[a.id])))
+            if a.id in neu_id and a.id in texte else a for a in self.doku_aussagen[doc]]
 
     def _seiten_trocken(self, graph: Graph) -> None:
         """Task 8: was ein echter Lauf an Rowboat-Seiten und `Index.md` schreiben wuerde (Entscheidung wie live,
-        aber ohne zu schreiben: weder Notizen noch Manifest noch Pruefliste)."""
+        aber ohne zu schreiben: weder Notizen noch Manifest noch Pruefliste). Task 9: dazu die faelligen erzaehlten
+        Seiten und die geschaetzten Aufrufe (einer je faelliger Seite) -- ohne LLM."""
         konfig = self.konfig
         if not konfig.rowboat_notizen_aktiv:
             return
         try:
-            geschrieben, punkte = self._notizen_aufruf(graph, trocken=True)
+            erzaehlt = self._erzaehlte_seiten(graph, trocken=True)
+            geschrieben, punkte = self._notizen_aufruf(graph, trocken=True, erzaehlt=erzaehlt)
         except Exception as fehler:  # noqa: BLE001 - der Trockenlauf meldet, statt zu fallen
             self.melden(f"Trockenlauf: Rowboat-Seiten nicht geprüft ({type(fehler).__name__})")
             return
+        if erzaehlt is not None:
+            self.erzaehlt_aufrufe_geschaetzt = len(erzaehlt.faellig)
+            self.melden(f"Trockenlauf: erzählte Seiten fällig: {len(erzaehlt.faellig)} "
+                        f"({', '.join(erzaehlt.faellig) or 'keine'}); geschätzt {len(erzaehlt.faellig)} Aufruf(e), "
+                        f"höchstens {konfig.rowboat_seiten_je_lauf} je Lauf")
         basis = (konfig.rowboat_wissen / konfig.rowboat_notizen).resolve()
         rels = {p.resolve().relative_to(basis).as_posix() for p in geschrieben}
         seiten = (rowboat_seiten.MITBAUEN_REL, rowboat_seiten.ZUSTAND_REL)
@@ -1330,6 +1491,8 @@ class _Lauf:
         self._verwaiste_aussagen(graph)
         self._datei_geaendert_melden()
         self._erstbefuellung(graph, texte, uebrig)  # Task 7: nach allen echten Signalen, mit der Rest-Deadline
+        # Task 9: die Seiten brauchen alle Aussagen dieses Laufs (keine ausgelassene Doku, jede nur-lesend-Datei gelesen)
+        plan_vollstaendig = not self.doku_fremd_ziele and not self.erst_zurueck
         self.melden(f"Aussagen: {self.doku_gelesen} Doku-Datei(en), {self.nur_lesend_gelesen} nur lesend, "
                     f"{len(self.doku_fremd_ziele)} ausgelassen; {self.n_aussagen} Aussagen, {self.n_belegt} belegt, "
                     f"{self.n_neu} neu gemerkt")
@@ -1346,6 +1509,7 @@ class _Lauf:
         # 7. Rendern
         render_hashes, hand_edit = self._rendern(graph, texte)
         if self.trocken:  # nichts schreiben: weder Vollgraph noch Pruefliste noch Stand noch Commit
+            self.seiten_bereit = plan_vollstaendig
             self._seiten_trocken(graph)
             return self.ergebnis(graph_digest=schlank(graph).digest_stabil(), messbaum_commit=self.kopf_aussen,
                                  hinweis=self.messbaum_hinweis)
@@ -1380,6 +1544,7 @@ class _Lauf:
             self.stand_speichern(fortschreiben=True, render_hashes=render_hashes, hand_edit=hand_edit, offene=offene)
             self.melden(f"Schreiben: nichts geändert (stabiler Digest gleich); Prüfliste +{neu_offen}; "
                         f"Stand: Lauf {self.lauf_nr}")
+            self.seiten_bereit = plan_vollstaendig  # Task 9: der Stand ist der committete
             return self._abschluss(self.ergebnis(pruefliste=neu_offen))
 
         m = neue_offene(konfig, self.offen)
@@ -1401,6 +1566,7 @@ class _Lauf:
         if aus.commit is not None or aus.fremd_commit is not None:
             self.stand_speichern(fortschreiben=True, render_hashes=render_hashes, hand_edit=hand_edit, offene=offene,
                                  committet=True)
+            self.seiten_bereit = plan_vollstaendig  # Task 9: nur nach dem Commit (sonst Texte, die nicht im Repo sind)
         else:
             self.stand_speichern(fortschreiben=aus.fortschreiben, hand_edit=hand_edit, offene=offene)
         self.melden(f"Stand: Lauf {self.lauf_nr}" + (" (Commit-Zeiger nicht fortgeschrieben)"
@@ -1567,6 +1733,8 @@ class _Lauf:
             if ergebnis is not None:
                 ersetzungen.append(ergebnis)
         text, getan = self._ersetzen(graph, text, ersetzungen, nur_lesend=nur_lesend)
+        self.doku_aussagen[doc] = list(liste)  # Task 9: Grundlage der erzaehlten Seiten (Texte nach Ersetzung)
+        self._doku_aussagen_nachfuehren(doc, ersetzungen, getan)
         for alt_id, neu_id in getan:
             ids.discard(alt_id)
             ids.add(neu_id)
@@ -1637,6 +1805,16 @@ class _Lauf:
         `erst_faellig`, also hoechstens einmal je Lauf im Fenster."""
         if not self.erst_faellig or self.ohne_llm:
             return False
+        grund = self._budget_grund(erst_mod.einstellung(self.konfig).agent)
+        if grund is None:
+            return False
+        self.melden(f"Erstbefüllung: Budget heute erschöpft oder pausiert ({grund}) – in diesem Lauf nicht gefragt")
+        return True
+
+    def _budget_grund(self, agent: str) -> str | None:
+        """Lesende Vorpruefung (Fix-Runde 1 zu Task 7, M4; Task 9 auch fuer die Seiten): Grund, warum `agent` heute
+        sicher nichts mehr darf (Tagesgrenze, Not-Aus, User aktiv bei eingeschalteter Pause, Klasse hintergrund), sonst
+        None. Jeder Fehler, ein fehlendes `tagesstand` oder ein fehlender Eintrag -> None: `pruefen` entscheidet."""
         try:
             budget = self.budget
             if budget is None:
@@ -1645,9 +1823,8 @@ class _Lauf:
                 budget, _ = judge.budget_laden(self.konfig)
             stand_fn = getattr(budget, "tagesstand", None)
             if stand_fn is None:
-                return False
+                return None
             tag = stand_fn()
-            agent = erst_mod.einstellung(self.konfig).agent
             eintrag = next((x for x in tag.get("agenten", []) if x.get("agent") == agent), None)
             grund = None
             if eintrag is not None and int(eintrag.get("heute", 0)) >= int(eintrag.get("grenze", 0)):
@@ -1658,11 +1835,8 @@ class _Lauf:
                   and (eintrag is None or eintrag.get("klasse", "hintergrund") == "hintergrund")):
                 grund = "User aktiv (Pause)"
         except Exception:  # noqa: BLE001 - die Vorpruefung darf nie etwas verhindern, das `pruefen` erlauben wuerde
-            return False
-        if grund is None:
-            return False
-        self.melden(f"Erstbefüllung: Budget heute erschöpft oder pausiert ({grund}) – in diesem Lauf nicht gefragt")
-        return True
+            return None
+        return grund
 
     def _erst_merken(self, a: au.Aussage, belege: Sequence[Beleg], *, fragbar: bool, nur_lesend: bool) -> None:
         if self.erst_sammeln and belege:
@@ -1700,11 +1874,14 @@ class _Lauf:
             jetzt = self.jetzt + timedelta(seconds=self.uhr() - self.start)
             return self._deadline() or not erst_mod.im_fenster(e, jetzt)
 
+        offene_seiten = self._seiten_nie_geschrieben(graph)  # Plan-Ruling P3: noch nie erzaehlte Seiten halten offen
         erg = erst_mod.erstbefuellung_schritt(
             self.konfig, graph, dataclasses.replace(alt, erstgeprueft=sorted(bekannt)), budget=self.budget,
             laufzeit=self.laufzeit, deadline=schluss, posten=posten,
             quelltext=lambda b: self.quelltext(b, alt=False), digest=self.digest_jetzt,
-            nachbarn=lambda b: self.nachbarn(graph, b), vollstaendig=vollstaendig, jetzt=self.jetzt)
+            nachbarn=lambda b: self.nachbarn(graph, b), vollstaendig=vollstaendig, offene_seiten=offene_seiten,
+            jetzt=self.jetzt)
+        self.erst_abbruch = erg.abbruch
         self.erst_aufrufe = self.llm_aufrufe - vorher
         self.erst_geprueft, self.erst_offen, self.erst_fertig = erg.geprueft, erg.offen, erg.fertig
         self.erst_fehlversuche = dict(erg.fehlversuche)
@@ -1748,6 +1925,7 @@ class _Lauf:
             roh, text = texte[doc]
             neu, getan = self._ersetzen(graph, text, liste, nur_lesend=False)
             texte[doc] = (roh, neu)
+            self._doku_aussagen_nachfuehren(doc, liste, getan)
             self.erst_umgeschrieben += len(getan)
             for alt_id, neu_id in getan:
                 self.erst_ersetzt |= {alt_id, neu_id}

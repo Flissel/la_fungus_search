@@ -163,7 +163,10 @@ def _tick(konfig: Konfig, args: argparse.Namespace, w: Werkzeuge) -> int:
           f"LLM {erg.llm_aufrufe}; umgeschrieben {erg.umgeschrieben}; Prüfliste +{erg.pruefliste}; "
           f"Commit {_sha7(erg.commit)}" + (f"; übersprungen: {erg.uebersprungen}" if erg.uebersprungen else "")
           + (f"; Erstbefüllung: {erg.erst_geprueft} geprüft ({erg.erst_aufrufe} LLM), {erg.erst_offen} offen"
-             if erg.erst_faellig and not args.ohne_llm else ""))
+             if erg.erst_faellig and not args.ohne_llm else "")
+          + (f"; Seiten: {len(erg.erzaehlt_geschrieben)} erzählt ({erg.erzaehlt_aufrufe} LLM), "
+             f"{len(erg.erzaehlt_faellig)} fällig, {erg.erzaehlt_offen} nie geschrieben"
+             if erg.erzaehlt_faellig or erg.erzaehlt_aufrufe else ""))
     return 0
 
 

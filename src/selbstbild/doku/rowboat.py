@@ -626,6 +626,45 @@ class Schreiber:
             return "schreiben"
         return "hand"
 
+    def eigen(self, rel: str) -> bool:
+        """Task 9: liegt unter `rel` eine Datei, die der Loop ueberschreiben darf (dieselbe Regel wie `entscheiden`
+        fuer eine vorhandene Datei mit anderem Inhalt: Manifest-Hash gleich, oder Uebernahme mit Marker und bekanntem
+        Lauf)? Fehlt die Datei oder ist der Weg umgeleitet -> False."""
+        pfad = self.basis / rel
+        if not _sicher(self.basis, pfad) or not os.path.lexists(pfad):
+            return False
+        if rel in self.manifest:
+            return _hash_von(pfad) == self.manifest[rel]
+        return self.uebernahme and vom_loop(pfad) and _kopf_lauf(pfad) in self.bekannte
+
+    def text(self, rel: str) -> str | None:
+        """Inhalt der Datei unter `rel` (nur auf sicherem Weg), sonst None."""
+        pfad = self.basis / rel
+        if not _sicher(self.basis, pfad):
+            return None
+        try:
+            return pfad.read_bytes().decode("utf-8", errors="replace")
+        except OSError:
+            return None
+
+
+def schreiber_fuer(wurzel: Path, ordner: str, manifest_pfad: Path | None,
+                   bekannte_laeufe: Collection[str] = ()) -> Schreiber | None:
+    """Task 9: derselbe `Schreiber`, den `notizen_schreiben` baut (Manifest, Uebernahme, bekannte Laeufe) -- zum
+    Entscheiden VOR dem Schreiben. None, wenn `notizen_schreiben` nichts schriebe (Ordner umgeleitet, Manifest
+    unlesbar, Pfad ungueltig)."""
+    wurzel = Path(wurzel)
+    if _umgeleitet(wurzel / ordner):
+        return None
+    try:
+        basis = _unter(wurzel, ordner)
+    except ValueError:
+        return None
+    geladen = _manifest_laden(manifest_pfad)
+    if geladen == KAPUTT:
+        return None
+    return Schreiber(basis, {} if isinstance(geladen, str) else dict(geladen), geladen == FEHLT, bekannte_laeufe)
+
 
 _Schreiber = Schreiber  # alter Name
 Notiz = _Notiz  # oeffentlicher Name: eine zu schreibende Notiz (`rel` ab Notizordner, `text`)
@@ -646,7 +685,8 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
                       urteile_datei: str = "Doku-Urteile/Urteile.md", bekannte_laeufe: Collection[str] = (),
                       melden: Melden | None = None, pruefpunkte: list[Pruefpunkt] | None = None,
                       zusatz: Sequence[object] = (), zusatz_links: Sequence[str] = (),
-                      zusatz_ausgefallen: Collection[str] = (), trocken: bool = False) -> list[Path]:
+                      zusatz_ausgefallen: Collection[str] = (), trocken: bool = False,
+                      spaces: bool = True) -> list[Path]:
     """Notizen schreiben (siehe Moduldoku); Rueckgabe die tatsaechlich geschriebenen Dateien.
 
     `pruefliste`: offene Punkte (Dicts aus `pruefliste_laden` mit `lauf`, oder Pruefpunkte); `ledger_neu`: Ledger-
@@ -662,7 +702,11 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
     `mit_namen(index_name, pruefliste_name) -> Notiz` (die Namen sind die der Rueckverweis-Ziele, `... (Loop)` bei
     Hand-Aenderung); `zusatz_ausgefallen`: Pfade von Seiten, die in diesem Lauf nicht gebaut werden konnten -- ihre
     Dateien bleiben stehen (kein Aufraeumen). `trocken`: entscheidet wie ein echter Lauf, schreibt/loescht aber
-    nichts (auch nicht das Manifest); Rueckgabe = die Dateien, die ein echter Lauf schreiben wuerde."""
+    nichts (auch nicht das Manifest); Rueckgabe = die Dateien, die ein echter Lauf schreiben wuerde.
+
+    `spaces=False` (Task 9, Ruling T9-a): die deterministischen Space-Notizen `Spaces/<name>.md` entstehen hier nicht
+    mehr -- die Pfade gehoeren dann den erzaehlten Seiten (`rowboat_erzaehlt`), die als `zusatz` kommen (oder, solange
+    sie fehlen, als `zusatz_ausgefallen` stehen bleiben)."""
     melden = melden or _still
     gemeldet = pruefpunkte if pruefpunkte is not None else []
     wurzel = Path(wurzel)
@@ -719,7 +763,8 @@ def notizen_schreiben(graph: Graph, pruefliste: Sequence[Pruefpunkt | Mapping[st
     von_hand = [r for r, h in ((f"{PRUEFLISTE_NAME}.md", hand_pl), (f"{INDEX_NAME}.md", hand_ix)) if h]
 
     notizen = [n.kette(k, lauf) for k in sorted(n.ketten, key=_naturlich)]
-    notizen += [n.space(sp, lauf) for sp in sorted(n.spaces)]
+    if spaces:
+        notizen += [n.space(sp, lauf) for sp in sorted(n.spaces)]
     notizen += [n.dienst(d, lauf) for d in sorted(n.dienste)]
     notizen += [pruefliste_notiz(hand_pl, hand_ix), index_notiz(hand_pl, hand_ix)]
     idx_name = f"{INDEX_NAME} (Loop)" if hand_ix else INDEX_NAME

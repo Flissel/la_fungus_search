@@ -284,19 +284,19 @@ def _buchen(budget: Any, agent: str, ergebnis: str, start: float, jetzt: datetim
         pass  # Sperre nicht zu haben: die Pruefung ist schon gezaehlt, der Tick laeuft weiter
 
 
-def befragen(frage: JudgeFrage, konfig: Konfig, *, laufzeit: Callable[..., Any] = subprocess.run,
-             budget: Any = None, jetzt: datetime | None = None,
-             agent: str | None = None) -> tuple[JudgeAntwort | None, str]:
-    """Eine Befragung; zweiter Wert `ok | budget:<grund> | timeout | exit:<n> | ungueltig | nicht_gefunden |
-    oserror:<Typ> | prompt:<Typ>`. Gebucht wird nur, wenn claude gestartet wurde (`fehler` bei allem ausser
-    `ok`). Prompt und Arbeitsordner entstehen vor der Budget-Pruefung: ihre Fehler kosten kein Budget.
-    `agent` (Task 7): Budget-Agent fuer Pruefung und Buchung; ohne ihn `konfig.agent`."""
-    agent = agent or konfig.agent
-    try:
-        prompt = prompt_bauen(frage)
-        anker = erlaubte_anker(frage)
-    except Exception as e:  # noqa: BLE001 - nie werfen: der Tick traegt den Grund in die Pruefliste ein
-        return None, f"prompt:{type(e).__name__}"
+def abo_aufruf(prompt: str, konfig: Konfig, agent: str, *, laufzeit: Callable[..., Any] = subprocess.run,
+               budget: Any = None, jetzt: datetime | None = None,
+               annehmen: Callable[[str], str | None] | None = None) -> tuple[str | None, str]:
+    """Ein Abo-Aufruf `claude -p` (Task 9: gemeinsamer Weg fuer Judge und erzaehlte Rowboat-Seiten); wirft nie.
+
+    Ablauf: Budget-Modul laden (fehlt es -> `budget:modul_fehlt`, kein Aufruf), Arbeitsordner `aufruf_ordner()`
+    anlegen, `budget.pruefen(agent)` VOR dem Start, Aufruf mit dem Prompt NUR ueber stdin, `--tools ""`,
+    `judge_umgebung()` (ohne ANTHROPIC_*), Timeout `TIMEOUT_S`; danach `buchen(agent, "ok"|"fehler")` -- gebucht wird
+    nur, wenn claude gestartet wurde. Antwort = `json.loads(stdout)["result"]`, wenn kein `is_error`.
+
+    `annehmen(text)`: Pruefung der Antwort; None = angenommen, sonst der Grund (wird zurueckgegeben, gebucht als
+    `fehler`). Rueckgabe `(text, "ok")` oder `(None, grund)` mit `budget:<grund> | timeout | exit:<n> | ungueltig |
+    nicht_gefunden | oserror:<Typ>` oder dem Grund von `annehmen`."""
     if budget is None:
         budget, grund = budget_laden(konfig)
         if budget is None:
@@ -328,18 +328,51 @@ def befragen(frage: JudgeFrage, konfig: Konfig, *, laufzeit: Callable[..., Any] 
     if fertig.returncode != 0:
         _buchen(budget, agent, "fehler", start, jetzt)
         return None, f"exit:{fertig.returncode}"
-    antwort: JudgeAntwort | None = None
+    text: str | None = None
     try:
         aussen = json.loads(fertig.stdout or "")
         if isinstance(aussen, dict) and aussen.get("is_error") is not True and isinstance(aussen.get("result"), str):
-            antwort = antwort_parsen(aussen["result"], anker, aussage=frage.aussage)
+            text = aussen["result"]
     except (ValueError, RecursionError):  # RecursionError: zu tief verschachteltes JSON
-        antwort = None
-    if antwort is None:
+        text = None
+    grund = "ungueltig" if text is None else (annehmen(text) if annehmen is not None else None)
+    if grund is not None:
         _buchen(budget, agent, "fehler", start, jetzt)
-        return None, "ungueltig"
+        return None, grund
     _buchen(budget, agent, "ok", start, jetzt)
-    return antwort, "ok"
+    return text, "ok"
+
+
+def befragen(frage: JudgeFrage, konfig: Konfig, *, laufzeit: Callable[..., Any] = subprocess.run,
+             budget: Any = None, jetzt: datetime | None = None,
+             agent: str | None = None) -> tuple[JudgeAntwort | None, str]:
+    """Eine Befragung; zweiter Wert `ok | budget:<grund> | timeout | exit:<n> | ungueltig | nicht_gefunden |
+    oserror:<Typ> | prompt:<Typ>`. Gebucht wird nur, wenn claude gestartet wurde (`fehler` bei allem ausser
+    `ok`). Prompt und Arbeitsordner entstehen vor der Budget-Pruefung: ihre Fehler kosten kein Budget.
+    `agent` (Task 7): Budget-Agent fuer Pruefung und Buchung; ohne ihn `konfig.agent`.
+    Task 9: der Aufruf selbst ist `abo_aufruf`; hier bleiben Prompt, erlaubte Anker und `antwort_parsen`."""
+    agent = agent or konfig.agent
+    try:
+        prompt = prompt_bauen(frage)
+        anker = erlaubte_anker(frage)
+    except Exception as e:  # noqa: BLE001 - nie werfen: der Tick traegt den Grund in die Pruefliste ein
+        return None, f"prompt:{type(e).__name__}"
+    geparst: list[JudgeAntwort] = []
+
+    def annehmen(text: str) -> str | None:
+        try:
+            antwort = antwort_parsen(text, anker, aussage=frage.aussage)
+        except (ValueError, RecursionError):
+            antwort = None
+        if antwort is None:
+            return "ungueltig"
+        geparst.append(antwort)
+        return None
+
+    text, grund = abo_aufruf(prompt, konfig, agent, laufzeit=laufzeit, budget=budget, jetzt=jetzt, annehmen=annehmen)
+    if text is None:
+        return None, grund
+    return geparst[-1], "ok"
 
 
 def zweimal_einig(frage: JudgeFrage, konfig: Konfig, **kw: Any) -> tuple[JudgeAntwort | None, str]:
