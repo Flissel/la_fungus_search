@@ -45,6 +45,26 @@ def _zeile(f: Fund) -> str:
     return f"| {f.schwere} | `{_zelle(f.anker)}` | {_zelle(f.titel)} |"
 
 
+def kappen_zeile(k: int) -> str:
+    """Der Kappensatz fuer `k` weggelassene Zeilen (ohne fuehrende Leerzeilen)."""
+    return f"… und {k} weitere, siehe lokaler Bericht"
+
+
+# Platz fuer die Kappenzeile, die immer reserviert wird (K hat hoechstens 7 Stellen)
+KAPPEN_RESERVE = len("\n\n" + kappen_zeile(9999999))
+
+
+def kappen(zeilen: list[str], budget: int) -> tuple[list[str], int]:
+    """Die ersten Zeilen, die (je mit einem Zeilenumbruch) ins Budget passen, und die Zahl der weggelassenen."""
+    n, used = 0, 0
+    for z in zeilen:
+        if used + len(z) + 1 > budget:
+            break
+        used += len(z) + 1
+        n += 1
+    return zeilen[:n], len(zeilen) - n
+
+
 def sammel_text(art: str, code_repo: str, funde: list[Fund], *, max_zeichen: int = 60000) -> tuple[str, str]:
     titel = f"[selbstbild] Sammlung {_art_name(art)} – {code_repo}"
     kopf = f"<!-- selbstbild:sammel={art}:{code_repo} -->\n\n"
@@ -52,19 +72,12 @@ def sammel_text(art: str, code_repo: str, funde: list[Fund], *, max_zeichen: int
     sortiert = _sortiert(funde)
     zeilen = [_zeile(f) for f in sortiert]
     tabellenkopf = f"{BEGIN}\n**{len(sortiert)} Funde**\n\n| Schwere | Fund | Beschreibung |\n|---|---|---|"
-    # Platz fuer die Kappenzeile immer reservieren (K hat hoechstens 7 Stellen)
-    reserve = len("\n\n… und 9999999 weitere, siehe lokaler Bericht") + len(f"\n{END}")
+    reserve = KAPPEN_RESERVE + len(f"\n{END}")
     budget = max_zeichen - len(kopf) - len(fuss) - len(tabellenkopf) - reserve
-    n, used = 0, 0
-    for z in zeilen:
-        if used + len(z) + 1 > budget:
-            break
-        used += len(z) + 1
-        n += 1
-    k = len(zeilen) - n
-    tab = tabellenkopf + "".join("\n" + z for z in zeilen[:n])
+    behalten, k = kappen(zeilen, budget)
+    tab = tabellenkopf + "".join("\n" + z for z in behalten)
     if k:
-        tab += f"\n\n… und {k} weitere, siehe lokaler Bericht"
+        tab += "\n\n" + kappen_zeile(k)
     block = f"{tab}\n{END}"
     return titel, f"{kopf}{block}{fuss}"
 
