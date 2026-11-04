@@ -765,3 +765,43 @@ def test_unlesbare_arten_inventar_quellen() -> None:
         assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}{q}: x"]) == frozenset({"konfig"})
     assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}unbekannt: x"]) == frozenset(
         {"doku_widerspruch", "doppelung", "tot", "konfig"})
+
+
+# ---------- Fix-Runde 2 Task 5 ----------
+
+def test_konfig_zaehlt_nicht_gegen_tagesgrenze(tmp_path: Path) -> None:
+    fake = FakeGh()
+    ziel = _ziel(max_einzel_je_tag=1)
+    b1 = _lauf(fake, [_konfig()], tmp_path, ziel=ziel)
+    assert len(_einzel(fake)) == 1 and b1.neu == 0
+    hoch = _fund(1)
+    b2 = _lauf(fake, [_konfig(), hoch], tmp_path, ziel=ziel)  # selber Tag
+    assert b2.neu == 1 and b2.ueber_grenze == []
+    assert any(_marke(hoch) in i["body"] for i in _einzel(fake)) and _sammel(fake) == []
+
+
+def test_konfig_gekuerzter_text_kein_schreiben(tmp_path: Path) -> None:
+    fake = FakeGh()
+    _lauf(fake, [_konfig()], tmp_path)
+    i = fake.issues[1]
+    i["body"] = i["body"].rstrip("\n").replace("\n", "\r\n")  # GitHub kuerzt das Ende, liefert CRLF
+    vorher = len(fake.aufrufe)
+    b = _lauf(fake, [_konfig()], tmp_path)
+    assert {m for m, _ in fake.aufrufe[vorher:]} == {"GET"} and b.unveraendert == 1
+
+
+def test_konfig_oeffnen_scheitert_kein_bearbeiten(tmp_path: Path) -> None:
+    fake = FakeGh()
+    _lauf(fake, [_konfig()], tmp_path)
+    fake.issues[1]["state"] = "closed"
+    route = fake._route
+
+    def kaputt(argv, methode, pfad, daten):
+        if methode == "PATCH":
+            return fake._fehler(argv, b"gh: Server Error (HTTP 502)")
+        return route(argv, methode, pfad, daten)
+
+    fake._route = kaputt  # type: ignore[method-assign]
+    b = _lauf(fake, [_konfig("Inventar v2")], tmp_path)
+    assert [(a.art, a.status) for a in b.aktionen] == [("oeffnen", "fehlgeschlagen")]
+    assert "Inventar v2" not in fake.issues[1]["body"]

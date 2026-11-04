@@ -461,7 +461,10 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
             status, _ = schreiben("oeffnen", k, str(i.get("title") or titel), n, lambda g: g.oeffnen(repo, n))
             if status == "ausgefuehrt":
                 i["state"] = "open"
-        if _body(i).replace("\r\n", "\n") == neu_text:
+            elif status in ("fehlgeschlagen", "abgebrochen"):
+                return  # nicht offen: dann auch nicht bearbeiten
+        # GitHub kuerzt Zeilenenden am Textende: Vergleich ohne CRLF und ohne Zeilenumbrueche am Ende
+        if _body(i).replace("\r\n", "\n").rstrip("\n") == neu_text.rstrip("\n"):
             b.unveraendert += 1
             return
         status, _ = schreiben("bearbeiten", k, str(i.get("title") or titel), n,
@@ -469,8 +472,10 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
         if status == "ausgefuehrt":
             i["body"] = neu_text
 
+    # S5-11: konfig-Issues zaehlen nicht gegen die Tagesgrenze (Schluessel `konfig:<hash>`)
     neu_heute = max(stand.neu_heute(repo, heute),
-                    sum(1 for issues in einzel.values() for i in issues if _heute_angelegt(i, heute)))
+                    sum(1 for k, issues in einzel.items() if not k.startswith("konfig:")
+                        for i in issues if _heute_angelegt(i, heute)))
 
     # 3. Einzel-Issues
     sammel_funde: dict[tuple[str, str], list[Fund]] = defaultdict(list)
