@@ -17,6 +17,11 @@ oeffnen. Oeffentliche Ziele bekommen nie `konfig` (D6); oeffentlich ist ein Ziel
 wirklich geprueft hat (`geprueft`), und nur ueber die Repo-Marke, nie ueber den Titel (Fix-Runde 1 I1). Fuer Arten mit unlesbarer Quelle (Ruling S5-7) wird nichts
 geschlossen und das Sammel-Issue nicht angefasst. `senden=False` macht keinen einzigen schreibenden gh-Aufruf und
 schreibt auch den lokalen Stand nicht.
+
+`konfig` (Ruling S5-11) ist immer genau ein Einzel-Issue je Fund (das Inventar liefert einen je Code-Repo), nie eine
+Sammel-Zeile: Text = `einzel_text` des Funds mit Repo-Marke, jeder Lauf ersetzt den ganzen Text, wenn er sich
+geaendert hat (sonst kein Schreibaufruf). Es zaehlt nicht gegen `max_einzel_je_tag`. Schliessen wie jedes
+Einzel-Issue (nur gepruefte Code-Repos, nicht bei unlesbarer Quelle); D6 und Schluesselfilter gelten unveraendert.
 """
 from __future__ import annotations
 
@@ -51,6 +56,11 @@ _RANG = {"hoch": 0, "mittel": 1, "niedrig": 2}
 _QUELLEN_ARTEN: dict[str, frozenset[str]] = {
     "doku": frozenset({"doku_widerspruch"}),
     "analyse": frozenset({"doppelung", "tot"}),
+    # Ruling S5-12: Quellen des Konfig-Inventars (Task 5)
+    "graph": frozenset({"konfig"}),
+    "dienste": frozenset({"konfig"}),
+    "submodul": frozenset({"konfig"}),
+    "dateien": frozenset({"konfig"}),  # git ls-files des Inventars gescheitert
 }
 _TOR_GESPERRT = "toter Code: gesperrt"
 
@@ -118,7 +128,7 @@ def unlesbare_arten(notizen: Iterable[str]) -> frozenset[str]:
     """Arten, deren Quelle in diesem Lauf nicht lesbar war (S5-7); fuer sie wird nichts geschlossen.
 
     `quelle-unlesbar:doku...` -> doku_widerspruch, `quelle-unlesbar:analyse...` -> doppelung und tot,
-    eine unbekannte Quelle -> alle Arten (fail-closed). Ein gesperrtes Tor fuer toten Code zaehlt wie unlesbar:
+    `quelle-unlesbar:graph|dienste|submodul|dateien...` -> konfig (S5-12), eine unbekannte Quelle -> alle Arten (fail-closed). Ein gesperrtes Tor fuer toten Code zaehlt wie unlesbar:
     es liefert keine Tot-Funde, ohne dass der Code sich geaendert hat.
     """
     aus: set[str] = set()
@@ -384,7 +394,10 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
     # 2. Funde filtern
     verwaltet = set(ziel.arten) - ({"konfig"} if oeffentlich else set())
     for art in sorted(unlesbar & verwaltet):
-        b.notizen.append(f"{art}: Quelle unlesbar: nichts geschlossen, Sammel-Issue unverändert")
+        if art == "konfig":
+            b.notizen.append("konfig: Quelle unlesbar: nichts geschlossen")
+        else:
+            b.notizen.append(f"{art}: Quelle unlesbar: nichts geschlossen, Sammel-Issue unverändert")
     alle_schluessel: set[str] = set()
     aktiv: list[tuple[str, Fund]] = []
     konfig_oeffentlich = 0
@@ -424,6 +437,38 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
                          "das angelegte Issue von Hand prüfen")
         return True
 
+    def konfig_abgleichen(k: str, f: Fund, treffer: list[dict[str, Any]], offen: list[dict[str, Any]]) -> None:
+        """S5-11: ein Einzel-Issue, ganzer Text ersetzt bei Aenderung, ohne Tagesgrenze."""
+        titel, neu_text = _einzel_mit_repo(f)
+        muster = pruefen(f"{titel}\n{neu_text}")
+        if muster:
+            b.gesperrt.append(f"{k}: {muster}")
+            return
+        if not offen and any(_wontfix(i) for i in treffer):
+            b.unterdrueckt.append(k)
+            return
+        if not treffer:
+            status, nummer = schreiben("anlegen", k, titel, None, lambda g: g.anlegen(repo, titel, neu_text))
+            if status == "ausgefuehrt":
+                assert nummer is not None
+                einzel[k].append({"number": nummer, "title": titel, "body": neu_text, "state": "open"})
+            elif label_verloren(status):
+                sichern()
+            return
+        i = offen[0] if offen else treffer[-1]
+        n = int(i["number"])
+        if not offen:  # geschlossen ohne wontfix, Inventar wieder da: oeffnen
+            status, _ = schreiben("oeffnen", k, str(i.get("title") or titel), n, lambda g: g.oeffnen(repo, n))
+            if status == "ausgefuehrt":
+                i["state"] = "open"
+        if _body(i).replace("\r\n", "\n") == neu_text:
+            b.unveraendert += 1
+            return
+        status, _ = schreiben("bearbeiten", k, str(i.get("title") or titel), n,
+                              lambda g: g.bearbeiten(repo, n, neu_text))
+        if status == "ausgefuehrt":
+            i["body"] = neu_text
+
     neu_heute = max(stand.neu_heute(repo, heute),
                     sum(1 for issues in einzel.values() for i in issues if _heute_angelegt(i, heute)))
 
@@ -432,6 +477,9 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
     for k, f in aktiv:
         treffer = einzel.get(k, [])
         offen = [i for i in treffer if _offen(i)]
+        if f.art == "konfig":
+            konfig_abgleichen(k, f, treffer, offen)
+            continue
         if offen:
             i = offen[0]
             titel, neu_text = _einzel_mit_repo(f)

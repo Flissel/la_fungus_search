@@ -13,25 +13,27 @@ Quellen und ihre Bedeutung:
 |---|---|---|
 | Graph `liest_env` (Python, TS/JS, Bash, Rust, Go, YAML ausser Compose) | – | ja |
 | `.env.example`/`.env.sample`/`.env.template` (auch `*.example.env` usw.) | links vom ersten `=` | – |
-| Compose `services.*.environment` (Schluessel bzw. links vom `=`) | ja | – |
-| Compose `${NAME}` | – | ja |
-| PowerShell `$env:NAME =` (auch `+=` usw.) | ja | – |
-| PowerShell `$env:NAME` sonst | – | ja |
+| Compose `services.*.environment` (Schluessel bzw. links vom `=`; explizit vor `<<`) | ja | – |
+| Compose `${NAME}`, `${NAME:-…}`, `${NAME?…}`; `$NAME` nur als ganzer Wert | – | ja |
+| PowerShell `$env:NAME =` (auch `+=`, `??=` …), `[Environment]::SetEnvironmentVariable("NAME"`, `Set-Item`/`New-Item env:NAME` | ja | – |
+| PowerShell `$env:NAME` sonst (ohne `#`- und `<# #>`-Kommentare) | – | ja |
 | `config/dienste.yaml` (`dienste.<name>.port`) | Port | – |
 | `ast` auf `.py`: `Anthropic(`, `OpenAI(` usw. | LLM-Client | – |
 
+Env-Namen werden ohne Gross-/Kleinschreibung zusammengefuehrt (Windows-Env) und gross geschrieben angezeigt.
 Aus dem Graphen werden Kanten aus Dotenv-, Compose- und `.ps1`/`.psm1`-Dateien nicht genommen: Stufe 1 legt dort
 Setzen und Lesen gleichermassen als `liest_env` ab; diese Dateien liest das Inventar selbst mit der Unterscheidung.
+`ungesetzt` zaehlt nur Lesestellen in produktivem Code (S5-13).
 
-Geheimnis-Regel (D6, R-b): von den Env-artigen Dateien wird nur geoeffnet, was `darf_oeffnen` erlaubt. Jede
-Dateilesung geht durch `_lesen`, das die Regel vorher prueft. Aus erlaubten Dateien wird je Zeile nur der Text links
-vom ersten `=` behalten. Namen, die wie ein Schluessel aussehen (`pruefen`), fallen ganz heraus; die Notiz nennt nur
-das Muster.
+Geheimnis-Regel (D6, R-b): `darf_oeffnen` verweigert standardmaessig jede Geheimnis-artige Datei; jede Dateilesung
+geht durch `_lesen`, das die Regel vorher prueft. Aus erlaubten Env-Beispieldateien wird je Zeile nur der Text links
+vom ersten `=` behalten; mehrzeilige Werte in Anfuehrungszeichen werden bis zu ihrem Ende uebersprungen. Namen, die
+wie ein Schluessel aussehen (`pruefen`), fallen ganz heraus; die Notiz nennt nur das Muster.
 
-Notizen (`Inventar.notizen`): Ist der Graph nicht da oder nicht lesbar, beginnt die Notiz mit
-`quelle-unlesbar:graph`; das Inventar entsteht trotzdem aus den Dateien, nur ohne Befund `tot` (ohne Lesestellen
-waere jeder gesetzte Name "tot"). Ein unlesbares Dienst-Register gibt `quelle-unlesbar:dienste`. Alles andere sind
-Zaehl-Notizen ohne Praefix.
+Notizen (`Inventar.notizen`): Praefix `quelle-unlesbar:` fuer `graph` (Graph fehlt, kaputt), `dienste` (Register
+konfiguriert, aber fehlt/zu gross/kaputt), `submodul` (deklariert, nicht ausgecheckt) und `dateien` (`git ls-files`
+gescheitert); alle bilden in `sync.unlesbare_arten` auf `konfig` ab. Ohne Graph gibt es keinen Befund `tot` (ohne
+Lesestellen waere jeder gesetzte Name "tot"). Alles andere sind Zaehl-Notizen ohne Praefix.
 """
 from __future__ import annotations
 
@@ -41,7 +43,9 @@ import json
 import posixpath
 import re
 import sqlite3
+import subprocess
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -50,14 +54,14 @@ import yaml
 
 from .._glob import glob_passt, glob_regex
 from ..analyse.lauf import _stand_meta
-from ..parser.daten import _PS_RE, _REF_RE
-from ..quelle import _git
+from ..parser.daten import _PS_RE
+from ..quelle import _git_args, _git_env
 from ..regeln import REGELDATEI, STANDARD_AUSGENOMMEN, Regeln, regeln_laden
 from ..speicher import _kante_von, _sortierschluessel, pfad_kennung
 from ..spezial.compose import _verboten as _compose_verboten
 from ..sprachen import sprache_fuer
 from ..vermessen import stand_finden
-from .sammeln import UNLESBAR_PRAEFIX, _aussen_name, _id_teile, _submodul_pfade
+from .sammeln import UNLESBAR_PRAEFIX, _aussen_name, _id_teile, _submodul_pfade, ist_nicht_produktiv
 from .text import KAPPEN_RESERVE, _zelle, kappen, kappen_zeile, pruefen
 from .typen import Fund
 
@@ -66,18 +70,28 @@ INVENTAR_ARTEN: tuple[str, ...] = ("env", "key", "port", "llm_client")
 BEFUNDE: tuple[str, ...] = ("doppelt", "widerspruechlich", "tot", "ungesetzt")
 KEY_ENDEN: tuple[str, ...] = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
 DIENSTE_STANDARD = "config/dienste.yaml"
+GIT_TIMEOUT_S = 60
 
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _ERLAUBT_GENAU = frozenset({".env.example", ".env.sample", ".env.template"})
 _ERLAUBT_ENDE = (".example.env", ".sample.env", ".template.env")
+GEHEIM_MUSTER: tuple[str, ...] = (
+    ".env*", "env.*", "*.env", ".envrc", "*.pem", "*.key", "id_rsa*", "credentials*", "secrets*")
 # Betriebssystem- und Laufzeitnamen: werden gelesen, aber nie im Projekt gesetzt -> kein Befund `ungesetzt`
 SYSTEM_NAMEN = frozenset({
     "APPDATA", "CI", "COMPUTERNAME", "HOME", "HOSTNAME", "LANG", "LOCALAPPDATA", "PATH", "PROGRAMDATA",
     "PROGRAMFILES", "PWD", "SHELL", "SYSTEMROOT", "TEMP", "TERM", "TMP", "TMPDIR", "USER", "USERNAME",
     "USERPROFILE", "WINDIR",
 })
+# S5-13: zusaetzlich zu `ist_nicht_produktiv`
+_FREMD_SEGMENTE = frozenset({"vendor", "third_party", "node_modules", "site-packages"})
 _PS_ENDUNGEN = (".ps1", ".psm1")
-_PS_ZUWEISUNG = re.compile(r"\}?[ \t]*[-+*/]?=(?!=)")
+_PS_ZUWEISUNG = re.compile(r"\}?[ \t]*(?:\?\?|[-+*/])?=(?!=)")
+_PS_SETENV = re.compile(
+    r"\[(?:System\.)?Environment\]::SetEnvironmentVariable\(\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]", re.I)
+_PS_ITEM = re.compile(r"\b(?:Set|New)-Item\s+(?:-Path\s+)?['\"]?env:\\?([A-Za-z_][A-Za-z0-9_]*)", re.I)
+_COMPOSE_KLAMMER = re.compile(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?[-?+][^}]*)?\}")
+_COMPOSE_GANZ = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
 _LLM_KLASSEN = {
     "Anthropic": "anthropic", "AsyncAnthropic": "anthropic", "ChatAnthropic": "anthropic",
     "OpenAI": "openai", "AsyncOpenAI": "openai", "ChatOpenAI": "openai",
@@ -109,28 +123,32 @@ class Inventar:
     code_repo: str  # aeusserer Repo-Name (Task 2)
     namen: list[Name]  # sortiert nach Art (INVENTAR_ARTEN), dann Name (Ports numerisch)
     clients: list[LlmClient]  # sortiert
-    notizen: list[str]  # sortiert; `quelle-unlesbar:graph...` / `quelle-unlesbar:dienste...` siehe Modul-Doc
+    notizen: list[str]  # sortiert; Praefixe `quelle-unlesbar:graph|dienste|submodul|dateien` siehe Modul-Doc
     uebersprungen: int  # Dateien, die nicht lesbar oder nicht parsebar waren (gezaehlt, nie Absturz)
     dienste_pfad: str = DIENSTE_STANDARD
+    fehlende_submodule: list[str] = field(default_factory=list)  # deklariert, nicht ausgecheckt (Repo-Namen)
+    nicht_geoeffnet: int = 0  # Dateien, die die Geheimnis-Regel nicht oeffnen liess
 
 
 # ---------------------------------------------------------------- Geheimnis-Regel
 
-def darf_oeffnen(dateiname: str) -> bool:
-    """Darf eine Datei mit diesem Basisnamen ueberhaupt geoeffnet werden (D6, R-b)?
-
-    Erlaubt sind von den Env-artigen nur `.env.example`, `.env.sample`, `.env.template` und `*.example.env`,
-    `*.sample.env`, `*.template.env`. Nie: `.env`, `.env.*`, `*.env` (auch `secrets.env`) und `*.pem`.
-    """
-    n = dateiname.lower()
-    if n in _ERLAUBT_GENAU or n.endswith(_ERLAUBT_ENDE):
-        return True
-    return not (n == ".env" or n.startswith(".env.") or n.endswith(".env") or n.endswith(".pem"))
-
-
 def ist_env_beispiel(dateiname: str) -> bool:
     n = dateiname.lower()
     return n in _ERLAUBT_GENAU or n.endswith(_ERLAUBT_ENDE)
+
+
+def darf_oeffnen(dateiname: str) -> bool:
+    """Darf eine Datei mit diesem Basisnamen ueberhaupt geoeffnet werden (D6, R-b; Fix-Runde 1: Verbot zuerst)?
+
+    Verweigert (ohne Gross-/Kleinschreibung) jeden Namen auf `GEHEIM_MUSTER`: `.env*` (auch `.env`, `.envrc`),
+    `env.*`, `*.env` (auch `secrets.env`), `*.pem`, `*.key`, `id_rsa*`, `credentials*`, `secrets*`. Ausnahme sind
+    nur die Beispieldateien `.env.example`, `.env.sample`, `.env.template` und `*.example.env`, `*.sample.env`,
+    `*.template.env`. Alle anderen Namen (Quelltext, YAML, …) sind erlaubt.
+    """
+    if ist_env_beispiel(dateiname):
+        return True
+    n = dateiname.lower()
+    return not any(fnmatch.fnmatchcase(n, m) for m in GEHEIM_MUSTER)
 
 
 def _lesen(pfad: Path, max_bytes: int) -> bytes | None:
@@ -149,24 +167,50 @@ def _text(quelle: bytes) -> str:
     return quelle.decode("utf-8-sig", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
 
 
-def env_namen(quelle: bytes) -> list[tuple[str, int]]:
-    """(Name, Zeile) aus einer erlaubten Env-Beispieldatei: nur der Text links vom ersten `=`.
+def _quote_ende(zeile: str, start: int, q: str) -> int:
+    """Index des schliessenden Anfuehrungszeichens ab `start` oder -1; in `"…"` zaehlt `\\"` nicht."""
+    i = start
+    while i < len(zeile):
+        c = zeile[i]
+        if c == "\\" and q == '"':
+            i += 2
+            continue
+        if c == q:
+            return i
+        i += 1
+    return -1
 
-    Kommentarzeilen (`#`) und Zeilen ohne `=` entfallen, ein `export `-Praefix wird entfernt. Die rechte Seite
-    wird nie als eigener Wert angelegt (nur ein Slice bis zum `=`)."""
+
+def env_namen(quelle: bytes) -> tuple[list[tuple[str, int]], bool]:
+    """((Name, Zeile), ..., offen_am_ende) aus einer erlaubten Env-Beispieldatei: nur der Text links vom ersten `=`.
+
+    Kommentarzeilen (`#`) und Zeilen ohne `=` entfallen, ein `export `-Praefix wird entfernt. Beginnt ein Wert mit
+    `"`, `'` oder `` ` `` und schliesst nicht in derselben Zeile, werden alle Folgezeilen bis zum schliessenden Zeichen
+    uebersprungen (Fix-Runde 1: mehrzeilige Werte liefern keine Namen). Bleibt es bis zum Dateiende offen, ist
+    `offen_am_ende` True. Die rechte Seite wird nie als eigener Wert angelegt, nur Zeichen fuer Zeichen geprueft."""
     aus: list[tuple[str, int]] = []
+    offen: str | None = None
     for nr, zeile in enumerate(_text(quelle).split("\n"), start=1):
+        if offen is not None:
+            if _quote_ende(zeile, 0, offen) >= 0:
+                offen = None
+            continue
+        if zeile.lstrip().startswith("#"):
+            continue
         gleich = zeile.find("=")
         if gleich < 0:
             continue
         links = zeile[:gleich].strip()
-        if links.startswith("#"):
-            continue
         if links.startswith("export ") or links.startswith("export\t"):
             links = links[len("export"):].strip()
         if _NAME.fullmatch(links):
             aus.append((links, nr))
-    return aus
+        i = gleich + 1
+        while i < len(zeile) and zeile[i] in " \t":
+            i += 1
+        if i < len(zeile) and zeile[i] in "\"'`" and _quote_ende(zeile, i + 1, zeile[i]) < 0:
+            offen = zeile[i]
+    return aus, offen is not None
 
 
 # ---------------------------------------------------------------- Dateien (R-a)
@@ -186,25 +230,42 @@ def _regeln(ordner: Path) -> Regeln:
         return regeln_laden(None)
 
 
-def _dateien(wurzel: Path, aussen: str, notizen: list[str]) -> list[_Datei]:
-    repos = [(aussen, wurzel)] + [
-        (f"{aussen}/{s}", wurzel / s) for s in sorted(_submodul_pfade(wurzel)) if (wurzel / s / ".git").exists()]
+def _ls_files(ordner: Path) -> tuple[list[bytes] | None, str]:
+    """`git ls-files -z` mit Zeitgrenze; (None, Grund) bei fehlendem git, Zeitueberschreitung oder Fehlercode."""
+    try:
+        erg = subprocess.run(_git_args("ls-files", "-z"), cwd=ordner, env=_git_env(), capture_output=True,
+                             timeout=GIT_TIMEOUT_S, check=False)
+    except subprocess.TimeoutExpired:
+        return None, "Zeitüberschreitung"
+    except (OSError, subprocess.SubprocessError) as fehler:
+        return None, type(fehler).__name__
+    if erg.returncode != 0:
+        return None, f"Exit {erg.returncode}"
+    return [p for p in erg.stdout.split(b"\0") if p], ""
+
+
+def _dateien(wurzel: Path, aussen: str, notizen: list[str]) -> tuple[list[_Datei], list[str]]:
+    """(versionierte Dateien, fehlende Submodule)."""
+    sub = sorted(_submodul_pfade(wurzel))
+    fehlend = [f"{aussen}/{s}" for s in sub if not (wurzel / s / ".git").exists()]
+    for name in fehlend:
+        notizen.append(f"{UNLESBAR_PRAEFIX}submodul: {name} nicht ausgecheckt")
+    repos = [(aussen, wurzel)] + [(f"{aussen}/{s}", wurzel / s) for s in sub if (wurzel / s / ".git").exists()]
     aus: list[_Datei] = []
     for repo, ordner in repos:
         regeln = _regeln(ordner)
         muster = [glob_regex(m) for m in (*STANDARD_AUSGENOMMEN, *regeln.ausgenommen)]
-        erg = _git(ordner, "ls-files", "-z", check=False)
-        if erg.returncode != 0:
-            notizen.append(f"git ls-files fehlgeschlagen: {repo} (nicht inventarisiert)")
+        liste, grund = _ls_files(ordner)
+        if liste is None:
+            notizen.append(f"{UNLESBAR_PRAEFIX}dateien: git ls-files fehlgeschlagen für {repo} ({grund}): "
+                           "nicht inventarisiert")
             continue
-        for roh in erg.stdout.split(b"\0"):
-            if not roh:
-                continue
+        for roh in liste:
             pfad = roh.decode("utf-8", errors="surrogateescape").replace("\\", "/")
             if glob_passt(pfad, muster):
                 continue
             aus.append(_Datei(repo, pfad, ordner / pfad, regeln.max_dateigroesse_kb * 1024))
-    return sorted(aus, key=lambda d: (d.repo, d.pfad))
+    return sorted(aus, key=lambda d: (d.repo, d.pfad)), fehlend
 
 
 def _ort(repo: str, pfad: str, zeile: int | None) -> str:
@@ -233,7 +294,7 @@ def _graph_db(wurzel: Path, stand_unter: Path | None) -> Path | None:
 def _graph_quelle_ok(pfad: str) -> bool:
     """Kanten aus diesen Dateiarten vermischen Setzen und Lesen (Stufe 1); das Inventar liest sie selbst."""
     basis = posixpath.basename(pfad).lower()
-    if sprache_fuer(pfad) == "dotenv" or not darf_oeffnen(basis) or ist_env_beispiel(basis):
+    if sprache_fuer(pfad) == "dotenv" or basis == ".env" or basis.endswith(".env") or ist_env_beispiel(basis):
         return False
     return not (basis.endswith(_PS_ENDUNGEN) or _ist_compose(basis))
 
@@ -288,15 +349,25 @@ def _graph_lesestellen(wurzel: Path, stand_unter: Path | None,
 # ---------------------------------------------------------------- YAML-Knoten (mit Zeilen, ohne Werte zu bauen)
 
 def _items(knoten: yaml.Node | None, tiefe: int = 0) -> list[tuple[yaml.Node, yaml.Node]]:
-    """Schluessel/Wert-Paare eines Mapping-Knotens, Merge-Schluessel `<<` aufgeloest."""
+    """Schluessel/Wert-Paare eines Mapping-Knotens wie YAML sie meint: explizite Schluessel gewinnen vor `<<`,
+    unter mehreren Merge-Quellen die fruehere (Fix-Runde 1)."""
     if not isinstance(knoten, yaml.MappingNode) or tiefe > 10:
         return []
-    aus: list[tuple[yaml.Node, yaml.Node]] = []
+    explizit: list[tuple[yaml.Node, yaml.Node]] = []
+    quellen: list[yaml.Node] = []
     for k, v in knoten.value:
         if isinstance(k, yaml.ScalarNode) and k.tag == "tag:yaml.org,2002:merge":
-            for quelle in (v.value if isinstance(v, yaml.SequenceNode) else [v]):
-                aus += _items(quelle, tiefe + 1)
+            quellen += v.value if isinstance(v, yaml.SequenceNode) else [v]
         else:
+            explizit.append((k, v))
+    gesehen = {k.value for k, _ in explizit if isinstance(k, yaml.ScalarNode)}
+    aus = list(explizit)
+    for q in quellen:
+        for k, v in _items(q, tiefe + 1):
+            if isinstance(k, yaml.ScalarNode):
+                if k.value in gesehen:
+                    continue
+                gesehen.add(k.value)
             aus.append((k, v))
     return aus
 
@@ -308,42 +379,110 @@ def _holen(knoten: yaml.Node | None, schluessel: str) -> yaml.Node | None:
     return None
 
 
-def _env_schluessel(env: yaml.Node | None) -> list[tuple[str, int]]:
-    aus: list[tuple[str, int]] = []
+def _env_schluessel(env: yaml.Node | None) -> list[tuple[str, int, yaml.ScalarNode | None]]:
+    """(Name, Zeile, Listeneintrag oder None) der `environment`-Schluessel."""
+    aus: list[tuple[str, int, yaml.ScalarNode | None]] = []
     if isinstance(env, yaml.MappingNode):
         for k, _ in _items(env):
             if isinstance(k, yaml.ScalarNode) and _NAME.fullmatch(k.value.strip()):
-                aus.append((k.value.strip(), k.start_mark.line + 1))
+                aus.append((k.value.strip(), k.start_mark.line + 1, None))
     elif isinstance(env, yaml.SequenceNode):
         for e in env.value:
             if isinstance(e, yaml.ScalarNode):
                 gleich = e.value.find("=")
                 links = (e.value if gleich < 0 else e.value[:gleich]).strip()
                 if _NAME.fullmatch(links):
-                    aus.append((links, e.start_mark.line + 1))
+                    aus.append((links, e.start_mark.line + 1, e))
     return aus
+
+
+def _wert_skalare(knoten: yaml.Node, gesehen: set[int], tiefe: int = 0) -> Iterator[yaml.ScalarNode]:
+    """Alle Skalare in Wert-Position (keine Mapping-Schluessel); Aliase nur einmal."""
+    if id(knoten) in gesehen or tiefe > 50:
+        return
+    gesehen.add(id(knoten))
+    if isinstance(knoten, yaml.ScalarNode):
+        yield knoten
+    elif isinstance(knoten, yaml.SequenceNode):
+        for v in knoten.value:
+            yield from _wert_skalare(v, gesehen, tiefe + 1)
+    elif isinstance(knoten, yaml.MappingNode):
+        for _, v in knoten.value:
+            yield from _wert_skalare(v, gesehen, tiefe + 1)
 
 
 def _compose(text: str, ort: str, setzen: dict[str, set[str]], lesen: dict[str, set[str]]) -> None:
     for dok in yaml.compose_all(text, Loader=yaml.SafeLoader):
-        for _, dienst in _items(_holen(dok, "services")):
-            for name, zeile in _env_schluessel(_holen(dienst, "environment")):
-                setzen[name].add(f"{ort}:{zeile}")
-    for nr, zeile in enumerate(text.split("\n"), start=1):
-        if zeile.lstrip().startswith("#"):
+        if dok is None:
             continue
-        for name in _REF_RE.findall(zeile):
-            if _NAME.fullmatch(name):
-                lesen[name].add(f"{ort}:{nr}")
+        listeneintraege: set[int] = set()
+        for _, dienst in _items(_holen(dok, "services")):
+            for name, zeile, eintrag in _env_schluessel(_holen(dienst, "environment")):
+                setzen[name].add(f"{ort}:{zeile}")
+                if eintrag is not None:
+                    listeneintraege.add(id(eintrag))
+        for s in _wert_skalare(dok, set()):
+            basis = s.start_mark.line + 1 + (1 if s.style in ("|", ">") else 0)
+            for m in _COMPOSE_KLAMMER.finditer(s.value):
+                lesen[m.group(1)].add(f"{ort}:{basis + s.value.count(chr(10), 0, m.start())}")
+            kandidaten = [s.value.strip()]
+            if id(s) in listeneintraege and "=" in s.value:
+                kandidaten.append(s.value[s.value.find("=") + 1:].strip())
+            for kandidat in kandidaten:
+                m = _COMPOSE_GANZ.fullmatch(kandidat)
+                if m:
+                    lesen[m.group(1)].add(f"{ort}:{basis}")
+
+
+def _ps_zeilen(text: str) -> list[str]:
+    """Zeilen ohne `#`-Zeilenkommentare und `<# … #>`-Blockkommentare (Strings bleiben, `#` darin zaehlt nicht)."""
+    aus: list[str] = []
+    block = False
+    quote: str | None = None
+    for zeile in text.split("\n"):
+        teile: list[str] = []
+        i = 0
+        while i < len(zeile):
+            c = zeile[i]
+            if block:
+                if zeile.startswith("#>", i):
+                    block = False
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if quote is not None:
+                teile.append(c)
+                if c == "`" and quote == '"' and i + 1 < len(zeile):
+                    teile.append(zeile[i + 1])
+                    i += 2
+                    continue
+                if c == quote:
+                    quote = None
+                i += 1
+                continue
+            if zeile.startswith("<#", i):
+                block = True
+                i += 2
+                continue
+            if c == "#":
+                break
+            if c in "'\"":
+                quote = c
+            teile.append(c)
+            i += 1
+        aus.append("".join(teile))
+    return aus
 
 
 def _powershell(text: str, ort: str, setzen: dict[str, set[str]], lesen: dict[str, set[str]]) -> None:
-    for nr, zeile in enumerate(text.split("\n"), start=1):
-        if zeile.lstrip().startswith("#"):
-            continue
+    for nr, zeile in enumerate(_ps_zeilen(text), start=1):
         for m in _PS_RE.finditer(zeile):
             ziel = setzen if _PS_ZUWEISUNG.match(zeile, m.end()) else lesen
             ziel[m.group(1)].add(f"{ort}:{nr}")
+        for muster in (_PS_SETENV, _PS_ITEM):
+            for m in muster.finditer(zeile):
+                setzen[m.group(1)].add(f"{ort}:{nr}")
 
 
 def _ports(text: str, ort: str) -> list[tuple[int, str, str]]:
@@ -351,7 +490,10 @@ def _ports(text: str, ort: str) -> list[tuple[int, str, str]]:
     Schluessel bleiben erhalten (Knotenbaum statt dict)."""
     aus: list[tuple[int, str, str]] = []
     for dok in yaml.compose_all(text, Loader=yaml.SafeLoader):
-        for k, v in _items(_holen(dok, "dienste")):
+        dienste = _holen(dok, "dienste")
+        if not isinstance(dienste, yaml.MappingNode):
+            continue
+        for k, v in dienste.value:  # roh: doppelte Schluessel sollen sichtbar bleiben
             if not isinstance(k, yaml.ScalarNode):
                 continue
             p = _holen(v, "port")
@@ -446,23 +588,37 @@ def _datei_von(ort: str) -> str:
     return m.group(1) if m else ort
 
 
+def produktiv(ort: str) -> bool:
+    """S5-13: Lesestelle in produktivem Code (nicht Test/Beispiel/Vendor, kein `site-packages`)."""
+    pfad = _datei_von(ort)
+    return not ist_nicht_produktiv(pfad) and not any(t in _FREMD_SEGMENTE for t in pfad.split("/")[:-1])
+
+
 def _sortierschluessel_name(n: Name) -> tuple[int, str]:
     return INVENTAR_ARTEN.index(n.art), (n.name.zfill(6) if n.art == "port" else n.name)
 
 
-def _env_eintraege(setzen: dict[str, set[str]], lesen: dict[str, set[str]], *, mit_tot: bool) -> list[Name]:
-    aus: list[Name] = []
-    for name in sorted(set(setzen) | set(lesen)):
-        gesetzt, gelesen = sorted(setzen.get(name, ())), sorted(lesen.get(name, ()))
+def _env_eintraege(setzen: dict[str, set[str]], lesen: dict[str, set[str]], *,
+                   mit_tot: bool) -> list[tuple[Name, tuple[str, ...]]]:
+    """(Eintrag, Schreibweisen): Namen ohne Gross-/Kleinschreibung zusammengefuehrt (Windows-Env), angezeigt gross;
+    die Schreibweisen braucht nur der Schluesselfilter (ein `ghp_…` waere gross geschrieben unsichtbar fuer ihn)."""
+    gruppen: dict[str, set[str]] = defaultdict(set)
+    for schreibweise in set(setzen) | set(lesen):
+        gruppen[schreibweise.upper()].add(schreibweise)
+    aus: list[tuple[Name, tuple[str, ...]]] = []
+    for name in sorted(gruppen):
+        schreib = tuple(sorted(gruppen[name]))
+        gesetzt = sorted({o for s in schreib for o in setzen.get(s, ())})
+        gelesen = sorted({o for s in schreib for o in lesen.get(s, ())})
         befund: list[str] = []
         if len({_datei_von(o) for o in gesetzt}) >= 2:
             befund.append("doppelt")
         if gesetzt and not gelesen and mit_tot:
             befund.append("tot")
-        if gelesen and not gesetzt and name.upper() not in SYSTEM_NAMEN:
+        if not gesetzt and name not in SYSTEM_NAMEN and any(produktiv(o) for o in gelesen):
             befund.append("ungesetzt")
-        art: InventarArt = "key" if name.upper().endswith(KEY_ENDEN) else "env"
-        aus.append(Name(art, name, gelesen, gesetzt, sorted(befund)))
+        art: InventarArt = "key" if name.endswith(KEY_ENDEN) else "env"
+        aus.append((Name(art, name, gelesen, gesetzt, sorted(befund)), schreib))
     return aus
 
 
@@ -494,6 +650,10 @@ def _client_eintraege(clients: list[LlmClient]) -> list[Name]:
     return [Name("llm_client", a, [], sorted(o), []) for a, o in sorted(je.items())]
 
 
+_DATEI_TEXT = {"python": ".py-Datei(en)", "compose": "Compose-Datei(en)", "powershell": "PowerShell-Datei(en)",
+               "env-beispiel": "Env-Beispieldatei(en)", "dienste": "Dienst-Register"}
+
+
 def inventar(wurzel: Path, *, stand_unter: Path | None = None) -> Inventar:
     """Konfig-Inventar ueber `wurzel` (nur lesend, nur Namen). `stand_unter` wie in `funde_sammeln`: ein Stand-
     Ordner mit `graph.sqlite` oder ein Basisordner mit `<name>-<kennung>`-Staenden; None = `stand_finden`."""
@@ -507,43 +667,56 @@ def inventar(wurzel: Path, *, stand_unter: Path | None = None) -> Inventar:
     notizen += graph_notizen
     graph_ok = not any(n.startswith(f"{UNLESBAR_PRAEFIX}graph: Graph") for n in graph_notizen)
 
-    dienste_pfad = (_regeln(wurzel).dienste or DIENSTE_STANDARD).replace("\\", "/")
-    dateien = _dateien(wurzel, aussen, notizen)
+    regeln_aussen = _regeln(wurzel)
+    dienste_konfiguriert = regeln_aussen.dienste is not None
+    dienste_pfad = (regeln_aussen.dienste or DIENSTE_STANDARD).replace("\\", "/")
+    dateien, fehlende = _dateien(wurzel, aussen, notizen)
     ports: list[tuple[int, str, str]] = []
     clients: list[LlmClient] = []
     nicht_lesbar: Counter[str] = Counter()
+    gesperrt = 0
+    offen_am_ende = 0
     dienste_da = False
+    dienste_unlesbar = False
     for d in dateien:
         basis = posixpath.basename(d.pfad)
         ort = f"{d.repo}/{d.pfad}"
         if ist_env_beispiel(basis):
             art = "env-beispiel"
+        elif d.repo == aussen and d.pfad == dienste_pfad:
+            art = "dienste"
         elif _ist_compose(basis) and not _compose_verboten(d.pfad):
             art = "compose"
         elif basis.lower().endswith(_PS_ENDUNGEN):
             art = "powershell"
-        elif d.repo == aussen and d.pfad == dienste_pfad:
-            art = "dienste"
         elif basis.endswith(".py"):
             art = "python"
         else:
+            continue
+        if art == "dienste":
+            dienste_da = True
+        if not darf_oeffnen(basis):
+            gesperrt += 1
+            dienste_unlesbar = dienste_unlesbar or art == "dienste"
             continue
         quelle = _lesen(d.voll, d.max_bytes)
         if quelle is None:
             if d.voll.is_dir():  # Gitlink eines Submoduls
                 continue
             nicht_lesbar[art] += 1
+            dienste_unlesbar = dienste_unlesbar or art == "dienste"
             continue
         try:
             if art == "env-beispiel":
-                for name, zeile in env_namen(quelle):
+                gefunden_env, offen = env_namen(quelle)
+                offen_am_ende += offen
+                for name, zeile in gefunden_env:
                     setzen[name].add(f"{ort}:{zeile}")
             elif art == "compose":
                 _compose(_text(quelle), ort, setzen, lesen)
             elif art == "powershell":
                 _powershell(_text(quelle), ort, setzen, lesen)
             elif art == "dienste":
-                dienste_da = True
                 ports += _ports(_text(quelle), ort)
             else:
                 gefunden = llm_clients(quelle, d.repo, d.pfad)
@@ -552,22 +725,32 @@ def inventar(wurzel: Path, *, stand_unter: Path | None = None) -> Inventar:
                 else:
                     clients += gefunden
         except (yaml.YAMLError, RecursionError, ValueError):
-            if art == "dienste":
-                notizen.append(f"{UNLESBAR_PRAEFIX}dienste: {dienste_pfad} nicht lesbar: keine Ports")
             nicht_lesbar[art] += 1
+            dienste_unlesbar = dienste_unlesbar or art == "dienste"
         del quelle
-    if not dienste_da and not any(n.startswith(f"{UNLESBAR_PRAEFIX}dienste") for n in notizen):
-        notizen.append(f"Dienst-Register {dienste_pfad} nicht versioniert oder nicht lesbar: keine Ports")
-    namen_text = {"python": ".py-Datei(en)", "compose": "Compose-Datei(en)", "powershell": "PowerShell-Datei(en)",
-                  "env-beispiel": "Env-Beispieldatei(en)", "dienste": "Dienst-Register"}
+    if dienste_unlesbar:
+        notizen.append(f"{UNLESBAR_PRAEFIX}dienste: {dienste_pfad} nicht lesbar (zu groß, gesperrt oder kaputt): "
+                       "keine Ports")
+    elif not dienste_da:
+        if dienste_konfiguriert:
+            notizen.append(f"{UNLESBAR_PRAEFIX}dienste: {dienste_pfad} konfiguriert, aber nicht versioniert: "
+                           "keine Ports")
+        else:
+            notizen.append(f"kein Dienst-Register ({dienste_pfad} nicht versioniert): keine Ports")
     for art, n in sorted(nicht_lesbar.items()):
-        notizen.append(f"{n} {namen_text[art]} nicht lesbar oder nicht parsebar, übersprungen")
+        notizen.append(f"{n} {_DATEI_TEXT[art]} nicht lesbar oder nicht parsebar, übersprungen")
+    if gesperrt:
+        notizen.append(f"{gesperrt} Datei(en) nach der Geheimnis-Regel nicht geöffnet")
+    if offen_am_ende:
+        notizen.append(f"{offen_am_ende} Env-Beispieldatei(en) mit offenem Anführungszeichen am Ende: "
+                       "Rest übersprungen")
 
-    roh = (_env_eintraege(setzen, lesen, mit_tot=graph_ok) + _port_eintraege(ports)
-           + _client_eintraege(sorted(clients, key=lambda c: (c.anbieter, c.fundstelle, c.modell or ""))))
+    roh = (_env_eintraege(setzen, lesen, mit_tot=graph_ok) + [(p, ()) for p in _port_eintraege(ports)]
+           + [(c, ()) for c in _client_eintraege(
+               sorted(clients, key=lambda c: (c.anbieter, c.fundstelle, c.modell or "")))])
     namen, verdacht = [], Counter[tuple[str, str]]()
-    for n in roh:
-        muster = pruefen("\n".join([n.name, *n.gelesen, *n.gesetzt, *n.befund]))
+    for n, schreib in roh:
+        muster = pruefen("\n".join([n.name, *schreib, *n.gelesen, *n.gesetzt, *n.befund]))
         if muster:
             verdacht[(muster, n.art)] += 1
         else:
@@ -588,6 +771,8 @@ def inventar(wurzel: Path, *, stand_unter: Path | None = None) -> Inventar:
         notizen=sorted(notizen),
         uebersprungen=sum(nicht_lesbar.values()),
         dienste_pfad=dienste_pfad,
+        fehlende_submodule=sorted(fehlende),
+        nicht_geoeffnet=gesperrt,
     )
 
 
@@ -645,8 +830,11 @@ def _kopf(inv: Inventar) -> str:
     kopf = (f"**Konfig-Inventar {inv.code_repo}**: nur Namen, nie Werte (D6).\n\n"
             "Namen: " + ", ".join(f"{a} {arten[a]}" for a in INVENTAR_ARTEN)
             + ". Befunde: " + ", ".join(f"{b} {befunde[b]}" for b in BEFUNDE)
-            + f". Übersprungene Dateien: {inv.uebersprungen}.\n\n"
-            f"### Konsolidierungsplan\n\n{plan_text}\n\n")
+            + f". Übersprungene Dateien: {inv.uebersprungen}.\n\n")
+    if inv.fehlende_submodule:
+        kopf += (f"**Unvollständig:** {len(inv.fehlende_submodule)} Submodule nicht ausgecheckt, nicht inventarisiert: "
+                 + ", ".join(f"`{_zelle(s)}`" for s in inv.fehlende_submodule) + ".\n\n")
+    kopf += f"### Konsolidierungsplan\n\n{plan_text}\n\n"
     if inv.notizen:
         kopf += "### Hinweise\n\n" + "\n".join(f"- {_zelle(n)}" for n in inv.notizen) + "\n\n"
     return kopf
@@ -669,8 +857,9 @@ def _text_reihenfolge(namen: list[Name]) -> list[Name]:
 
 
 def inventar_fund(inv: Inventar, *, max_zeichen: int = 60000) -> Fund:
-    """Der eine `konfig`-Fund (Schwere mittel, Anker `konfig-inventar:<aussen>`, R-f). Text = Kopf mit Plan und
-    Tabelle "Name -> wo gelesen, wo gesetzt, Befund", gekappt wie in Task 3."""
+    """Der eine `konfig`-Fund (Schwere mittel, Anker `konfig-inventar:<aussen>`, R-f; Titel ohne Zahlen, weil das
+    Einzel-Issue (S5-11) nur seinen Text bearbeitet). Text = Kopf mit Plan und Tabelle "Name -> wo gelesen, wo
+    gesetzt, Befund", gekappt wie in Task 3; `len(text) <= max_zeichen` gilt immer."""
     kopf = _kopf(inv)
     zeilen = [_zeile(n, False) for n in _text_reihenfolge(inv.namen)]
     budget = max_zeichen - len(kopf) - len(_TABELLENKOPF) - KAPPEN_RESERVE - 1
@@ -679,9 +868,10 @@ def inventar_fund(inv: Inventar, *, max_zeichen: int = 60000) -> Fund:
     if k:
         text += "\n\n" + kappen_zeile(k)
     text += "\n"
-    _, befunde = _zaehlen(inv)
+    if len(text) > max_zeichen:  # schon der Kopf passt nicht: hart kuerzen, Kappensatz fuer alle Zeilen
+        rest = "\n\n" + kappen_zeile(len(zeilen)) + "\n"
+        text = (text[: max(0, max_zeichen - len(rest))] + rest)[:max_zeichen]
     belege = sorted({_datei_von(o) for n in inv.namen if n.art != "llm_client" for o in n.gesetzt})
     return Fund(
-        art="konfig", schwere="mittel", code_repo=inv.code_repo,
-        titel=f"Konfig-Inventar: {len(inv.namen)} Namen, {sum(befunde.values())} Befunde",
+        art="konfig", schwere="mittel", code_repo=inv.code_repo, titel="Konfig-Inventar",
         text=text, belege=tuple(belege[:50]), anker=f"konfig-inventar:{inv.code_repo}")

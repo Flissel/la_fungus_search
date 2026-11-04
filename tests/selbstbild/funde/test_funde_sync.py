@@ -332,7 +332,7 @@ def test_oeffentlich_kein_konfig(tmp_path: Path) -> None:
     # privat geht konfig raus
     fake2 = FakeGh()
     _lauf(fake2, konfig, tmp_path / "p", ziel=_ziel(arten=("konfig",)))
-    assert len(_einzel(fake2)) == 1 and len(_sammel(fake2)) == 1
+    assert len(_einzel(fake2)) == 2 and len(_sammel(fake2)) == 0  # S5-11: konfig immer einzeln
 
 
 def test_token_nie_im_bericht_oder_log(tmp_path: Path, caplog: pytest.LogCaptureFixture,
@@ -704,3 +704,64 @@ def test_stand_pfad(tmp_path: Path) -> None:
     from selbstbild.doku.stand import repo_schluessel
     p = stand_pfad(tmp_path / "repo", basis=tmp_path / "basis")
     assert p == tmp_path / "basis" / f"issues-{repo_schluessel(tmp_path / 'repo')}.json"
+
+
+# ---------- Fix-Runde Task 5: konfig als Einzel-Issue (S5-11), Quellen des Inventars (S5-12) ----------
+
+def _konfig(text: str = "Inventar v1") -> Fund:
+    return Fund(art="konfig", schwere="mittel", code_repo="vibemind", titel="Konfig-Inventar", text=text,
+                belege=("vibemind/.env.example",), anker="konfig-inventar:vibemind")
+
+
+def test_konfig_ist_einzel_issue_ohne_tagesgrenze(tmp_path: Path) -> None:
+    fake = FakeGh()
+    b = _lauf(fake, [_konfig()], tmp_path, ziel=_ziel(max_einzel_je_tag=0))
+    assert len(_einzel(fake)) == 1 and _sammel(fake) == []
+    body = _einzel(fake)[0]["body"]
+    assert _marke(_konfig()) in body and "Inventar v1" in body and "<!-- selbstbild:repo=vibemind -->" in body
+    assert b.neu == 0 and b.ueber_grenze == []
+
+
+def test_konfig_gleicher_text_kein_schreiben_geaendert_ein_edit(tmp_path: Path) -> None:
+    fake = FakeGh()
+    _lauf(fake, [_konfig()], tmp_path)
+    vorher = len(fake.aufrufe)
+    b = _lauf(fake, [_konfig()], tmp_path)
+    neu = fake.aufrufe[vorher:]
+    assert {m for m, _ in neu} == {"GET"} and b.unveraendert == 1 and b.aktionen == []
+    vorher = len(fake.aufrufe)
+    b2 = _lauf(fake, [_konfig("Inventar v2")], tmp_path)
+    schreib = [a for a in fake.aufrufe[vorher:] if a[0] != "GET"]
+    assert schreib == [("PATCH", f"/repos/{REPO}/issues/1")]
+    assert [a.art for a in b2.aktionen] == ["bearbeiten"] and "Inventar v2" in fake.issues[1]["body"]
+    assert len(fake.issues) == 1
+
+
+def test_konfig_oeffentlich_nichts(tmp_path: Path) -> None:
+    fake = FakeGh()
+    b = _lauf(fake, [_konfig()], tmp_path, ziel=_ziel(oeffentlich=True))
+    assert fake.issues == {} and fake.methoden() == {"GET"} and "D6" in b.text()
+
+
+def test_konfig_schliessen_nur_lesbar_und_geprueft(tmp_path: Path) -> None:
+    fake = FakeGh()
+    _lauf(fake, [_konfig()], tmp_path)
+    _lauf(fake, [], tmp_path, unlesbar=unlesbare_arten([f"{UNLESBAR_PRAEFIX}graph: Graph fehlt"]))
+    assert fake.issues[1]["state"] == "open"
+    _lauf(fake, [], tmp_path, geprueft=frozenset())
+    assert fake.issues[1]["state"] == "open"
+    _lauf(fake, [], tmp_path)
+    assert fake.issues[1]["state"] == "closed"
+
+
+def test_konfig_schluesselverdacht_sendet_nicht(tmp_path: Path) -> None:
+    fake = FakeGh()
+    b = _lauf(fake, [_konfig("x ghp_" + "a1B2c3D4e5" * 4)], tmp_path)
+    assert fake.issues == {} and len(b.gesperrt) == 1 and "ghp_" not in b.text()
+
+
+def test_unlesbare_arten_inventar_quellen() -> None:
+    for q in ("graph", "dienste", "submodul", "dateien"):
+        assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}{q}: x"]) == frozenset({"konfig"})
+    assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}unbekannt: x"]) == frozenset(
+        {"doku_widerspruch", "doppelung", "tot", "konfig"})
