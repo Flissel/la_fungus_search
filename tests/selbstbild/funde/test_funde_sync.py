@@ -34,6 +34,7 @@ REPO = "Flissel/Vibemind_V1"
 TAG1 = date(2026, 11, 4)
 TAG2 = date(2026, 11, 5)
 COMMIT = "abc1234def5678"
+GEPRUEFT = frozenset({"vibemind"})
 
 
 # ---------- gefaelschtes gh ----------
@@ -54,6 +55,8 @@ class FakeGh:
         self.fehler_bei_anlegen: int | None = None
         self.verloren_bei_anlegen: int | None = None
         self.fehler_text = b"gh: Server Error (HTTP 502) geheimer antworttext"
+        self.privat = True
+        self.label_verwerfen = False
 
     # Hilfen fuer Tests
     def issue(self, titel: str, body: str, *, state: str = "open", state_reason: str | None = None,
@@ -99,11 +102,14 @@ class FakeGh:
         p = teile.path.split("/")[1:]  # repos, owner, name, ...
         assert p[:3] == ["repos", *REPO.split("/")]
         rest = p[3:]
+        if methode == "GET" and rest == []:
+            return self._ok(argv, {"full_name": REPO, "private": self.privat})
         if methode == "GET" and rest == ["issues"]:
             q = parse_qs(teile.query)
             assert q["labels"] == ["selbstbild"] and q["state"] == ["all"] and q["per_page"] == ["100"]
             seite = int(q["page"][0])
-            alle = sorted(self.issues.values(), key=lambda i: -i["number"])
+            alle = sorted((i for i in self.issues.values() if any(x["name"] == "selbstbild" for x in i["labels"])),
+                          key=lambda i: -i["number"])
             return self._ok(argv, alle[(seite - 1) * 100: seite * 100])
         if rest == ["labels", "selbstbild"] and methode == "GET":
             if "selbstbild" in self.labels:
@@ -117,10 +123,11 @@ class FakeGh:
             if self.fehler_bei_anlegen == self.anlegen_versuche:
                 return self._fehler(argv, self.fehler_text)
             assert daten["labels"] == ["selbstbild"]
-            n = self.issue(daten["title"], daten["body"], created=self.tag)
+            labels = () if self.label_verwerfen else ("selbstbild",)
+            n = self.issue(daten["title"], daten["body"], created=self.tag, labels=labels)
             if self.verloren_bei_anlegen == self.anlegen_versuche:
                 return self._fehler(argv, b"gh: Gateway Timeout (HTTP 504)")
-            return self._ok(argv, {"number": n})
+            return self._ok(argv, self.issues[n])
         if len(rest) == 2 and rest[0] == "issues" and methode == "PATCH":
             i = self.issues[int(rest[1])]
             for k in ("body", "state", "state_reason"):
@@ -152,10 +159,11 @@ def _stand(tmp_path: Path) -> IssueStand:
 
 
 def _lauf(fake: FakeGh | None, funde: list[Fund], tmp_path: Path, *, heute: date = TAG1, senden: bool = True,
-          ziel: Ziel | None = None, unlesbar: frozenset[str] = frozenset(), commit: str = COMMIT):
+          ziel: Ziel | None = None, unlesbar: frozenset[str] = frozenset(), commit: str = COMMIT,
+          geprueft: frozenset[str] = GEPRUEFT):
     gh = GitHub("Flissel", laufzeit=fake) if fake is not None else None
     return abgleichen(funde, ziel or _ziel(), gh, _stand(tmp_path), heute=heute, senden=senden, commit=commit,
-                      unlesbar=unlesbar)
+                      geprueft=geprueft, unlesbar=unlesbar)
 
 
 def _einzel(fake: FakeGh) -> list[dict[str, Any]]:
@@ -291,7 +299,8 @@ def test_trocken_schreibt_nichts(tmp_path: Path) -> None:
     funde = [_fund(i) for i in range(7)] + [_fund(8, schwere="mittel")]
     b = _lauf(fake, funde, tmp_path, senden=False)
     assert fake.methoden() == {"GET"}
-    assert all(p.startswith(f"/repos/{REPO}/issues?") for _, p in fake.aufrufe)  # auch kein Label-Check
+    # nur Sichtbarkeit und Bestand, auch kein Label-Check
+    assert all(p == f"/repos/{REPO}" or p.startswith(f"/repos/{REPO}/issues?") for _, p in fake.aufrufe)
     assert not (tmp_path / "issues-test.json").exists()
     arten = [a.art for a in b.aktionen]
     assert arten.count("anlegen") == 5 and arten.count("sammel_anlegen") == 1 and arten.count("schliessen") == 1
@@ -334,7 +343,7 @@ def test_token_nie_im_bericht_oder_log(tmp_path: Path, caplog: pytest.LogCapture
     fake.fehler_bei_anlegen = 2
     gh = GitHub("Flissel", laufzeit=fake)
     b = abgleichen([_fund(i) for i in range(3)], _ziel(), gh, _stand(tmp_path), heute=TAG1, senden=True,
-                   commit=COMMIT)
+                   commit=COMMIT, geprueft=GEPRUEFT)
     assert b.fehler == "http_502"
     texte = [repr(b), str(b), b.text(), caplog.text, *capsys.readouterr(),
              (tmp_path / "issues-test.json").read_text(encoding="utf-8"), repr(gh.__dict__)]
@@ -452,7 +461,7 @@ def test_issues_paginiert_ohne_pull_requests() -> None:
     for i in range(150):
         fake.issue(f"t{i}", "x")
     fake.issues[fake.naechste] = {"number": fake.naechste, "title": "pr", "body": "", "state": "open",
-                                  "labels": [], "pull_request": {"url": "u"}, "created_at": "2026-01-01T00:00:00Z"}
+                                  "labels": [{"name": "selbstbild"}], "pull_request": {"url": "u"}, "created_at": "2026-01-01T00:00:00Z"}
     fake.naechste += 1
     alle = GitHub("Flissel", laufzeit=fake).issues(REPO)
     assert len(alle) == 150 and all("pull_request" not in i for i in alle)
@@ -478,7 +487,7 @@ def test_label_sicherstellen_und_methoden() -> None:
 
 def test_github_fehlerarten() -> None:
     def zeitlimit(args: list[str], **kw: Any) -> Any:
-        raise subprocess.TimeoutExpired(args, kw["timeout"])
+        raise subprocess.TimeoutExpired(args, kw["timeout"], output=TOKEN.encode())
 
     def fehlt(args: list[str], **kw: Any) -> Any:
         raise FileNotFoundError("gh")
@@ -486,10 +495,16 @@ def test_github_fehlerarten() -> None:
     def leer(args: list[str], **kw: Any) -> Any:
         return subprocess.CompletedProcess(args, 0, b"\n", b"")
 
-    for lauf, art in ((zeitlimit, "zeitlimit"), (fehlt, "gh_fehlt"), (leer, "kein_token")):
+    def geprueft_fehler(args: list[str], **kw: Any) -> Any:
+        raise subprocess.CalledProcessError(1, args, output=TOKEN.encode(), stderr=b"gh: Bad (HTTP 401) geheim")
+
+    for lauf, art in ((zeitlimit, "zeitlimit"), (fehlt, "gh_fehlt"), (leer, "kein_token"),
+                      (geprueft_fehler, "http_401")):
         with pytest.raises(GitHubFehler) as e:
             GitHub("Flissel", laufzeit=lauf).issues(REPO)
         assert e.value.art == art
+        # Minor 2: keine angehaengte Ausnahme (mit Teil-Ausgabe oder stderr)
+        assert e.value.__context__ is None and e.value.__cause__ is None
     with pytest.raises(GitHubFehler) as e:
         GitHub("Flissel", laufzeit=FakeGh()).issues("../evil")
     assert e.value.art == "repo_ungueltig"
@@ -507,7 +522,8 @@ def test_bestand_unlesbar_bricht_ab(tmp_path: Path) -> None:
 
     gh = GitHub("Flissel", laufzeit=kaputt)
     with pytest.raises(GitHubFehler) as e:
-        abgleichen([_fund(1)], _ziel(), gh, _stand(tmp_path), heute=TAG1, senden=True, commit=COMMIT)
+        abgleichen([_fund(1)], _ziel(), gh, _stand(tmp_path), heute=TAG1, senden=True, commit=COMMIT,
+                   geprueft=GEPRUEFT)
     assert e.value.art == "http_403" and fake.issues == {}
 
 
@@ -557,6 +573,131 @@ def test_regeln_ohne_issues_nur_bericht() -> None:
 def test_regeln_issues_ungueltig(schlecht: str) -> None:
     with pytest.raises(ValueError):
         regeln_laden(schlecht)
+
+
+def test_oeffentlich_ist_vorgabe() -> None:
+    r = regeln_laden("issues:\n  ziel_standard: {repo: a/b, konto: x}\n  ziele: {c: {repo: d/e, konto: y}}\n")
+    assert all(z.oeffentlich for z in ziele_aus_regeln(r))  # D6 fail-closed
+
+
+def test_fund_arten_wie_typen() -> None:
+    from selbstbild.funde.typen import ARTEN
+    from selbstbild.regeln import FUND_ARTEN
+    assert FUND_ARTEN == ARTEN
+    assert regeln_laden("issues:\n  max_einzel_je_tag: 20\n").issues.max_einzel_je_tag == 20  # type: ignore[union-attr]
+    with pytest.raises(ValueError):
+        regeln_laden("issues:\n  max_einzel_je_tag: 21\n")
+
+
+# ---------- Fix-Runde 1 ----------
+
+def test_nicht_gepruefte_repos_bleiben_offen(tmp_path: Path) -> None:
+    fake = FakeGh()
+    _lauf(fake, [_fund(1, repo="vibemind"), _fund(2, repo="vibemind", schwere="mittel")], tmp_path)
+    ohne_marke = fake.issue("[selbstbild] etwas (siehe #12)", _marke(_fund(3)) + "\n\nText")
+    assert len(fake.offen()) == 3
+    # ein Lauf, der nur la_fungus geprueft hat (z. B. Worktree ohne Submodule): nichts von vibemind schliessen
+    b = _lauf(fake, [_fund(7, repo="la_fungus", schwere="mittel")], tmp_path, geprueft=frozenset({"la_fungus"}))
+    vibemind = [i for i in fake.issues.values() if "la_fungus" not in i["body"]]
+    assert all(i["state"] == "open" for i in vibemind) and fake.kommentare == []
+    assert not any(a.art.endswith("schliessen") for a in b.aktionen)
+    assert any("nicht geprüfte" in n and "vibemind" in n for n in b.notizen)
+    assert any("ohne Repo-Marke" in n for n in b.notizen)
+    # wird vibemind geprueft, schliesst es -- das Issue ohne Repo-Marke bleibt trotzdem offen
+    _lauf(fake, [], tmp_path, geprueft=frozenset({"vibemind", "la_fungus"}))
+    assert fake.issues[ohne_marke]["state"] == "open"
+    assert sum(1 for i in fake.issues.values() if i["state"] == "closed") == 3
+
+
+SAMMEL_YAML = (
+    "name: aussen\ndoku:\n  spaces: {}\n  ausschluss_namen: []\n  ausschluss_pfade: []\n  ketten_md: ''\n"
+    "  compose_live: []\n  sql_wurzeln: ['.']\n  dienste_yaml: ''\n  waechter_zustandsdatei: ''\n"
+    "  waechter_zuordnung: {}\n  tick_minuten: 5\n  marker: marker\n  agent: ''\n  judge_modell: sonnet\n"
+    "  claude_bin: claude\n  rowboat_wissen: w\n  rowboat_notizen: n\n  rowboat_urteile: u\n")
+
+
+def test_geprueft_repos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from selbstbild.doku.konfig import aus_regeln
+    from selbstbild.funde.sammeln import geprueft_repos
+    monkeypatch.setenv("SELBSTBILD_HOME", str(tmp_path / "heim"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "lokal"))
+    w = tmp_path / "repo"
+    w.mkdir()
+    (w / "selbstbild.yaml").write_text(SAMMEL_YAML, encoding="utf-8")
+    (w / ".gitmodules").write_text(
+        '[submodule "os"]\n\tpath = vibemind-os\n[submodule "v"]\n\tpath = voice\n', encoding="utf-8")
+    (w / "vibemind-os").mkdir()
+    (w / "vibemind-os" / ".git").write_text("gitdir: ../.git/modules/os\n", encoding="utf-8")
+    (w / "vibemind-os" / ".gitmodules").write_text('[submodule "s"]\n\tpath = spaces/sales\n', encoding="utf-8")
+    (w / "vibemind-os" / "spaces" / "sales" / ".git").mkdir(parents=True)
+    (w / "voice").mkdir()  # deklariert, Ordner da, aber kein Checkout
+    assert geprueft_repos(w, doku_konfig=aus_regeln(w)) == frozenset(
+        {"aussen", "aussen/vibemind-os", "aussen/vibemind-os/spaces/sales"})
+    anders = tmp_path / "anders"
+    anders.mkdir()
+    (anders / "selbstbild.yaml").write_text(SAMMEL_YAML, encoding="utf-8")
+    assert geprueft_repos(w, doku_konfig=aus_regeln(anders)) == frozenset()  # fail-closed
+
+
+def test_oeffentlich_laut_github_kein_konfig(tmp_path: Path) -> None:
+    fake = FakeGh()
+    fake.privat = False  # Konfiguration sagt privat, GitHub sagt oeffentlich
+    ziel = _ziel(oeffentlich=False, arten=("konfig", "tot"))
+    b = _lauf(fake, [_fund(1, art="konfig"), _fund(2, art="konfig", schwere="mittel"), _fund(3, art="tot")],
+              tmp_path, ziel=ziel)
+    assert len(fake.issues) == 1 and "konfig" not in json.dumps(list(fake.issues.values()))
+    assert any("nicht privat" in n for n in b.notizen) and "D6" in b.text()
+    # auch trocken wird gefragt (nur lesend)
+    fake2 = FakeGh()
+    fake2.privat = False
+    b2 = _lauf(fake2, [_fund(1, art="konfig")], tmp_path, ziel=ziel, senden=False)
+    assert b2.aktionen == [] and ("GET", f"/repos/{REPO}") in fake2.aufrufe and fake2.methoden() == {"GET"}
+
+
+def test_label_verworfen_sperrt_ziel(tmp_path: Path) -> None:
+    fake = FakeGh()
+    fake.label_verwerfen = True
+    b1 = _lauf(fake, [_fund(i) for i in range(3)], tmp_path)
+    assert b1.fehler == "label_fehlt" and len(fake.issues) == 1
+    assert IssueStand.laden(tmp_path / "issues-test.json").sperren == {REPO: "label_fehlt"}
+    assert IssueStand.laden(tmp_path / "issues-test.json").neu_heute(REPO, TAG1) == 1
+    b2 = _lauf(fake, [_fund(i) for i in range(3)], tmp_path)
+    assert len(fake.issues) == 1 and b2.fehler == "ziel_gesperrt"  # keine Dublette des unsichtbaren Issues
+    assert all(a.status == "abgebrochen" for a in b2.aktionen)
+    with pytest.raises(GitHubFehler) as e:
+        GitHub("Flissel", laufzeit=fake).anlegen(REPO, "t", "x")
+    assert e.value.art == "label_fehlt"
+
+
+def test_marke_mit_leerraum(tmp_path: Path) -> None:
+    fake = FakeGh()
+    f, weg = _fund(1), _fund(2)
+    s = fund_schluessel(f).split(":")
+    fake.issue("a", f"<!--  selbstbild:schluessel = {s[0]}:{s[1]}  -->\n\nText")
+    n = fake.issue("b", f"<!--selbstbild:schluessel={fund_schluessel(weg)}-->\n<!--  selbstbild:repo = vibemind  -->")
+    fake.issue("c", "<!--  selbstbild:sammel = doku_widerspruch:vibemind  -->\n" + BEGIN + "\nalt\n" + END)
+    b = _lauf(fake, [f, _fund(3, schwere="mittel")], tmp_path)
+    assert b.neu == 0 and len(fake.issues) == 3  # kein neues Einzel-, kein neues Sammel-Issue
+    assert fake.issues[n]["state"] == "closed"
+    assert [a.art for a in b.aktionen] == ["sammel_bearbeiten", "schliessen"]
+
+
+def test_sammel_verdacht_nur_eigene_zeile(tmp_path: Path) -> None:
+    fake = FakeGh()
+    wert = "ghp_" + "A1b2C3d4" * 5
+    gut = _fund(1, schwere="mittel")
+    boese = replace(_fund(2, schwere="mittel"), titel=f"x {wert}")
+    b = _lauf(fake, [gut, boese], tmp_path)
+    (s,) = _sammel(fake)
+    assert "Fund 1" in s["body"] and wert not in s["body"]
+    assert b.gesperrt == [f"{fund_schluessel(boese)}: GitHub-Token (klassisch)"]
+    # nur noch der verdaechtige Fund: Sammel-Issue bleibt offen und unveraendert
+    davor = s["body"]
+    _lauf(fake, [boese], tmp_path)
+    assert s["state"] == "open" and s["body"] == davor
+    # der Einzel-Weg bleibt fail-closed
+    b3 = _lauf(fake, [replace(_fund(5), text=wert)], tmp_path)
+    assert any(g.startswith(fund_schluessel(_fund(5))) for g in b3.gesperrt) and len(_einzel(fake)) == 0
 
 
 def test_stand_pfad(tmp_path: Path) -> None:

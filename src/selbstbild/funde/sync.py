@@ -12,7 +12,9 @@ Wahrheit fuer Dubletten ist GitHub, nicht der lokale Stand (Review-Fokus 1-2):
 
 Bremsen (Spec 6.9): nur `hoch` wird Einzel-Issue, hoechstens `max_einzel_je_tag` neue je Ziel und Tag, der Rest
 landet im Sammel-Issue je Art und Code-Repo. `wontfix` (Label) oder `state_reason == not_planned` heisst: nie wieder
-oeffnen. Oeffentliche Ziele bekommen nie `konfig` (D6). Fuer Arten mit unlesbarer Quelle (Ruling S5-7) wird nichts
+oeffnen. Oeffentliche Ziele bekommen nie `konfig` (D6); oeffentlich ist ein Ziel, wenn die Konfiguration es sagt
+(Vorgabe) ODER GitHub es nicht als privat meldet (Fix-Runde 1 I2). Geschlossen wird nur fuer Code-Repos, die der Lauf
+wirklich geprueft hat (`geprueft`), und nur ueber die Repo-Marke, nie ueber den Titel (Fix-Runde 1 I1). Fuer Arten mit unlesbarer Quelle (Ruling S5-7) wird nichts
 geschlossen und das Sammel-Issue nicht angefasst. `senden=False` macht keinen einzigen schreibenden gh-Aufruf und
 schreibt auch den lokalen Stand nicht.
 """
@@ -38,10 +40,10 @@ from .text import BEGIN, END, block_ersetzen, einzel_text, pruefen, sammel_text
 from .typen import ARTEN, Fund, fund_schluessel
 
 STAND_VERSION = 1
-_MARKE = re.compile(r"<!-- selbstbild:schluessel=([a-z_]+:[0-9a-f]{16}) -->")
-_SAMMEL = re.compile(r"<!-- selbstbild:sammel=([a-z_]+):(.+?) -->")
-_REPO_MARKE = re.compile(r"<!-- selbstbild:repo=(.+?) -->")
-_TITEL_REPO = re.compile(r"\(([^()\r\n]+)\)\s*$")
+# Fix-Runde 1 (Minor 4): Leerraum um die Teile der Marken wird toleriert
+_MARKE = re.compile(r"<!--\s*selbstbild:schluessel\s*=\s*([a-z_]+:[0-9a-f]{16})\s*-->")
+_SAMMEL = re.compile(r"<!--\s*selbstbild:sammel\s*=\s*([a-z_]+):([^\s>][^>]*?)\s*-->")
+_REPO_MARKE = re.compile(r"<!--\s*selbstbild:repo\s*=\s*([^\s>][^>]*?)\s*-->")
 _BELEGE = re.compile(r"(\*\*Belege:\*\*\r?\n)(.*?)(?=\r?\n\r?\n|\Z)", re.DOTALL)
 _COMMIT = re.compile(r"[0-9a-fA-F]{7,64}")
 _RANG = {"hoch": 0, "mittel": 1, "niedrig": 2}
@@ -143,6 +145,8 @@ class IssueStand:
     pfad: Path
     zaehler: dict[str, dict[str, Any]] = field(default_factory=dict)
     marken: dict[str, dict[str, int]] = field(default_factory=dict)
+    # Ziel-Repo -> Grund: Senden gesperrt, bis ein Mensch den Eintrag loescht (z. B. `label_fehlt`)
+    sperren: dict[str, str] = field(default_factory=dict)
     unlesbar: bool = False
 
     @classmethod
@@ -157,9 +161,10 @@ class IssueStand:
         try:
             zaehler = {str(r): {"tag": str(z["tag"]), "neu": int(z["neu"])} for r, z in roh["zaehler"].items()}
             marken = {str(r): {str(k): int(n) for k, n in m.items()} for r, m in roh["marken"].items()}
+            sperren = {str(r): str(g) for r, g in (roh.get("sperren") or {}).items()}
         except (KeyError, TypeError, ValueError, AttributeError):
             return cls(pfad, unlesbar=True)
-        return cls(pfad, zaehler, marken)
+        return cls(pfad, zaehler, marken, sperren)
 
     def neu_heute(self, repo: str, heute: date) -> int:
         z = self.zaehler.get(repo)
@@ -170,7 +175,7 @@ class IssueStand:
 
     def speichern(self) -> None:
         self.pfad.parent.mkdir(parents=True, exist_ok=True)
-        daten = {"version": STAND_VERSION, "zaehler": self.zaehler, "marken": self.marken}
+        daten = {"version": STAND_VERSION, "zaehler": self.zaehler, "marken": self.marken, "sperren": self.sperren}
         fd, tmp = tempfile.mkstemp(prefix=self.pfad.name + ".", suffix=".tmp", dir=self.pfad.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -259,11 +264,9 @@ def _body(issue: dict[str, Any]) -> str:
 
 
 def _code_repo(issue: dict[str, Any]) -> str | None:
+    """Code-Repo nur aus der Repo-Marke; der Titel ist vom Menschen aenderbar und zaehlt nie (Fix-Runde 1 I1)."""
     m = _REPO_MARKE.search(_body(issue))
-    if m:
-        return m.group(1)
-    t = _TITEL_REPO.search(str(issue.get("title") or ""))
-    return t.group(1) if t else None
+    return m.group(1) if m else None
 
 
 def _heute_angelegt(issue: dict[str, Any], heute: date) -> bool:
@@ -329,12 +332,15 @@ class _Schreiber:
 
 
 def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: IssueStand, *, heute: date,
-               senden: bool, commit: str, unlesbar: frozenset[str] = frozenset()) -> Bericht:
+               senden: bool, commit: str, geprueft: frozenset[str],
+               unlesbar: frozenset[str] = frozenset()) -> Bericht:
     """Gleicht die Funde fuer ein Ziel mit dem GitHub-Bestand ab (siehe Moduldoku).
 
     `commit`: SHA des vermessenen Stands (fuer den Schliess-Kommentar, nur die ersten 7 Zeichen).
+    `geprueft`: Code-Repos, die dieser Lauf wirklich geprueft hat (`sammeln.geprueft_repos`). Nur deren Issues
+    werden geschlossen; ein Issue ohne Repo-Marke oder fuer ein anderes Code-Repo bleibt offen (Fix-Runde 1 I1).
     `unlesbar`: Arten, deren Quelle in diesem Lauf unlesbar war (`unlesbare_arten(notizen)`).
-    Ein Fehler beim Lesen des Bestands bricht mit `GitHubFehler` ab, bevor irgendetwas geschrieben wird.
+    Ein Fehler beim Lesen des Bestands oder der Sichtbarkeit bricht mit `GitHubFehler` ab, bevor geschrieben wird.
     """
     if senden and gh is None:
         raise ValueError("senden braucht ein GitHub-Objekt (Konto)")
@@ -345,9 +351,20 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
     b = Bericht(ziel=repo, senden=senden)
     if stand.unlesbar:
         b.notizen.append("lokaler Stand unlesbar: neu aufgebaut (Dubletten-Schutz über die Marken in GitHub)")
+    sperre = stand.sperren.get(repo)
+    if sperre:
+        b.notizen.append(f"Ziel gesperrt ({sperre}): nichts gesendet; nach Prüfung den Eintrag unter `sperren` "
+                         f"in {stand.pfad.name} löschen")
+        if senden:
+            b.fehler = "ziel_gesperrt"  # alle Schreibaufrufe werden `abgebrochen`
 
-    # 1. Bestand (jeder Lauf neu)
+    # 1. Sichtbarkeit (D6 fail-closed, Fix-Runde 1 I2) und Bestand -- jeder Lauf neu, nur lesend
+    oeffentlich = ziel.oeffentlich
     if gh is not None:
+        if not gh.ist_privat(repo):
+            if not oeffentlich:
+                b.notizen.append("Ziel laut GitHub nicht privat: behandelt als öffentlich (D6)")
+            oeffentlich = True
         bestand = gh.issues(repo)
     else:
         bestand = []
@@ -365,7 +382,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
             sammel[(s.group(1), s.group(2))].append(issue)
 
     # 2. Funde filtern
-    verwaltet = set(ziel.arten) - ({"konfig"} if ziel.oeffentlich else set())
+    verwaltet = set(ziel.arten) - ({"konfig"} if oeffentlich else set())
     for art in sorted(unlesbar & verwaltet):
         b.notizen.append(f"{art}: Quelle unlesbar: nichts geschlossen, Sammel-Issue unverändert")
     alle_schluessel: set[str] = set()
@@ -376,7 +393,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
         if k in alle_schluessel:
             continue
         alle_schluessel.add(k)
-        if f.art == "konfig" and ziel.oeffentlich:
+        if f.art == "konfig" and oeffentlich:
             konfig_oeffentlich += 1
             b.ausgelassen.append(f"{k} ({f.titel}): konfig nie in ein öffentliches Repo (D6)")
         elif f.art not in ziel.arten:
@@ -390,6 +407,23 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
     aktiv.sort(key=lambda kf: (_RANG.get(kf[1].schwere, 9), kf[1].art, kf[1].code_repo, kf[1].anker))
 
     schreiben = _Schreiber(gh, repo, senden, b)
+
+    def sichern() -> None:
+        try:
+            stand.speichern()
+        except OSError as e:
+            b.notizen.append(f"lokaler Stand nicht gespeichert ({type(e).__name__})")
+
+    def label_verloren(status: str) -> bool:
+        """GitHub hat angelegt, das Label aber verworfen: das Issue ist im Bestand unsichtbar, jeder weitere Lauf
+        wuerde es neu anlegen. Darum Ziel lokal sperren (Bremse; die Dubletten-Erkennung bleibt die Marke)."""
+        if status != "fehlgeschlagen" or b.fehler != "label_fehlt":
+            return False
+        stand.sperren[repo] = "label_fehlt"
+        b.notizen.append("GitHub hat das Label `selbstbild` verworfen (fehlende Rechte?): Ziel gesperrt, "
+                         "das angelegte Issue von Hand prüfen")
+        return True
+
     neu_heute = max(stand.neu_heute(repo, heute),
                     sum(1 for issues in einzel.values() for i in issues if _heute_angelegt(i, heute)))
 
@@ -440,24 +474,39 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
                     assert nummer is not None
                     einzel[k].append({"number": nummer, "title": titel, "body": text, "state": "open"})
                     stand.zaehlen(repo, heute)
-                    try:
-                        stand.speichern()  # sofort: ein Abbruch spaeter laesst den Zaehler stimmen
-                    except OSError as e:
-                        b.notizen.append(f"lokaler Stand nicht gespeichert ({type(e).__name__})")
+                    sichern()  # sofort: ein Abbruch spaeter laesst den Zaehler stimmen
+                elif label_verloren(status):
+                    stand.zaehlen(repo, heute)  # das Issue existiert, nur ohne Label
+                    sichern()
                 continue
             b.ueber_grenze.append(k)
         sammel_funde[(f.art, f.code_repo)].append(f)
 
     # 4. Sammel-Issues je Art und Code-Repo
     paare = set(sammel_funde) | {p for p, issues in sammel.items() if any(_offen(i) for i in issues)}
+    nicht_geprueft: set[str] = set()
     for art, code_repo in sorted(paare):
         if art not in verwaltet or not ziel.zustaendig(code_repo) or art in unlesbar:
             continue
         sk = f"sammel:{art}:{code_repo}"
         issues = sammel.get((art, code_repo), [])
         offen = [i for i in issues if _offen(i)]
-        fs = sammel_funde.get((art, code_repo), [])
+        # Fix-Runde 1 (Minor 6): ein Fund mit Schluessel-Verdacht faellt nur aus seiner eigenen Zeile
+        fs: list[Fund] = []
+        verdacht = 0
+        for f in sammel_funde.get((art, code_repo), []):
+            m = pruefen(f"{f.titel}\n{f.anker}\n{f.schwere}")
+            if m:
+                verdacht += 1
+                b.gesperrt.append(f"{fund_schluessel(f)}: {m}")
+            else:
+                fs.append(f)
+        if not fs and verdacht:
+            continue  # die Funde sind da, nur nicht sendbar: nichts schliessen, Block unveraendert
         if not fs:
+            if offen and code_repo not in geprueft:
+                nicht_geprueft.add(code_repo)
+                continue
             for i in offen:
                 n = int(i["number"])
                 status, _ = schreiben("sammel_schliessen", sk, str(i.get("title") or sk), n,
@@ -472,7 +521,9 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
             b.gesperrt.append(f"{sk}: {muster}")
             continue
         if not issues:
-            schreiben("sammel_anlegen", sk, titel, None, lambda g, t=titel, x=text: g.anlegen(repo, t, x))
+            status, _ = schreiben("sammel_anlegen", sk, titel, None, lambda g, t=titel, x=text: g.anlegen(repo, t, x))
+            if label_verloren(status):
+                sichern()
             continue
         if not offen and any(_wontfix(i) for i in issues):
             b.unterdrueckt.append(sk)
@@ -513,13 +564,18 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
                 continue
             if not ziel.zustaendig(code_repo):
                 continue
+            if code_repo not in geprueft:
+                nicht_geprueft.add(code_repo)
+                continue
             n = int(i["number"])
             status, _ = schreiben("schliessen", k, str(i.get("title") or k), n,
                                   lambda g, n=n: g.schliessen(repo, n, kommentar))
             if status == "ausgefuehrt":
                 i["state"] = "closed"
     if nicht_zuordenbar:
-        b.notizen.append(f"{nicht_zuordenbar} offene Einzel-Issues ohne erkennbares Code-Repo: nicht geschlossen")
+        b.notizen.append(f"{nicht_zuordenbar} offene Einzel-Issues ohne Repo-Marke: nicht geschlossen")
+    if nicht_geprueft:
+        b.notizen.append("nicht geprüfte Code-Repos, ihre Issues bleiben offen: " + ", ".join(sorted(nicht_geprueft)))
 
     # 6. lokalen Stand nachziehen (nur beim Senden)
     if senden:

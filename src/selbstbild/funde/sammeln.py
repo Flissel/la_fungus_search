@@ -251,6 +251,24 @@ def _sortiert(funde: Iterable[Fund]) -> list[Fund]:
     return sorted(funde, key=lambda f: (_RANG[f.schwere], f.art, f.code_repo, f.anker))
 
 
+def geprueft_repos(wurzel: Path, *, doku_konfig: Konfig) -> frozenset[str]:
+    """Code-Repos, die ein Lauf ueber `wurzel` wirklich prueft (fuer das Schliessen, Task 4 Fix-Runde 1 I1).
+
+    Gleiche Benennung wie `funde_sammeln`: der aeussere Name plus `<aussen>/<pfad>` je Submodul (rekursiv), aber
+    nur Submodule mit Checkout (`.git`-Datei oder -Ordner). Ein nur in `.gitmodules` deklariertes Submodul wird nicht
+    vermessen und steht deshalb nicht drin. `doku_konfig` wird nur gelesen: zeigt sie auf ein anderes Repo als
+    `wurzel`, passen Doku-Funde und Repo-Namen nicht zusammen -- fail-closed die leere Menge (nichts wird geschlossen).
+    """
+    wurzel = Path(wurzel)
+    try:
+        if Path(doku_konfig.repo).resolve() != wurzel.resolve():
+            return frozenset()
+    except OSError:
+        return frozenset()
+    aussen = _aussen_name(wurzel)
+    return frozenset({aussen, *(f"{aussen}/{s}" for s in _submodul_pfade(wurzel) if (wurzel / s / ".git").exists())})
+
+
 def funde_sammeln(wurzel: Path, *, doku_konfig: Konfig, stand_unter: Path | None = None,
                   tor: ToterCodeTor) -> tuple[list[Fund], list[str]]:
     """Funde (nach Schwere, Art, Repo, Anker sortiert) und Hinweise. Schreibt nichts."""

@@ -1,7 +1,7 @@
 """Regeldatei `selbstbild.yaml`: Laden und Validieren."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,7 +41,9 @@ class IssueZiel(BaseModel):
     privat: bool = True
 
 
-FUND_ARTEN: tuple[str, ...] = ("doku_widerspruch", "doppelung", "tot", "konfig")  # = selbstbild.funde.typen.ARTEN
+FundArt = Literal["doku_widerspruch", "doppelung", "tot", "konfig"]
+# = selbstbild.funde.typen.ARTEN (gepinnt durch test_fund_arten_wie_typen)
+FUND_ARTEN: tuple[str, ...] = get_args(FundArt)
 _REPO_MUSTER = r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
 _KONTO_MUSTER = r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
 
@@ -52,7 +54,8 @@ class IssueZielEintrag(BaseModel):
 
     repo: str = Field(pattern=_REPO_MUSTER)
     konto: str | None = Field(default=None, pattern=_KONTO_MUSTER)
-    oeffentlich: bool = False
+    # Fix-Runde 1 (I2): D6 fail-closed -- ohne Angabe gilt ein Ziel als oeffentlich (kein konfig)
+    oeffentlich: bool = True
 
 
 class IssuesAbschnitt(BaseModel):
@@ -61,9 +64,8 @@ class IssuesAbschnitt(BaseModel):
 
     ziel_standard: IssueZielEintrag | None = None
     ziele: dict[str, IssueZielEintrag] = Field(default_factory=dict)
-    arten: list[Literal["doku_widerspruch", "doppelung", "tot", "konfig"]] = Field(
-        default_factory=lambda: list(FUND_ARTEN))
-    max_einzel_je_tag: int = Field(default=5, ge=0)
+    arten: list[FundArt] = Field(default_factory=lambda: list(FUND_ARTEN))
+    max_einzel_je_tag: int = Field(default=5, ge=0, le=20)
 
 
 class Regeln(BaseModel):

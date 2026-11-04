@@ -98,19 +98,33 @@ class GitHub:
         env["NO_COLOR"] = "1"
         return env
 
+    @staticmethod
+    def _art(returncode: int, stderr: object) -> str:
+        fehler = stderr if isinstance(stderr, bytes) else str(stderr or "").encode()
+        m = _HTTP.search(fehler)
+        return f"http_{m.group(1).decode()}" if m else f"exit_{returncode}"
+
     def _starten(self, argv: list[str], env: dict[str, str], eingabe: bytes | None) -> bytes:
         stdin = {"input": eingabe} if eingabe is not None else {"stdin": subprocess.DEVNULL}
+        art: str | None = None
+        lauf: Any = None
+        # Fix-Runde 1 (Minor 2): der GitHubFehler entsteht AUSSERHALB des except-Blocks, sonst haenge die
+        # Ausnahme (mit Teil-Ausgabe, Argumenten, stderr) als __context__ daran
         try:
             lauf = self.laufzeit(argv, capture_output=True, env=env, timeout=self.timeout_s,
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), **stdin)
         except subprocess.TimeoutExpired:
-            raise GitHubFehler("zeitlimit") from None
+            art = "zeitlimit"
+        except subprocess.CalledProcessError as e:
+            art = self._art(e.returncode, e.stderr)
+        except subprocess.SubprocessError:
+            art = "gh_fehler"
         except OSError:
-            raise GitHubFehler("gh_fehlt") from None
-        if lauf.returncode != 0:
-            fehler = lauf.stderr if isinstance(lauf.stderr, bytes) else str(lauf.stderr or "").encode()
-            m = _HTTP.search(fehler or b"")
-            raise GitHubFehler(f"http_{m.group(1).decode()}" if m else f"exit_{lauf.returncode}") from None
+            art = "gh_fehlt"
+        if art is None and lauf.returncode != 0:
+            art = self._art(lauf.returncode, lauf.stderr)
+        if art is not None:
+            raise GitHubFehler(art) from None
         aus = lauf.stdout
         return aus if isinstance(aus, bytes) else str(aus or "").encode("utf-8")
 
@@ -156,25 +170,39 @@ class GitHub:
                 return alle
         raise GitHubFehler("zu_viele_seiten")
 
+    def ist_privat(self, repo: str) -> bool:
+        """True nur, wenn `GET /repos/{repo}` `private: true` meldet (D6 fail-closed, Fix-Runde 1 I2)."""
+        antwort = self._api("GET", f"/repos/{_repo(repo)}")
+        return isinstance(antwort, dict) and antwort.get("private") is True
+
     # ---------- Schreiben ----------
 
     def label_sicherstellen(self, repo: str) -> None:
         r = _repo(repo)
         if r in self._label_da:
             return
+        fehlt = False
         try:
             self._api("GET", f"/repos/{r}/labels/{LABEL}")
         except GitHubFehler as f:
             if f.art != "http_404":
                 raise
+            fehlt = True
+        if fehlt:  # ausserhalb des except-Blocks: kein __context__
             self._api("POST", f"/repos/{r}/labels", {"name": LABEL, "color": LABEL_FARBE, "description": LABEL_TEXT})
         self._label_da.add(r)
 
     def anlegen(self, repo: str, titel: str, text: str) -> int:
+        """Legt ein Issue mit Label `selbstbild` an. Verwirft GitHub das Label still (ohne Schreibrecht auf
+        Labels), wirft `GitHubFehler("label_fehlt")`: das Issue existiert dann, ist aber im Bestand unsichtbar."""
         antwort = self._api("POST", f"/repos/{_repo(repo)}/issues", {"title": titel, "body": text, "labels": [LABEL]})
         nummer = antwort.get("number") if isinstance(antwort, dict) else None
         if isinstance(nummer, bool) or not isinstance(nummer, int):
             raise GitHubFehler("antwort_unlesbar")
+        labels = antwort.get("labels") if isinstance(antwort, dict) else None
+        namen = {(x.get("name") if isinstance(x, dict) else x) for x in labels} if isinstance(labels, list) else set()
+        if LABEL not in namen:
+            raise GitHubFehler("label_fehlt")
         return nummer
 
     def bearbeiten(self, repo: str, nummer: int, text: str) -> None:
