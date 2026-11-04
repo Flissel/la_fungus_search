@@ -1,4 +1,4 @@
-"""CLI: `python -m selbstbild doku|vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|pruefen|suche-messen <wurzel> ...`."""
+"""CLI: `python -m selbstbild doku|vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|pruefen|suche-messen|funde <wurzel> ...`."""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +7,7 @@ import json
 import logging
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -306,7 +307,21 @@ def _doku(rest: list[str]) -> int:
     return doku_main(rest)
 
 
-def main(argv: list[str] | None = None) -> int:
+# = selbstbild.funde.typen.ARTEN; hier abgeschrieben, damit der Einstieg funde nie importiert (gepinnt durch
+# test_nur_auswahl_wie_arten). Stufe 5, Task 6.
+FUND_ARTEN = ("doku_widerspruch", "doppelung", "tot", "konfig")
+
+
+def _funde(args: argparse.Namespace, optionen: Mapping[str, Any]) -> int:
+    # erst hier importieren: ein kaputtes funde-Paket darf keinen anderen Befehl brechen (LIVE: doku tick)
+    from selbstbild.funde.bericht import befehl
+
+    return befehl(args.wurzel, senden=args.senden, offline=args.offline, nur=args.nur, goldsatz=args.goldsatz,
+                  **optionen)
+
+
+def main(argv: list[str] | None = None, *, funde_optionen: Mapping[str, Any] | None = None) -> int:
+    """`funde_optionen`: nur fuer Tests, an `funde.bericht.befehl` durchgereicht (z. B. `gh_fabrik`)."""
     roh = list(sys.argv[1:] if argv is None else argv)
     ohne_v = [a for a in roh if a not in ("-v", "--ausfuehrlich")]
     if ohne_v[:1] == ["doku"]:  # Doku-Loop: der Rest geht unveraendert an dessen eigenes argparse
@@ -373,6 +388,17 @@ def main(argv: list[str] | None = None) -> int:
     hk_pth = aktionen.add_parser("pth", help="selbstbild-src.pth in site-packages des venv anlegen")
     hk_pth.add_argument("venv", type=Path)
     hk_pth.add_argument("src", type=Path)
+    fu = befehle.add_parser("funde", help="Funde (Doku, Doppelung, toter Code, Konfig) als lokaler Bericht und JSON; "
+                                          "mit --senden als GitHub-Issues")
+    fu.add_argument("wurzel", type=Path)
+    fu_modus = fu.add_mutually_exclusive_group()
+    fu_modus.add_argument("--senden", action="store_true", help="Issues wirklich anlegen/aendern/schliessen")
+    fu_modus.add_argument("--offline", action="store_true", help="nie gh aufrufen (auch nicht lesend)")
+    fu.add_argument("--nur", action="extend", nargs="+", choices=FUND_ARTEN, default=None, metavar="ART",
+                    help=f"nur diese Arten ({', '.join(FUND_ARTEN)}); andere werden nie geschlossen")
+    fu.add_argument("--goldsatz", type=Path, default=None,
+                    help="Goldsatz fuer das Tor toter Code (Standard: docs/selbstbild/goldsatz-<name>.yaml im "
+                         "selbstbild-Repo)")
     args = p.parse_args(argv)
 
     if args.ausfuehrlich:
@@ -410,6 +436,8 @@ def main(argv: list[str] | None = None) -> int:
         return _skill(args)
     if args.befehl == "suche-messen":
         return _suche_messen(args)
+    if args.befehl == "funde":
+        return _funde(args, funde_optionen or {})
     return _status(args.wurzel)
 
 

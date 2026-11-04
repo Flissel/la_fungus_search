@@ -1,0 +1,831 @@
+[
+ {
+  "choices": null,
+  "default": "'==SUPPRESS=='",
+  "dest": "help",
+  "help": "show this help message and exit",
+  "klasse": "_HelpAction",
+  "metavar": null,
+  "nargs": 0,
+  "optionen": [
+   "-h",
+   "--help"
+  ],
+  "required": false,
+  "typ": null
+ },
+ {
+  "choices": null,
+  "default": "False",
+  "dest": "ausfuehrlich",
+  "help": "Fortschritt nach stderr",
+  "klasse": "_StoreTrueAction",
+  "metavar": null,
+  "nargs": 0,
+  "optionen": [
+   "-v",
+   "--ausfuehrlich"
+  ],
+  "required": false,
+  "typ": null
+ },
+ {
+  "default": "None",
+  "dest": "befehl",
+  "help": null,
+  "klasse": "_SubParsersAction",
+  "metavar": null,
+  "nargs": "A...",
+  "optionen": [],
+  "required": true,
+  "typ": null,
+  "unter": {
+   "analysieren": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "False",
+     "dest": "ohne_kolonie",
+     "help": "Kolonie (Herausforderer) auslassen",
+     "klasse": "_StoreTrueAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "--ohne-kolonie"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "export",
+     "help": "kanonisches analyse.json schreiben",
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [
+      "--export"
+     ],
+     "required": false,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "False",
+     "dest": "pruefen_reproduzierbar",
+     "help": "Mathe und Kolonie ein zweites Mal rechnen und vergleichen (doppelte Laufzeit)",
+     "klasse": "_StoreTrueAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "--pruefen-reproduzierbar"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "False",
+     "dest": "kolonie_budget",
+     "help": "zusaetzlich budgetgleiche Kolonie (~10 Agenten-Schritte je Datei, max. 5000 Schritte)",
+     "klasse": "_StoreTrueAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "--kolonie-budget"
+     ],
+     "required": false,
+     "typ": null
+    }
+   ],
+   "doku": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    }
+   ],
+   "export": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "ziel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    }
+   ],
+   "goldsatz": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "ziel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "False",
+     "dest": "ueberschreiben",
+     "help": "vorhandene Zieldatei ersetzen (eingetragene Urteile gehen verloren)",
+     "klasse": "_StoreTrueAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "--ueberschreiben"
+     ],
+     "required": false,
+     "typ": null
+    }
+   ],
+   "hooks": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "default": "None",
+     "dest": "aktion",
+     "help": null,
+     "klasse": "_SubParsersAction",
+     "metavar": null,
+     "nargs": "A...",
+     "optionen": [],
+     "required": true,
+     "typ": null,
+     "unter": {
+      "einspielen": [
+       {
+        "choices": null,
+        "default": "'==SUPPRESS=='",
+        "dest": "help",
+        "help": "show this help message and exit",
+        "klasse": "_HelpAction",
+        "metavar": null,
+        "nargs": 0,
+        "optionen": [
+         "-h",
+         "--help"
+        ],
+        "required": false,
+        "typ": null
+       },
+       {
+        "choices": null,
+        "default": "None",
+        "dest": "settings",
+        "help": null,
+        "klasse": "_StoreAction",
+        "metavar": null,
+        "nargs": null,
+        "optionen": [],
+        "required": true,
+        "typ": "Path"
+       },
+       {
+        "choices": null,
+        "default": "False",
+        "dest": "trocken",
+        "help": "nur Diff, nichts schreiben",
+        "klasse": "_StoreTrueAction",
+        "metavar": null,
+        "nargs": 0,
+        "optionen": [
+         "--trocken"
+        ],
+        "required": false,
+        "typ": null
+       },
+       {
+        "choices": null,
+        "default": "None",
+        "dest": "python",
+        "help": "Interpreter der Hooks (Standard: dieser)",
+        "klasse": "_StoreAction",
+        "metavar": null,
+        "nargs": null,
+        "optionen": [
+         "--python"
+        ],
+        "required": false,
+        "typ": "Path"
+       },
+       {
+        "choices": [
+         "waechter",
+         "einspeisung"
+        ],
+        "default": "None",
+        "dest": "nur",
+        "help": "nur diesen Hook eintragen (wiederholbar; Standard: beide)",
+        "klasse": "_AppendAction",
+        "metavar": null,
+        "nargs": null,
+        "optionen": [
+         "--nur"
+        ],
+        "required": false,
+        "typ": null
+       }
+      ],
+      "entfernen": [
+       {
+        "choices": null,
+        "default": "'==SUPPRESS=='",
+        "dest": "help",
+        "help": "show this help message and exit",
+        "klasse": "_HelpAction",
+        "metavar": null,
+        "nargs": 0,
+        "optionen": [
+         "-h",
+         "--help"
+        ],
+        "required": false,
+        "typ": null
+       },
+       {
+        "choices": null,
+        "default": "None",
+        "dest": "settings",
+        "help": null,
+        "klasse": "_StoreAction",
+        "metavar": null,
+        "nargs": null,
+        "optionen": [],
+        "required": true,
+        "typ": "Path"
+       }
+      ],
+      "pth": [
+       {
+        "choices": null,
+        "default": "'==SUPPRESS=='",
+        "dest": "help",
+        "help": "show this help message and exit",
+        "klasse": "_HelpAction",
+        "metavar": null,
+        "nargs": 0,
+        "optionen": [
+         "-h",
+         "--help"
+        ],
+        "required": false,
+        "typ": null
+       },
+       {
+        "choices": null,
+        "default": "None",
+        "dest": "venv",
+        "help": null,
+        "klasse": "_StoreAction",
+        "metavar": null,
+        "nargs": null,
+        "optionen": [],
+        "required": true,
+        "typ": "Path"
+       },
+       {
+        "choices": null,
+        "default": "None",
+        "dest": "src",
+        "help": null,
+        "klasse": "_StoreAction",
+        "metavar": null,
+        "nargs": null,
+        "optionen": [],
+        "required": true,
+        "typ": "Path"
+       }
+      ]
+     },
+     "unter_hilfe": {
+      "einspielen": "Hooks eintragen, Unified-Diff ausgeben",
+      "entfernen": "nur die eigenen Hooks austragen",
+      "pth": "selbstbild-src.pth in site-packages des venv anlegen"
+     }
+    }
+   ],
+   "index": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    }
+   ],
+   "pruefen": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    }
+   ],
+   "skill": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": [
+      "neuer-space"
+     ],
+     "default": "None",
+     "dest": "name",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "ziel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "False",
+     "dest": "ueberschreiben",
+     "help": "vorhandene Zieldatei ersetzen",
+     "klasse": "_StoreTrueAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "--ueberschreiben"
+     ],
+     "required": false,
+     "typ": null
+    }
+   ],
+   "status": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    }
+   ],
+   "suche-messen": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "[]",
+     "dest": "ollama",
+     "help": "Ollama-URL (paarweise mit --modell)",
+     "klasse": "_AppendAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [
+      "--ollama"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "[]",
+     "dest": "modell",
+     "help": "Embedding-Modell (paarweise mit --ollama)",
+     "klasse": "_AppendAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [
+      "--modell"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "transkripte",
+     "help": "Ordner mit Claude-Code-JSONL-Transkripten",
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [
+      "--transkripte"
+     ],
+     "required": false,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "20",
+     "dest": "n",
+     "help": "Stichprobengroesse der Transkript-Prompts",
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [
+      "-n"
+     ],
+     "required": false,
+     "typ": "int"
+    }
+   ],
+   "suchen": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "anfrage",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "10",
+     "dest": "top",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [
+      "--top"
+     ],
+     "required": false,
+     "typ": "int"
+    }
+   ],
+   "vergleichen": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "gold",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    }
+   ],
+   "vermessen": [
+    {
+     "choices": null,
+     "default": "'==SUPPRESS=='",
+     "dest": "help",
+     "help": "show this help message and exit",
+     "klasse": "_HelpAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "-h",
+      "--help"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "None",
+     "dest": "wurzel",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [],
+     "required": true,
+     "typ": "Path"
+    },
+    {
+     "choices": null,
+     "default": "'HEAD'",
+     "dest": "commit",
+     "help": null,
+     "klasse": "_StoreAction",
+     "metavar": null,
+     "nargs": null,
+     "optionen": [
+      "--commit"
+     ],
+     "required": false,
+     "typ": null
+    },
+    {
+     "choices": null,
+     "default": "False",
+     "dest": "voll",
+     "help": "Parse-Cache umgehen",
+     "klasse": "_StoreTrueAction",
+     "metavar": null,
+     "nargs": 0,
+     "optionen": [
+      "--voll"
+     ],
+     "required": false,
+     "typ": null
+    }
+   ]
+  },
+  "unter_hilfe": {
+   "analysieren": "Stufe-2-Analyse des vermessenen Stands, Zusammenfassung als JSON",
+   "doku": "Doku-Loop: doku <tick|seed|messen|render|graph-schlank|dienste-seed|status|aufgabe> [<wurzel>] [--konfig <pfad>] (siehe `doku --help`)",
+   "export": "Graph als JSON exportieren",
+   "goldsatz": "Goldsatz-Kandidaten (YAML) aus der gespeicherten Analyse",
+   "hooks": "Claude-Code-Hooks in eine settings.local.json ein- oder austragen",
+   "index": "Suchindex (suche.sqlite) aus dem vermessenen Stand bauen, Zaehler als JSON",
+   "pruefen": "CI: fehlende Pflichtteile der Strukturregeln als JSON, Exit 1 bei Verstoessen",
+   "skill": "Claude-Code-Skill aus Regeln und Stand erzeugen (neuer-space)",
+   "status": "letzter Commit, Zähler, Alter",
+   "suche-messen": "recall@10 und MRR der Suche gegen KETTEN- und Transkript-Gold",
+   "suchen": "Anfrage gegen den Suchindex, Treffer als JSON",
+   "vergleichen": "ausgefuellten Goldsatz gegen Mathe und Kolonie messen",
+   "vermessen": "Commit vermessen, Bericht als JSON"
+  }
+ }
+]
