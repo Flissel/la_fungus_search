@@ -93,9 +93,9 @@ def commit_holen(wurzel: Path) -> str | None:
     return sha if erg.returncode == 0 and _SHA.fullmatch(sha) else None
 
 
-def _gemessene_submodule(wurzel: Path, stand_unter: Path | None) -> tuple[frozenset[str], frozenset[str]] | None:
-    """(vermessene, fehlende) Submodule aus dem gespeicherten Vermessungsbericht (`meta.bericht` in graph.sqlite,
-    nur lesend mit `mode=ro`); None, wenn es keinen lesbaren Bericht gibt."""
+def _vermessungsbericht(wurzel: Path, stand_unter: Path | None) -> dict[str, Any] | None:
+    """Der gespeicherte Vermessungsbericht (`meta.bericht` in graph.sqlite), nur lesend mit `mode=ro`; None, wenn
+    es keinen lesbaren gibt."""
     db = _graph_db(wurzel, stand_unter)
     if db is None:
         return None
@@ -108,12 +108,31 @@ def _gemessene_submodule(wurzel: Path, stand_unter: Path | None) -> tuple[frozen
         if z is None:
             return None
         bericht = json.loads(json.loads(z[0]))
-        if "fehlende_submodule" not in bericht:
-            return None  # alter Bericht: fehlende Pins nicht erkennbar
+    except (sqlite3.Error, OSError, ValueError, TypeError):
+        return None
+    return bericht if isinstance(bericht, dict) else None
+
+
+def _gemessene_submodule(wurzel: Path, stand_unter: Path | None) -> tuple[frozenset[str], frozenset[str]] | None:
+    """(vermessene, fehlende) Submodule aus dem gespeicherten Vermessungsbericht; None ohne lesbaren Bericht."""
+    bericht = _vermessungsbericht(wurzel, stand_unter)
+    if bericht is None or "fehlende_submodule" not in bericht:
+        return None  # kein Bericht oder alter Bericht: fehlende Pins nicht erkennbar
+    try:
         return (frozenset(map(str, bericht.get("submodule") or ())),
                 frozenset(map(str, bericht["fehlende_submodule"] or ())))
-    except (sqlite3.Error, OSError, ValueError, TypeError, AttributeError):
+    except TypeError:
         return None
+
+
+def stand_abweichung(wurzel: Path, commit: str | None, stand_unter: Path | None = None) -> str | None:
+    """Notiz `analyse-stand <sha7> != HEAD <sha7>`, wenn der vermessene Commit nicht HEAD ist (sonst None).
+    Nur ein Hinweis, aendert nichts am Verhalten."""
+    bericht = _vermessungsbericht(wurzel, stand_unter)
+    gemessen = str(bericht.get("commit") or "").lower() if bericht else ""
+    if not commit or not _SHA.fullmatch(gemessen) or gemessen.startswith(commit.lower()):
+        return None
+    return f"analyse-stand {gemessen[:7]} != HEAD {commit[:7]}"
 
 
 def geprueft_ermitteln(wurzel: Path, *, doku_konfig: Konfig,
@@ -164,6 +183,7 @@ class ZielErgebnis:
     ziel: Ziel
     modus: str  # senden | trocken | offline | bericht
     funde: int
+    senden: bool = False
     bericht: Bericht | None = None
     fehler: str | None = None
     notizen: list[str] = field(default_factory=list)
@@ -192,10 +212,16 @@ class ZielErgebnis:
 
     def text(self) -> str:
         if self.bericht is not None:
-            return self.bericht.text()
+            text = self.bericht.text()
+            if self.modus == "offline":
+                text = text.replace("(trocken (nichts gesendet))", "(offline (nichts gesendet))", 1)
+            if self.fehler and not self.bericht.fehler:
+                text += f"\n**Abgebrochen:** `{self.fehler}`\n"
+            text += "".join(f"- Hinweis: {n}\n" for n in self.notizen)
+            return text
         z = [f"## Issues → {self.ziel.repo} ({self.modus})", ""]
         if self.fehler:
-            z += [f"**Abgebrochen:** `{self.fehler}`; nichts gesendet.", ""]
+            z += [f"**Abgebrochen:** `{self.fehler}`", ""]
         z += [f"- Hinweis: {n}" for n in self.notizen]
         return "\n".join(z) + "\n"
 
@@ -209,27 +235,47 @@ def _abgleich_je_ziel(ziel: Ziel, fs: list[Fund], *, senden: bool, offline: bool
         modus = "offline"
     else:
         modus = "trocken" if ziel.konto else "bericht"
-    erg = ZielErgebnis(ziel, modus, len(fs))
+    erg = ZielErgebnis(ziel, modus, len(fs), senden=senden)
     if commit is None:
         erg.fehler = "commit_unbekannt"
         erg.notizen.append("HEAD-Commit nicht lesbar (git rev-parse): kein Abgleich, nichts gesendet")
         return erg
     gh: GitHub | None = None
+    teil = Bericht(ziel=ziel.repo, senden=senden)  # wird von abgleichen gefuellt, auch wenn es mittendrin wirft
     try:
         if ziel.konto and not offline:
             gh = gh_fabrik(ziel.konto)
         erg.bericht = abgleichen(fs, ziel, gh, stand, heute=heute, senden=senden, commit=commit,
-                                 geprueft=geprueft, unlesbar=unlesbar)
+                                 geprueft=geprueft, unlesbar=unlesbar, bericht=teil)
     except GitHubFehler as e:
         erg.fehler = e.art
-        erg.notizen.append(f"GitHub-Fehler `{e.art}` vor dem Schreiben: nichts gesendet")
+        _abbruch(erg, teil, f"GitHub-Fehler `{e.art}`")
         return erg
     except ValueError as e:  # ungueltiges Konto o. ae.; nie ein Wert im Text
         erg.fehler = "ungueltig"
-        erg.notizen.append(f"Abgleich nicht möglich ({type(e).__name__})")
+        _abbruch(erg, teil, f"Abgleich nicht möglich ({type(e).__name__})")
         return erg
-    erg.fehler = erg.bericht.fehler
+    except Exception as e:  # noqa: BLE001 -- ein Ziel darf die anderen nie mitreissen (KeyboardInterrupt nicht)
+        erg.fehler = f"intern:{type(e).__name__}"
+        _abbruch(erg, teil, f"interner Fehler ({type(e).__name__})")
+        return erg
+    erg.fehler = erg.bericht.fehler or (f"stand_nicht_gespeichert:{erg.bericht.stand_fehler}"
+                                        if erg.bericht.stand_fehler else None)
     return erg
+
+
+def _abbruch(erg: ZielErgebnis, teil: Bericht, grund: str) -> None:
+    """Abbruch eines Ziels: ehrlich sagen, ob schon geschrieben wurde. Nur der Typ/die Art, nie ein Fehlertext."""
+    geschrieben = sum(1 for a in teil.aktionen if a.status == "ausgefuehrt")
+    if teil.aktionen:
+        erg.bericht = teil  # bis zum Abbruch ausgefuehrte bzw. geplante Aktionen bleiben sichtbar
+    if not erg.senden:
+        erg.notizen.append(f"{grund}: Abbruch, nichts gesendet (trocken)")
+    elif geschrieben:
+        erg.notizen.append(f"{grund}: Abbruch nach {geschrieben} Schreibaufruf(en), Stand unklar – "
+                           "Bestand per Marke maßgeblich")
+    else:
+        erg.notizen.append(f"{grund}: Abbruch, Stand unklar – Bestand per Marke maßgeblich")
 
 
 # ---------- Bericht und Zusammenfassung ----------
@@ -310,7 +356,8 @@ def _muster_aus_gesperrt(eintrag: str) -> str:
 
 
 def _json_ausgeben(daten: dict[str, Any], ausgabe: IO[str] | None) -> None:
-    text = json.dumps(daten, ensure_ascii=False, sort_keys=True, indent=1) + "\n"
+    # ASCII wie `_ausgeben` im Einstieg: PowerShell liest stdout sonst in der Konsolen-Codepage falsch
+    text = json.dumps(daten, ensure_ascii=True, sort_keys=True, indent=1) + "\n"
     if ausgabe is not None:
         ausgabe.write(text)
         return
@@ -344,7 +391,8 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
         regeln = _regeln(wurzel)
         ziele = ziele_aus_regeln(regeln)
         k = aus_regeln(wurzel)
-    except (OSError, UnicodeDecodeError, KonfigFehler, ValueError) as e:
+    except (OSError, UnicodeDecodeError, KonfigFehler, ValueError, yaml.YAMLError) as e:
+        # nur der Typ: weder YAML-Ausschnitt noch Fehlertext (koennte einen Wert aus der Datei zeigen)
         sys.stderr.write(f"funde: Regeldatei oder Konfiguration ungültig ({type(e).__name__})\n")
         return 2
     if senden:
@@ -375,6 +423,9 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
     notizen += n_geprueft
     if commit is None:
         notizen.append("HEAD-Commit nicht lesbar: kein Abgleich")
+    abweichung = stand_abweichung(wurzel, commit, stand_unter)
+    if abweichung:
+        notizen.append(abweichung)
 
     stand = IssueStand.laden(stand_pfad(wurzel, stand_basis))
     tag = heute if heute is not None else date.today()
@@ -396,10 +447,15 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
     text = schwaerzen_zaehlen(text, treffer)
     ordner = Path(bericht_ordner) if bericht_ordner is not None else bericht_ordner_standard(wurzel)
     pfad = ordner / BERICHT_NAME
-    atomar_schreiben(pfad, text)
+    bericht_fehler: str | None = None
+    try:
+        atomar_schreiben(pfad, text)
+    except OSError as e:  # das JSON kommt trotzdem; nur der Typ, kein Pfad aus dem Fehlertext
+        bericht_fehler = type(e).__name__
 
     zusammenfassung: dict[str, Any] = {
-        "bericht": str(pfad), "commit": commit, "modus": modus, "nur": sorted(set(nur)) if nur else None,
+        "bericht": None if bericht_fehler else str(pfad), "bericht_fehler": bericht_fehler,
+        "commit": commit, "modus": modus, "nur": sorted(set(nur)) if nur else None,
         "funde": zaehler, "funde_gesamt": len(funde), "ohne_ziel": len(ohne),
         "tor_tot": {"offen": tor.offen, "ja": tor.ja, "beurteilt": tor.beurteilt, "text": tor_text(tor)},
         "schluessel_treffer": sorted(treffer),
@@ -407,4 +463,4 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
         "notizen": list(notizen),
     }
     _json_ausgeben(_schwaerzen_tief(zusammenfassung), ausgabe)
-    return 1 if commit is None or any(e.fehler for e in ergebnisse) else 0
+    return 1 if commit is None or bericht_fehler or any(e.fehler for e in ergebnisse) else 0

@@ -226,6 +226,9 @@ class Bericht:
     ausgelassen: list[str] = field(default_factory=list)
     notizen: list[str] = field(default_factory=list)
     fehler: str | None = None  # GitHubFehler.art des ersten gescheiterten Schreibaufrufs
+    # Task 6 Fix-Runde 1: lokaler Stand nach einem ausgefuehrten Schreibaufruf nicht gespeichert (Typname) ->
+    # der Aufrufer behandelt das als Fehler (Tageszaehler/Sperre koennten verloren sein)
+    stand_fehler: str | None = None
 
     def text(self) -> str:
         modus = "senden" if self.senden else "trocken (nichts gesendet)"
@@ -343,13 +346,15 @@ class _Schreiber:
 
 def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: IssueStand, *, heute: date,
                senden: bool, commit: str, geprueft: frozenset[str],
-               unlesbar: frozenset[str] = frozenset()) -> Bericht:
+               unlesbar: frozenset[str] = frozenset(), bericht: Bericht | None = None) -> Bericht:
     """Gleicht die Funde fuer ein Ziel mit dem GitHub-Bestand ab (siehe Moduldoku).
 
     `commit`: SHA des vermessenen Stands (fuer den Schliess-Kommentar, nur die ersten 7 Zeichen).
     `geprueft`: Code-Repos, die dieser Lauf wirklich geprueft hat (`sammeln.geprueft_repos`). Nur deren Issues
     werden geschlossen; ein Issue ohne Repo-Marke oder fuer ein anderes Code-Repo bleibt offen (Fix-Runde 1 I1).
     `unlesbar`: Arten, deren Quelle in diesem Lauf unlesbar war (`unlesbare_arten(notizen)`).
+    `bericht`: optional ein leerer `Bericht` des Aufrufers, der hier gefuellt wird -- wirft der Abgleich mittendrin,
+    sieht der Aufrufer darin die bis dahin ausgefuehrten Aktionen (Task 6 Fix-Runde 1).
     Ein Fehler beim Lesen des Bestands oder der Sichtbarkeit bricht mit `GitHubFehler` ab, bevor geschrieben wird.
     """
     if senden and gh is None:
@@ -358,7 +363,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
         raise ValueError("commit muss ein Git-SHA sein")
     sha7 = commit[:7].lower()
     repo = ziel.repo
-    b = Bericht(ziel=repo, senden=senden)
+    b = bericht if bericht is not None else Bericht(ziel=repo, senden=senden)
     if stand.unlesbar:
         b.notizen.append("lokaler Stand unlesbar: neu aufgebaut (Dubletten-Schutz über die Marken in GitHub)")
     sperre = stand.sperren.get(repo)
@@ -421,11 +426,16 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
 
     schreiben = _Schreiber(gh, repo, senden, b)
 
+    def stand_nicht_gespeichert(e: OSError) -> None:
+        b.notizen.append(f"lokaler Stand nicht gespeichert ({type(e).__name__})")
+        if any(a.status == "ausgefuehrt" for a in b.aktionen):
+            b.stand_fehler = type(e).__name__
+
     def sichern() -> None:
         try:
             stand.speichern()
         except OSError as e:
-            b.notizen.append(f"lokaler Stand nicht gespeichert ({type(e).__name__})")
+            stand_nicht_gespeichert(e)
 
     def label_verloren(status: str) -> bool:
         """GitHub hat angelegt, das Label aber verworfen: das Issue ist im Bestand unsichtbar, jeder weitere Lauf
@@ -637,5 +647,5 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
         try:
             stand.speichern()
         except OSError as e:
-            b.notizen.append(f"lokaler Stand nicht gespeichert ({type(e).__name__})")
+            stand_nicht_gespeichert(e)
     return b

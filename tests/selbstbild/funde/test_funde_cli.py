@@ -177,6 +177,8 @@ class FakeGh:
         self.naechste = 1
         self.privat = True
         self.fehler_bei: tuple[str, str] | None = None  # (Methode, Pfad-Ende) -> HTTP 502
+        self.ausnahme_bei_anlegen: int | None = None  # n-tes POST issues -> RuntimeError (interner Fehler)
+        self.anlegen_versuche = 0
 
     def issue(self, titel: str, body: str, *, state: str = "open") -> int:
         n = self.naechste
@@ -222,6 +224,9 @@ class FakeGh:
             self.labels.add(daten["name"])
             return ok({"name": daten["name"]})
         if rest == ["issues"] and methode == "POST":
+            self.anlegen_versuche += 1
+            if self.anlegen_versuche == self.ausnahme_bei_anlegen:
+                raise RuntimeError(f"kaputt {TOKEN}")
             n = self.issue(daten["title"], daten["body"])
             return ok(self.issues[n])
         if len(rest) == 2 and rest[0] == "issues" and methode == "PATCH":
@@ -286,8 +291,9 @@ class Umgebung:
 
     def lauf(self, capsys: pytest.CaptureFixture[str], *argv: str, **extra: Any) -> tuple[int, dict[str, Any]]:
         code = cli.main(["funde", str(self.wurzel), *argv], funde_optionen=self.optionen(**extra))
-        aus = capsys.readouterr().out
-        return code, json.loads(aus)
+        roh = capsys.readouterr()
+        self.out, self.err = roh.out, roh.err
+        return code, json.loads(roh.out)
 
     def text(self) -> str:
         return (self.bericht / "funde-bericht.md").read_text(encoding="utf-8")
@@ -341,6 +347,9 @@ def test_cli_offline_ruft_kein_gh(umg: Umgebung, capsys: pytest.CaptureFixture[s
     code, j = umg.lauf(capsys, "--offline", gh_fabrik=nie)
     assert code == 0 and _ziel(j)["modus"] == "offline"
     assert _ziel(j)["aktionen"]["anlegen"] == 3
+    # Fix-Runde 1 (7): Ueberschrift nennt offline; stdout ist reines ASCII (PowerShell)
+    assert f"## Issues → {ZIEL} (offline (nichts gesendet))" in umg.text()
+    assert umg.out.isascii() and "best\\u00e4tigt" in umg.out
 
 
 @pytest.mark.parametrize("issues", [
@@ -409,7 +418,9 @@ def test_exit1_bei_schreibfehler_bericht_trotzdem(umg: Umgebung, capsys: pytest.
     umg.fake.fehler_bei = ("POST", "/issues")
     code, j = umg.lauf(capsys, "--senden")
     assert code == 1 and _ziel(j)["fehler"] == "http_502" and _ziel(j)["modus"] == "senden"
-    assert "Abgebrochen" in umg.text() and TOKEN not in umg.text()
+    assert "Abgebrochen" in umg.text()
+    # Fix-Runde 1 (5): der Token (er steht im gefaelschten gh-stderr) erscheint nirgends
+    assert TOKEN not in umg.out and TOKEN not in umg.err and TOKEN not in umg.text()
 
 
 def test_exit1_bei_lesefehler(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
@@ -418,6 +429,8 @@ def test_exit1_bei_lesefehler(umg: Umgebung, capsys: pytest.CaptureFixture[str])
     code, j = umg.lauf(capsys)  # auch trocken: Bestand nicht lesbar ist ein Fehler
     assert code == 1 and _ziel(j)["fehler"] == "http_502"
     assert (umg.bericht / "funde-bericht.md").is_file()
+    assert TOKEN not in umg.out and TOKEN not in umg.err and TOKEN not in umg.text()
+    assert any("nichts gesendet (trocken)" in n for n in _ziel(j)["notizen"])
 
 
 def test_exit1_bei_gesperrtem_ziel(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
@@ -559,3 +572,99 @@ def test_goldsatz_standard_und_offenes_tor(umg: Umgebung, capsys: pytest.Capture
     kaputt.write_text("tot: [unvollstaendig\n", encoding="utf-8")
     code, j = umg.lauf(capsys, "--offline", "--goldsatz", str(kaputt))
     assert code == 0 and j["tor_tot"]["offen"] is False and any("Goldsatz" in n for n in j["notizen"])
+
+
+# ---------- Fix-Runde 1 ----------
+
+def test_regeldatei_kaputtes_yaml_exit2(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
+    """(1) yaml.YAMLError aus regeln_laden: Exit 2, eine Zeile, kein YAML-Ausschnitt."""
+    (umg.wurzel / "selbstbild.yaml").write_text("name: aussen\ngeheim: [wert-im-yaml-555\n  x: {\n", encoding="utf-8")
+    code = cli.main(["funde", str(umg.wurzel), "--offline"], funde_optionen=umg.optionen())
+    aus = capsys.readouterr()
+    assert code == 2 and aus.out == ""
+    assert aus.err.count("\n") == 1 and "wert-im-yaml-555" not in aus.err and "Error" in aus.err
+
+
+ZWEI_ZIELE = (f"issues:\n  ziel_standard: {{repo: {ZIEL}, konto: tester, oeffentlich: false}}\n"
+              "  ziele:\n    aussen/sub: {repo: Test/zwei, oeffentlich: false}\n")
+
+
+def test_interner_fehler_je_ziel_andere_laufen(git_repo: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                               capsys: pytest.CaptureFixture[str]) -> None:
+    """(2) Eine Ausnahme in einem Ziel: `intern:<Typ>`, Exit 1, das andere Ziel laeuft trotzdem."""
+    monkeypatch.setenv("SELBSTBILD_HOME", str(tmp_path / "heim"))
+    u = Umgebung(git_repo, tmp_path, ZWEI_ZIELE)
+    _pruefliste(u.wurzel, ZWEI_DOKU)
+
+    def kaputt(konto: str) -> GitHub:
+        raise RuntimeError(f"fabrik {TOKEN}")
+
+    code, j = u.lauf(capsys, gh_fabrik=kaputt)
+    assert code == 1
+    erst, zweit = j["ziele"]
+    assert erst["ziel"] == ZIEL and erst["fehler"] == "intern:RuntimeError"
+    assert any("nichts gesendet (trocken)" in n for n in erst["notizen"])
+    assert zweit["ziel"] == "Test/zwei" and zweit["modus"] == "bericht" and zweit["fehler"] is None
+    assert "## Issues → Test/zwei" in u.text()
+    assert TOKEN not in u.out and TOKEN not in u.err and TOKEN not in u.text()
+
+
+def test_abbruch_nach_schreiben_sagt_nicht_nichts_gesendet(umg: Umgebung,
+                                                          capsys: pytest.CaptureFixture[str]) -> None:
+    """(3) Wirft der Abgleich nach einem ausgefuehrten Schreibaufruf: ehrliche Notiz, Teil-Aktionen bleiben."""
+    _pruefliste(umg.wurzel, ZWEI_DOKU)
+    umg.fake.ausnahme_bei_anlegen = 2
+    code, j = umg.lauf(capsys, "--senden")
+    z = _ziel(j)
+    assert code == 1 and z["fehler"] == "intern:RuntimeError"
+    assert z["aktionen"]["anlegen"] == 1 and len(umg.fake.issues) == 1  # das erste ist wirklich angelegt
+    assert any("nach 1 Schreibaufruf(en), Stand unklar – Bestand per Marke maßgeblich" in n for n in z["notizen"])
+    assert not any("nichts gesendet" in n for n in z["notizen"])
+    assert "nichts gesendet" not in umg.text().split(f"## Issues → {ZIEL}")[1].split("## Hinweise")[0]
+    assert TOKEN not in umg.out and TOKEN not in umg.err and TOKEN not in umg.text()
+
+
+def test_bericht_nicht_schreibbar_json_trotzdem(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
+    """(2) Bericht nicht schreibbar: JSON kommt trotzdem, mit `bericht_fehler`, Exit 1."""
+    _pruefliste(umg.wurzel, ZWEI_DOKU)
+    datei = umg.tmp / "ist-eine-datei"
+    datei.write_text("x", encoding="utf-8")
+    code, j = umg.lauf(capsys, "--offline", bericht_ordner=datei)
+    assert code == 1 and j["bericht"] is None and j["bericht_fehler"]
+    assert _ziel(j)["aktionen"]["anlegen"] == 3
+
+
+def test_stand_nicht_gespeichert_nach_schreiben_exit1(umg: Umgebung, capsys: pytest.CaptureFixture[str],
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    """(4) Lokaler Stand nach ausgefuehrten Schreibaufrufen nicht speicherbar: Exit 1; ohne Schreiben: Exit 0."""
+    from selbstbild.funde.sync import IssueStand
+
+    _pruefliste(umg.wurzel, ZWEI_DOKU)
+
+    def nie_speichern(self: IssueStand) -> None:
+        raise PermissionError("gesperrt")
+
+    monkeypatch.setattr(IssueStand, "speichern", nie_speichern)
+    code, j = umg.lauf(capsys, "--senden")
+    assert code == 1 and _ziel(j)["fehler"] == "stand_nicht_gespeichert:PermissionError"
+    assert len(umg.fake.issues) == 3  # gesendet wurde
+    # zweiter Lauf schreibt nichts (alles per Marke gefunden): Speicherfehler ohne Schreiben ist kein Fehler
+    code, j = umg.lauf(capsys, "--senden")
+    assert code == 0 and _ziel(j)["fehler"] is None and len(umg.fake.issues) == 3
+
+
+def test_analyse_stand_ungleich_head_nur_notiz(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
+    """(6) Vermessener Commit != HEAD: nur eine Notiz in JSON und Bericht."""
+    from selbstbild.vermessen import vermessen
+
+    _pruefliste(umg.wurzel, ZWEI_DOKU)
+    gemessen = vermessen(umg.wurzel).commit
+    code, j = umg.lauf(capsys, "--offline")
+    assert code == 0 and not any(n.startswith("analyse-stand") for n in j["notizen"])
+    vorher = j["funde"]
+    umg.repo.datei("neu.txt", "x\n")
+    head = umg.repo.commit("weiter")
+    code, j = umg.lauf(capsys, "--offline")
+    erwartet = f"analyse-stand {gemessen[:7]} != HEAD {head[:7]}"
+    assert code == 0 and erwartet in j["notizen"] and erwartet in umg.text()
+    assert j["funde"] == vorher
