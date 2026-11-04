@@ -240,3 +240,64 @@ def test_deterministisch(umgebung) -> None:
     assert e1 == e2 and len(e1[0]) == 7
     rang = ["hoch", "mittel", "niedrig"].index
     assert [rang(f.schwere) for f in e1[0]] == sorted(rang(f.schwere) for f in e1[0])
+
+
+def test_pruefliste_fehlt_gibt_hinweis(umgebung) -> None:
+    wurzel, _ = umgebung
+    funde, notizen = _sammeln(wurzel)
+    assert funde == []
+    assert any(n.startswith("quelle-unlesbar:doku") and "doku-pruefliste fehlt" in n for n in notizen)
+
+
+def test_pruefliste_kaputt_gibt_hinweis(umgebung) -> None:
+    wurzel, _ = umgebung
+    pfad = pruefliste_pfad(aus_regeln(wurzel))
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    pfad.write_text("{kaputt", encoding="utf-8")
+    funde, notizen = _sammeln(wurzel)
+    assert funde == []
+    assert any(n.startswith("quelle-unlesbar:doku") and "doku-pruefliste unlesbar" in n for n in notizen)
+    pfad.write_text("[1, 2]", encoding="utf-8")  # gueltiges JSON, falsche Form
+    assert any("unlesbar" in n for n in _sammeln(wurzel)[1])
+
+
+def test_pruefliste_ok_kein_hinweis(umgebung) -> None:
+    wurzel, _ = umgebung
+    _pruefliste(wurzel, [], [])
+    assert not any(n.startswith("quelle-unlesbar:doku") for n in _sammeln(wurzel)[1])
+
+
+def test_analyse_fehlt_hat_praefix(umgebung) -> None:
+    wurzel, _ = umgebung
+    assert any(n.startswith("quelle-unlesbar:analyse") for n in _sammeln(wurzel, OFFEN)[1])
+
+
+def test_analyse_kaputte_datei_kein_absturz(umgebung) -> None:
+    wurzel, heim = umgebung
+    ordner = _stand(wurzel, heim)
+    (ordner / "analyse.sqlite").write_bytes(b"das ist keine sqlite-datei" * 50)
+    funde, notizen = _sammeln(wurzel, OFFEN)
+    assert funde == [] and any(n.startswith("quelle-unlesbar:analyse") for n in notizen)
+
+
+def test_analyse_blob_falsche_form_kein_absturz(umgebung) -> None:
+    wurzel, heim = umgebung
+    ordner = _stand(wurzel, heim)
+    c = sqlite3.connect(str(ordner / "analyse.sqlite"))
+    c.execute("UPDATE lauf SET daten=?", (json.dumps({"commit": COMMIT, "version": 1}).encode(),))
+    c.commit()
+    c.close()
+    funde, notizen = _sammeln(wurzel, OFFEN)  # KeyError im Lader
+    assert funde == [] and any(n.startswith("quelle-unlesbar:analyse") for n in notizen)
+
+
+def test_fehlerhafte_eintraege_uebersprungen(umgebung) -> None:
+    wurzel, heim = umgebung
+    _stand(wurzel, heim,
+           tot=[TotFund(None, "sicher_tot", (), None), TotFund("symbol:r:ok.py#f", "sicher_tot", (), None)],  # type: ignore[arg-type]
+           dop=[Doppelung("gleiche_datei", (1, 2, 3), 1.0), _dop("datei:r:a.py", "datei:r:b.py", "datei:r:c.py")])  # type: ignore[arg-type]
+    funde, notizen = _sammeln(wurzel, OFFEN)
+    assert sorted(f.art for f in funde) == ["doppelung", "tot"]
+    assert any("1 fehlerhafte Doppelungs-Einträge" in n for n in notizen)
+    assert any("1 fehlerhafte Tot-Einträge" in n for n in notizen)
+    assert all(n.startswith("quelle-unlesbar:") for n in notizen if "fehlerhafte" in n)
