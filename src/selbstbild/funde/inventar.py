@@ -821,6 +821,11 @@ def _zeile(n: Name, voll: bool) -> str:
 
 
 _TABELLENKOPF = "### Inventar\n\n| Art | Name | gelesen | gesetzt | Befund |\n|---|---|---|---|---|"
+# Finale Review-Fixes: Grenze fuer den fertigen konfig-Issue-Text (GitHub nimmt hoechstens 65.536 Zeichen) und
+# Reserve fuer alles ausser Inventar-Text und Belegen (Schluessel- und Repo-Marke ohne Repo-Namen, Schwere,
+# Belege-Ueberschrift, Hinweis: zusammen ~230 Zeichen; der Repo-Name wird extra abgezogen)
+KONFIG_ISSUE_MAX = 64000
+KONFIG_ISSUE_RESERVE = 1000
 
 
 def _kopf(inv: Inventar) -> str:
@@ -856,10 +861,16 @@ def _text_reihenfolge(namen: list[Name]) -> list[Name]:
     return sorted(namen, key=lambda n: (0 if n.befund else 1, *_sortierschluessel_name(n)))
 
 
-def inventar_fund(inv: Inventar, *, max_zeichen: int = 60000) -> Fund:
+def inventar_fund(inv: Inventar, *, max_zeichen: int = 60000, max_issue: int = KONFIG_ISSUE_MAX) -> Fund:
     """Der eine `konfig`-Fund (Schwere mittel, Anker `konfig-inventar:<aussen>`, R-f; Titel ohne Zahlen, weil das
     Einzel-Issue (S5-11) nur seinen Text bearbeitet). Text = Kopf mit Plan und Tabelle "Name -> wo gelesen, wo
-    gesetzt, Befund", gekappt wie in Task 3; `len(text) <= max_zeichen` gilt immer."""
+    gesetzt, Befund", gekappt wie in Task 3; `len(text) <= max_zeichen` gilt immer.
+
+    Finale Review-Fixes: der fertige Issue-Text (Marken, Schwere, Belege, Hinweis) bleibt <= `max_issue`; dafuer
+    zieht das Text-Budget den Belege-Block (bis 50 Belege) und eine feste Reserve fuer den Rest ab."""
+    belege = tuple(sorted({_datei_von(o) for n in inv.namen if n.art != "llm_client" for o in n.gesetzt})[:50])
+    belege_block = len("\n".join(f"- `{b}`" for b in belege))
+    max_zeichen = max(0, min(max_zeichen, max_issue - belege_block - KONFIG_ISSUE_RESERVE - len(inv.code_repo)))
     kopf = _kopf(inv)
     zeilen = [_zeile(n, False) for n in _text_reihenfolge(inv.namen)]
     budget = max_zeichen - len(kopf) - len(_TABELLENKOPF) - KAPPEN_RESERVE - 1
@@ -871,7 +882,6 @@ def inventar_fund(inv: Inventar, *, max_zeichen: int = 60000) -> Fund:
     if len(text) > max_zeichen:  # schon der Kopf passt nicht: hart kuerzen, Kappensatz fuer alle Zeilen
         rest = "\n\n" + kappen_zeile(len(zeilen)) + "\n"
         text = (text[: max(0, max_zeichen - len(rest))] + rest)[:max_zeichen]
-    belege = sorted({_datei_von(o) for n in inv.namen if n.art != "llm_client" for o in n.gesetzt})
     return Fund(
         art="konfig", schwere="mittel", code_repo=inv.code_repo, titel="Konfig-Inventar",
-        text=text, belege=tuple(belege[:50]), anker=f"konfig-inventar:{inv.code_repo}")
+        text=text, belege=belege, anker=f"konfig-inventar:{inv.code_repo}")

@@ -160,10 +160,14 @@ def _stand(tmp_path: Path) -> IssueStand:
 
 def _lauf(fake: FakeGh | None, funde: list[Fund], tmp_path: Path, *, heute: date = TAG1, senden: bool = True,
           ziel: Ziel | None = None, unlesbar: frozenset[str] = frozenset(), commit: str = COMMIT,
-          geprueft: frozenset[str] = GEPRUEFT):
+          geprueft: frozenset[str] = GEPRUEFT, pause_s: float = 0.0, pause: Any = None):
     gh = GitHub("Flissel", laufzeit=fake) if fake is not None else None
     return abgleichen(funde, ziel or _ziel(), gh, _stand(tmp_path), heute=heute, senden=senden, commit=commit,
-                      geprueft=geprueft, unlesbar=unlesbar)
+                      geprueft=geprueft, unlesbar=unlesbar, schreib_abstand_s=pause_s, pause=pause or _keine_pause)
+
+
+def _keine_pause(s: float) -> None:
+    raise AssertionError("Pause ohne Abstand")
 
 
 def _einzel(fake: FakeGh) -> list[dict[str, Any]]:
@@ -238,8 +242,10 @@ def test_tagesgrenze(tmp_path: Path) -> None:
     b2 = _lauf(fake, funde, tmp_path, heute=TAG2)
     assert len(_einzel(fake)) == 7 and b2.neu == 2 and b2.ueber_grenze == []
     assert len({fund_schluessel(f) for f in funde}) == len({i["body"].split(" -->")[0] for i in _einzel(fake)})
-    # das Sammel-Issue ist jetzt leer und wird geschlossen
+    # das Sammel-Issue ist jetzt leer und wird geschlossen -- die Funde sind nicht weg, sondern befoerdert
     assert sammel["state"] == "closed"
+    assert (sammel["number"], "Sammlung leer: verbleibende Funde als Einzel-Issues geführt") in fake.kommentare
+    assert not any("verschwunden" in t for n, t in fake.kommentare if n == sammel["number"])
 
 
 def test_tagesgrenze_ohne_lokalen_stand_zaehlt_github(tmp_path: Path) -> None:
@@ -261,6 +267,7 @@ def test_fund_weg_schliesst(tmp_path: Path) -> None:
     b = _lauf(fake, [], tmp_path)
     assert einzel["state"] == "closed" and sammel["state"] == "closed"
     assert (einzel["number"], "Fund im Code verschwunden (Commit `abc1234`)") in fake.kommentare
+    assert (sammel["number"], "Sammlung leer: alle Funde im Code verschwunden (Commit `abc1234`)") in fake.kommentare
     assert {a.art for a in b.aktionen} == {"schliessen", "sammel_schliessen"}
 
 
@@ -343,7 +350,7 @@ def test_token_nie_im_bericht_oder_log(tmp_path: Path, caplog: pytest.LogCapture
     fake.fehler_bei_anlegen = 2
     gh = GitHub("Flissel", laufzeit=fake)
     b = abgleichen([_fund(i) for i in range(3)], _ziel(), gh, _stand(tmp_path), heute=TAG1, senden=True,
-                   commit=COMMIT, geprueft=GEPRUEFT)
+                   commit=COMMIT, geprueft=GEPRUEFT, schreib_abstand_s=0)
     assert b.fehler == "http_502"
     texte = [repr(b), str(b), b.text(), caplog.text, *capsys.readouterr(),
              (tmp_path / "issues-test.json").read_text(encoding="utf-8"), repr(gh.__dict__)]
@@ -805,3 +812,112 @@ def test_konfig_oeffnen_scheitert_kein_bearbeiten(tmp_path: Path) -> None:
     b = _lauf(fake, [_konfig("Inventar v2")], tmp_path)
     assert [(a.art, a.status) for a in b.aktionen] == [("oeffnen", "fehlgeschlagen")]
     assert "Inventar v2" not in fake.issues[1]["body"]
+
+
+# ---------- finale Review-Fixes Stufe 5 ----------
+
+ZU_LANG = 65000
+
+
+def test_zu_langer_text_wird_nicht_gesendet_andere_schon(tmp_path: Path) -> None:
+    """Fix 2: harte Grenze vor jedem anlegen/bearbeiten; der Fund bekommt `zu_lang:<schluessel>`, der Rest laeuft."""
+    fake = FakeGh()
+    lang_konfig = _konfig("k" * (ZU_LANG + 1))
+    lang_hoch = _fund(1, text="h" * (ZU_LANG + 1))
+    normal = _fund(2)
+    b = _lauf(fake, [lang_konfig, lang_hoch, normal], tmp_path)
+    assert b.fehler is None
+    assert f"zu_lang:{fund_schluessel(lang_konfig)}" in b.notizen
+    assert f"zu_lang:{fund_schluessel(lang_hoch)}" in b.notizen
+    assert [i for i in fake.issues.values()] and all(len(i["body"]) <= ZU_LANG for i in fake.issues.values())
+    assert any(_marke(normal) in i["body"] for i in fake.issues.values())
+    assert not any(_marke(lang_hoch) in i["body"] or _marke(lang_konfig) in i["body"] for i in fake.issues.values())
+    assert b.neu == 1  # der zu lange zaehlt nicht als neu
+    # bearbeiten: vorhandenes konfig-Issue, neuer Text zu lang -> kein PATCH, Notiz
+    _lauf(fake, [_konfig()], tmp_path)
+    vorher = len(fake.aufrufe)
+    b2 = _lauf(fake, [lang_konfig], tmp_path)
+    assert fund_schluessel(lang_konfig) == fund_schluessel(_konfig())
+    assert [m for m, _ in fake.aufrufe[vorher:] if m != "GET"] == []
+    assert f"zu_lang:{fund_schluessel(lang_konfig)}" in b2.notizen
+    assert "Inventar v1" in next(i["body"] for i in fake.issues.values() if _marke(_konfig()) in i["body"])
+
+
+def test_zu_langer_sammel_text_wird_nicht_bearbeitet(tmp_path: Path) -> None:
+    fake = FakeGh()
+    m1, m2 = _fund(1, schwere="mittel"), _fund(2, schwere="mittel")
+    _lauf(fake, [m1], tmp_path)
+    (s,) = _sammel(fake)
+    s["body"] = "x" * ZU_LANG + "\n" + s["body"]  # Menschentext macht den Text zu lang
+    davor = s["body"]
+    b = _lauf(fake, [m1, m2], tmp_path)
+    assert s["body"] == davor and b.fehler is None
+    assert "zu_lang:sammel:doku_widerspruch:vibemind" in b.notizen
+
+
+def test_trocken_meldet_zu_lang_auch(tmp_path: Path) -> None:
+    fake = FakeGh()
+    lang = _fund(1, text="h" * (ZU_LANG + 1))
+    b = _lauf(fake, [lang], tmp_path, senden=False)
+    assert f"zu_lang:{fund_schluessel(lang)}" in b.notizen and b.aktionen == []
+
+
+def test_schreib_abstand_nur_zwischen_erfolgreichen_schreibaufrufen(tmp_path: Path) -> None:
+    """Fix 2: Mindestabstand zwischen erfolgreichen Schreibaufrufen (sekundaeres Rate-Limit); Lesen/trocken ohne."""
+    pausen: list[float] = []
+    fake = FakeGh()
+    funde = [_fund(i) for i in range(3)]
+    _lauf(fake, funde, tmp_path, senden=False, pause_s=1.0, pause=pausen.append)
+    assert pausen == []  # trocken: keine Pause
+    _lauf(fake, funde, tmp_path, pause_s=1.0, pause=pausen.append)
+    assert len(_einzel(fake)) == 3 and pausen == [1.0, 1.0]  # 3 Schreibaufrufe -> 2 Abstaende
+    pausen.clear()
+    b = _lauf(fake, funde, tmp_path, pause_s=1.0, pause=pausen.append)
+    assert b.unveraendert == 3 and pausen == []  # nur gelesen
+
+
+def test_schreib_abstand_vorgabe_eine_sekunde() -> None:
+    import inspect
+    import time
+
+    from selbstbild.funde import sync
+    sig = inspect.signature(sync.abgleichen)
+    assert sig.parameters["schreib_abstand_s"].default == 1.0
+    assert sig.parameters["pause"].default is time.sleep
+
+
+@pytest.mark.parametrize("code", ["403", "429"])
+def test_rate_limit_hinweis(tmp_path: Path, code: str) -> None:
+    fake = FakeGh()
+    fake.fehler_bei_anlegen = 2
+    fake.fehler_text = f"gh: You have exceeded a secondary rate limit (HTTP {code})".encode()
+    b = _lauf(fake, [_fund(i) for i in range(3)], tmp_path)
+    assert b.fehler == f"http_{code}"
+    assert [a.status for a in b.aktionen] == ["ausgefuehrt", "fehlgeschlagen", "abgebrochen"]
+    assert "Rate-Limit – später erneut `--senden`" in b.text()
+    fake.fehler_bei_anlegen = None
+    b2 = _lauf(fake, [_fund(i) for i in range(3)], tmp_path)
+    assert b2.fehler is None and len(_einzel(fake)) == 3  # naechster Lauf: per Marke, keine Dubletten
+
+
+def test_kein_rate_limit_hinweis_bei_anderem_fehler(tmp_path: Path) -> None:
+    fake = FakeGh()
+    fake.fehler_bei_anlegen = 1
+    b = _lauf(fake, [_fund(1)], tmp_path)
+    assert b.fehler == "http_502" and "Rate-Limit" not in b.text()
+
+
+def test_unlesbare_arten_quelle_genau() -> None:
+    """Fix 5: das Quell-Token wird genau gelesen (bis `:` oder Leerraum), nicht per startswith."""
+    alle = frozenset({"doku_widerspruch", "doppelung", "tot", "konfig"})
+    assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}dokumente: x"]) == alle
+    assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}graphen: x"]) == alle
+    assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}doku"]) == frozenset({"doku_widerspruch"})
+    assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}graph Graph fehlt"]) == frozenset({"konfig"})
+    assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}analyse-stand: abc != def"]) == frozenset({"doppelung", "tot"})
+    assert unlesbare_arten([f"{UNLESBAR_PRAEFIX}"]) == alle
+
+
+def test_ohne_gh_notiz_sagt_offline(tmp_path: Path) -> None:
+    b = _lauf(None, [_fund(1)], tmp_path, senden=False)
+    assert any("offline" in n for n in b.notizen) and not any("nur Bericht" in n for n in b.notizen)

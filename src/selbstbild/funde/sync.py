@@ -22,6 +22,10 @@ schreibt auch den lokalen Stand nicht.
 Sammel-Zeile: Text = `einzel_text` des Funds mit Repo-Marke, jeder Lauf ersetzt den ganzen Text, wenn er sich
 geaendert hat (sonst kein Schreibaufruf). Es zaehlt nicht gegen `max_einzel_je_tag`. Schliessen wie jedes
 Einzel-Issue (nur gepruefte Code-Repos, nicht bei unlesbarer Quelle); D6 und Schluesselfilter gelten unveraendert.
+
+Finale Review-Fixes: kein Text ueber `MAX_TEXT` (65.000) wird angelegt oder bearbeitet (Notiz `zu_lang:<schluessel>`,
+die anderen Schreibaufrufe laufen weiter); zwischen erfolgreichen Schreibaufrufen liegt `schreib_abstand_s` (1 s);
+403/429 bricht ab wie jeder Schreibfehler, der Bericht nennt das Rate-Limit.
 """
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -61,8 +66,17 @@ _QUELLEN_ARTEN: dict[str, frozenset[str]] = {
     "dienste": frozenset({"konfig"}),
     "submodul": frozenset({"konfig"}),
     "dateien": frozenset({"konfig"}),  # git ls-files des Inventars gescheitert
+    # finale Review-Fixes: vermessener Commit kein Vorfahr von HEAD (bericht.analyse_stand_pruefen)
+    "analyse-stand": frozenset({"doppelung", "tot"}),
 }
+_QUELLE = re.compile(r"[^:\s]*")
 _TOR_GESPERRT = "toter Code: gesperrt"
+# finale Review-Fixes: GitHub nimmt hoechstens 65.536 Zeichen je Text; darueber wird nichts gesendet
+MAX_TEXT = 65000
+# Mindestabstand zwischen erfolgreichen Schreibaufrufen (sekundaeres Rate-Limit von GitHub)
+SCHREIB_ABSTAND_S = 1.0
+RATE_LIMIT_ARTEN = frozenset({"http_403", "http_429"})
+RATE_LIMIT_HINWEIS = "Rate-Limit – später erneut `--senden`"
 
 
 # ---------- Ziele ----------
@@ -128,15 +142,17 @@ def unlesbare_arten(notizen: Iterable[str]) -> frozenset[str]:
     """Arten, deren Quelle in diesem Lauf nicht lesbar war (S5-7); fuer sie wird nichts geschlossen.
 
     `quelle-unlesbar:doku...` -> doku_widerspruch, `quelle-unlesbar:analyse...` -> doppelung und tot,
-    `quelle-unlesbar:graph|dienste|submodul|dateien...` -> konfig (S5-12), eine unbekannte Quelle -> alle Arten (fail-closed). Ein gesperrtes Tor fuer toten Code zaehlt wie unlesbar:
-    es liefert keine Tot-Funde, ohne dass der Code sich geaendert hat.
+    `quelle-unlesbar:graph|dienste|submodul|dateien...` -> konfig (S5-12), `quelle-unlesbar:analyse-stand` ->
+    doppelung und tot, eine unbekannte Quelle -> alle Arten (fail-closed). Die Quelle ist genau das Wort nach dem
+    Praefix bis zum naechsten `:` oder Leerraum (`dokumente` ist nicht `doku`). Ein gesperrtes Tor fuer toten Code
+    zaehlt wie unlesbar: es liefert keine Tot-Funde, ohne dass der Code sich geaendert hat.
     """
     aus: set[str] = set()
     for n in notizen:
         if n.startswith(UNLESBAR_PRAEFIX):
-            rest = n[len(UNLESBAR_PRAEFIX):]
-            quelle = next((q for q in _QUELLEN_ARTEN if rest.startswith(q)), None)
-            aus |= _QUELLEN_ARTEN[quelle] if quelle else set(ARTEN)
+            m = _QUELLE.match(n, len(UNLESBAR_PRAEFIX))
+            quelle = m.group(0) if m else ""
+            aus |= _QUELLEN_ARTEN.get(quelle, frozenset(ARTEN))
         elif n.startswith(_TOR_GESPERRT):
             aus.add("tot")
     return frozenset(aus)
@@ -235,6 +251,8 @@ class Bericht:
         z = [f"## Issues → {self.ziel} ({modus})", ""]
         if self.fehler:
             z += [f"**Abgebrochen:** GitHub-Fehler `{self.fehler}`; weitere Schreibaufrufe ausgelassen.", ""]
+            if self.fehler in RATE_LIMIT_ARTEN:
+                z += [f"**{RATE_LIMIT_HINWEIS}**", ""]
         z.append(f"- neue Einzel-Issues: {self.neu}; unverändert: {self.unveraendert}")
         if self.ueber_grenze:
             z.append(f"- über der Tagesgrenze (diesmal im Sammel-Issue): {len(self.ueber_grenze)}")
@@ -315,20 +333,33 @@ def _belege_ersetzen(alt: str, neu: str) -> str | None:
 
 
 class _Schreiber:
-    """Fuehrt Schreibaufrufe aus (senden) oder plant sie nur (trocken); nach dem ersten Fehler: abgebrochen."""
+    """Fuehrt Schreibaufrufe aus (senden) oder plant sie nur (trocken); nach dem ersten Fehler: abgebrochen.
 
-    def __init__(self, gh: GitHub | None, repo: str, senden: bool, bericht: Bericht) -> None:
+    Finale Review-Fixes: `text` (der zu sendende Issue-Text bei anlegen/bearbeiten) ueber `MAX_TEXT` wird nie
+    gesendet, auch nicht trocken geplant: Status `zu_lang`, Notiz `zu_lang:<schluessel>`, die anderen Schreibaufrufe
+    laufen weiter. Zwischen zwei erfolgreichen Schreibaufrufen liegt mindestens `abstand_s` (`pause`); Lesen und
+    trockene Laeufe warten nie. 403/429 (Rate-Limit) bricht wie jeder Fehler ab, mit Hinweis im Bericht."""
+
+    def __init__(self, gh: GitHub | None, repo: str, senden: bool, bericht: Bericht, *,
+                 pause: Callable[[float], None] = time.sleep, abstand_s: float = SCHREIB_ABSTAND_S) -> None:
         self.gh, self.repo, self.senden, self.bericht = gh, repo, senden, bericht
+        self.pause, self.abstand_s = pause, abstand_s
         self._label = False
+        self._geschrieben = False
 
     def __call__(self, art: str, schluessel: str, titel: str, nummer: int | None,
-                 tun: Callable[[GitHub], int | None]) -> tuple[str, int | None]:
+                 tun: Callable[[GitHub], int | None], *, text: str | None = None) -> tuple[str, int | None]:
+        if text is not None and len(text) > MAX_TEXT:
+            self.bericht.notizen.append(f"zu_lang:{schluessel}")
+            return "zu_lang", nummer
         if not self.senden:
             status = "trocken"
         elif self.bericht.fehler is not None:
             status = "abgebrochen"
         else:
             assert self.gh is not None
+            if self._geschrieben and self.abstand_s > 0:
+                self.pause(self.abstand_s)
             try:
                 if not self._label:
                     self.gh.label_sicherstellen(self.repo)
@@ -337,8 +368,9 @@ class _Schreiber:
                 if ergebnis is not None:
                     nummer = ergebnis
                 status = "ausgefuehrt"
+                self._geschrieben = True
             except GitHubFehler as f:
-                self.bericht.fehler = f.art
+                self.bericht.fehler = f.art  # bei 403/429 nennt Bericht.text das Rate-Limit
                 status = "fehlgeschlagen"
         self.bericht.aktionen.append(Aktion(art, schluessel, titel, nummer, status))
         return status, nummer
@@ -346,7 +378,8 @@ class _Schreiber:
 
 def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: IssueStand, *, heute: date,
                senden: bool, commit: str, geprueft: frozenset[str],
-               unlesbar: frozenset[str] = frozenset(), bericht: Bericht | None = None) -> Bericht:
+               unlesbar: frozenset[str] = frozenset(), bericht: Bericht | None = None,
+               pause: Callable[[float], None] = time.sleep, schreib_abstand_s: float = SCHREIB_ABSTAND_S) -> Bericht:
     """Gleicht die Funde fuer ein Ziel mit dem GitHub-Bestand ab (siehe Moduldoku).
 
     `commit`: SHA des vermessenen Stands (fuer den Schliess-Kommentar, nur die ersten 7 Zeichen).
@@ -355,6 +388,8 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
     `unlesbar`: Arten, deren Quelle in diesem Lauf unlesbar war (`unlesbare_arten(notizen)`).
     `bericht`: optional ein leerer `Bericht` des Aufrufers, der hier gefuellt wird -- wirft der Abgleich mittendrin,
     sieht der Aufrufer darin die bis dahin ausgefuehrten Aktionen (Task 6 Fix-Runde 1).
+    `pause`/`schreib_abstand_s`: Mindestabstand zwischen erfolgreichen Schreibaufrufen (Vorgabe `time.sleep`, 1 s;
+    Tests geben 0 oder eine Attrappe).
     Ein Fehler beim Lesen des Bestands oder der Sichtbarkeit bricht mit `GitHubFehler` ab, bevor geschrieben wird.
     """
     if senden and gh is None:
@@ -383,7 +418,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
         bestand = gh.issues(repo)
     else:
         bestand = []
-        b.notizen.append("kein gh: Bestand als leer angenommen (nur Bericht)")
+        b.notizen.append("kein gh: Bestand als leer angenommen (offline)")
     einzel: dict[str, list[dict[str, Any]]] = defaultdict(list)
     sammel: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for issue in sorted(bestand, key=lambda i: int(i.get("number") or 0)):
@@ -424,7 +459,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
         b.notizen.append(f"konfig: {konfig_oeffentlich} Funde nicht gesendet, Ziel ist öffentlich (D6)")
     aktiv.sort(key=lambda kf: (_RANG.get(kf[1].schwere, 9), kf[1].art, kf[1].code_repo, kf[1].anker))
 
-    schreiben = _Schreiber(gh, repo, senden, b)
+    schreiben = _Schreiber(gh, repo, senden, b, pause=pause, abstand_s=schreib_abstand_s)
 
     def stand_nicht_gespeichert(e: OSError) -> None:
         b.notizen.append(f"lokaler Stand nicht gespeichert ({type(e).__name__})")
@@ -458,7 +493,8 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
             b.unterdrueckt.append(k)
             return
         if not treffer:
-            status, nummer = schreiben("anlegen", k, titel, None, lambda g: g.anlegen(repo, titel, neu_text))
+            status, nummer = schreiben("anlegen", k, titel, None, lambda g: g.anlegen(repo, titel, neu_text),
+                                       text=neu_text)
             if status == "ausgefuehrt":
                 assert nummer is not None
                 einzel[k].append({"number": nummer, "title": titel, "body": neu_text, "state": "open"})
@@ -478,7 +514,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
             b.unveraendert += 1
             return
         status, _ = schreiben("bearbeiten", k, str(i.get("title") or titel), n,
-                              lambda g: g.bearbeiten(repo, n, neu_text))
+                              lambda g: g.bearbeiten(repo, n, neu_text), text=neu_text)
         if status == "ausgefuehrt":
             i["body"] = neu_text
 
@@ -489,6 +525,9 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
 
     # 3. Einzel-Issues
     sammel_funde: dict[tuple[str, str], list[Fund]] = defaultdict(list)
+    # Paare (Art, Code-Repo) mit Funden in diesem Lauf: leert sich ihr Sammel-Issue, sind die Funde nicht weg,
+    # sondern als Einzel-Issues gefuehrt (finale Review-Fixes)
+    mit_funden = {(f.art, f.code_repo) for _, f in aktiv}
     for k, f in aktiv:
         treffer = einzel.get(k, [])
         offen = [i for i in treffer if _offen(i)]
@@ -507,7 +546,8 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
                 b.gesperrt.append(f"{k}: {muster}")
                 continue
             status, _ = schreiben("bearbeiten", k, str(i.get("title") or titel), int(i["number"]),
-                                  lambda g, n=int(i["number"]), t=ersetzt: g.bearbeiten(repo, n, t))
+                                  lambda g, n=int(i["number"]), t=ersetzt: g.bearbeiten(repo, n, t),
+                                  text=ersetzt)
             if status == "ausgefuehrt":
                 i["body"] = ersetzt
             continue
@@ -529,7 +569,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
                 continue
             if neu_heute < ziel.max_einzel_je_tag:
                 status, nummer = schreiben("anlegen", k, titel, None,
-                                           lambda g, t=titel, x=text: g.anlegen(repo, t, x))
+                                           lambda g, t=titel, x=text: g.anlegen(repo, t, x), text=text)
                 if status in ("ausgefuehrt", "trocken"):
                     neu_heute += 1
                     b.neu += 1
@@ -570,11 +610,12 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
             if offen and code_repo not in geprueft:
                 nicht_geprueft.add(code_repo)
                 continue
+            grund = ("Sammlung leer: verbleibende Funde als Einzel-Issues geführt" if (art, code_repo) in mit_funden
+                     else f"Sammlung leer: alle Funde im Code verschwunden (Commit `{sha7}`)")
             for i in offen:
                 n = int(i["number"])
                 status, _ = schreiben("sammel_schliessen", sk, str(i.get("title") or sk), n,
-                                      lambda g, n=n: g.schliessen(
-                                          repo, n, f"Sammlung leer: alle Funde im Code verschwunden (Commit `{sha7}`)"))
+                                      lambda g, n=n, grund=grund: g.schliessen(repo, n, grund))
                 if status == "ausgefuehrt":
                     i["state"] = "closed"
             continue
@@ -584,7 +625,8 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
             b.gesperrt.append(f"{sk}: {muster}")
             continue
         if not issues:
-            status, _ = schreiben("sammel_anlegen", sk, titel, None, lambda g, t=titel, x=text: g.anlegen(repo, t, x))
+            status, _ = schreiben("sammel_anlegen", sk, titel, None, lambda g, t=titel, x=text: g.anlegen(repo, t, x),
+                                  text=text)
             if label_verloren(status):
                 sichern()
             continue
@@ -607,7 +649,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
             b.unveraendert += 1
             continue
         status, _ = schreiben("sammel_bearbeiten", sk, str(i.get("title") or titel), n,
-                              lambda g, n=n, t=neu_body: g.bearbeiten(repo, n, t))
+                              lambda g, n=n, t=neu_body: g.bearbeiten(repo, n, t), text=neu_body)
         if status == "ausgefuehrt":
             i["body"] = neu_body
 

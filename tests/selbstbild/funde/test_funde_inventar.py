@@ -535,3 +535,22 @@ def test_git_scheitert_kein_absturz(git_repo, graph_stand, monkeypatch: pytest.M
     inv = inventar(wurzel, stand_unter=graph_stand([], []))
     assert any(n.startswith("quelle-unlesbar:dateien: git ls-files fehlgeschlagen für aussen") for n in inv.notizen)
     assert not any(n.name == "A" for n in inv.namen)
+
+
+# ---------- finale Review-Fixes Stufe 5 ----------
+
+def test_konfig_issue_text_mit_belegen_unter_grenze() -> None:
+    """Fix 1: Kappe zieht den Belege-Block und die Kopf-/Marken-Reserve ab; der fertige Issue-Text <= 64.000."""
+    from selbstbild.funde.inventar import Name
+    from selbstbild.funde.sync import _einzel_mit_repo
+
+    ordner = "o" * 184  # Pfad je Beleg genau 200 Zeichen: aussen/<184>/f000.env
+    namen = [Name(art="env", name=f"NAME_{i:05d}_MIT_LANGEM_SUFFIX",
+                  gesetzt=[f"aussen/{ordner}/f{i % 60:03d}.env:1"], befund=["tot"]) for i in range(2000)]
+    inv = Inventar(code_repo="aussen", namen=namen, clients=[], notizen=[], uebersprungen=0)
+    f = inventar_fund(inv)
+    assert len(f.belege) == 50 and all(len(b) == 200 for b in f.belege)
+    assert "weitere, siehe lokaler Bericht" in f.text
+    titel, body = _einzel_mit_repo(f)
+    assert len(body) <= 64000
+    assert all(f"- `{b}`" in body for b in f.belege)

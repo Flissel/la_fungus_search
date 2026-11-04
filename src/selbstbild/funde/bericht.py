@@ -19,6 +19,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -37,8 +38,20 @@ from ..vermessen import stand_finden
 from .github import GitHub, GitHubFehler
 from .goldsatz_tor import ToterCodeTor, tor_tot
 from .inventar import _graph_db, inventar, inventar_fund, inventar_tabelle
-from .sammeln import _aussen_name, funde_sammeln, geprueft_repos
-from .sync import Bericht, IssueStand, Ziel, abgleichen, nach_ziel, stand_pfad, unlesbare_arten, ziele_aus_regeln
+from .sammeln import UNLESBAR_PRAEFIX, _aussen_name, funde_sammeln, geprueft_repos
+from .sync import (
+    RATE_LIMIT_ARTEN,
+    RATE_LIMIT_HINWEIS,
+    SCHREIB_ABSTAND_S,
+    Bericht,
+    IssueStand,
+    Ziel,
+    abgleichen,
+    nach_ziel,
+    stand_pfad,
+    unlesbare_arten,
+    ziele_aus_regeln,
+)
 from .text import _art_name, _zelle
 from .typen import ARTEN, Fund
 
@@ -135,6 +148,37 @@ def stand_abweichung(wurzel: Path, commit: str | None, stand_unter: Path | None 
     return f"analyse-stand {gemessen[:7]} != HEAD {commit[:7]}"
 
 
+def analyse_commit_lesen(wurzel: Path, stand_unter: Path | None = None) -> str | None:
+    """Der vermessene Commit (`meta.bericht.commit`, nur lesend); None, wenn es keinen lesbaren gibt."""
+    bericht = _vermessungsbericht(Path(wurzel), stand_unter)
+    gemessen = str(bericht.get("commit") or "").lower() if bericht else ""
+    return gemessen if _SHA.fullmatch(gemessen) else None
+
+
+def analyse_stand_pruefen(wurzel: Path, analyse: str, head: str) -> list[str]:
+    """Notiz `quelle-unlesbar:analyse-stand: ...`, wenn der vermessene Commit weder HEAD noch ein Vorfahr davon ist
+    (`git merge-base --is-ancestor`, mit Zeitgrenze); sonst leer. Scheitert die Pruefung, gilt der Stand ebenfalls
+    als unlesbar (fail-closed). `sync.unlesbare_arten` macht daraus doppelung und tot: kein Schliessen."""
+    a, h = analyse.lower(), head.lower()
+    if a.startswith(h) or h.startswith(a):
+        return []
+    grund: str
+    try:
+        erg = subprocess.run(_git_args("merge-base", "--is-ancestor", a, h), cwd=wurzel, env=_git_env(),
+                             capture_output=True, stdin=subprocess.DEVNULL, timeout=GIT_TIMEOUT_S, check=False,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        grund = "Prüfung überschritt die Zeitgrenze"
+    except (OSError, subprocess.SubprocessError) as e:
+        grund = f"Prüfung gescheitert ({type(e).__name__})"
+    else:
+        if erg.returncode == 0:
+            return []
+        grund = "kein Vorfahr" if erg.returncode == 1 else f"Prüfung gescheitert (git exit {erg.returncode})"
+    return [f"{UNLESBAR_PRAEFIX}analyse-stand: Analyse-Commit {a[:7]} vs. HEAD {h[:7]}: {grund}; "
+            "Doppelungen und toter Code werden nicht geschlossen"]
+
+
 def geprueft_ermitteln(wurzel: Path, *, doku_konfig: Konfig,
                        stand_unter: Path | None = None) -> tuple[frozenset[str], list[str]]:
     """Code-Repos, deren verschwundene Funde geschlossen werden duerfen (Ruling S5-10).
@@ -228,7 +272,11 @@ class ZielErgebnis:
 
 def _abgleich_je_ziel(ziel: Ziel, fs: list[Fund], *, senden: bool, offline: bool, commit: str | None,
                       stand: IssueStand, heute: date, geprueft: frozenset[str], unlesbar: frozenset[str],
-                      gh_fabrik: Callable[[str], GitHub]) -> ZielErgebnis:
+                      gh_fabrik: Callable[[str], GitHub], schliess_commit: str | None = None,
+                      pause: Callable[[float], None] | None = None,
+                      schreib_abstand_s: float = SCHREIB_ABSTAND_S) -> ZielErgebnis:
+    """`commit` (HEAD) entscheidet, ob abgeglichen wird; `schliess_commit` (der vermessene Commit, sonst HEAD)
+    steht in den Schliess-Kommentaren."""
     if senden:
         modus = "senden"
     elif offline:
@@ -245,11 +293,15 @@ def _abgleich_je_ziel(ziel: Ziel, fs: list[Fund], *, senden: bool, offline: bool
     try:
         if ziel.konto and not offline:
             gh = gh_fabrik(ziel.konto)
-        erg.bericht = abgleichen(fs, ziel, gh, stand, heute=heute, senden=senden, commit=commit,
-                                 geprueft=geprueft, unlesbar=unlesbar, bericht=teil)
+        erg.bericht = abgleichen(fs, ziel, gh, stand, heute=heute, senden=senden, commit=schliess_commit or commit,
+                                 geprueft=geprueft, unlesbar=unlesbar, bericht=teil,
+                                 pause=pause if pause is not None else time.sleep,
+                                 schreib_abstand_s=schreib_abstand_s)
     except GitHubFehler as e:
         erg.fehler = e.art
         _abbruch(erg, teil, f"GitHub-Fehler `{e.art}`")
+        if e.art in RATE_LIMIT_ARTEN:
+            erg.notizen.append(RATE_LIMIT_HINWEIS)
         return erg
     except ValueError as e:  # ungueltiges Konto o. ae.; nie ein Wert im Text
         erg.fehler = "ungueltig"
@@ -380,9 +432,14 @@ def _regeln(wurzel: Path) -> Regeln:
 def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Sequence[str] | None = None,
            goldsatz: Path | None = None, gh_fabrik: Callable[[str], GitHub] | None = None,
            bericht_ordner: Path | None = None, stand_basis: Path | None = None, stand_unter: Path | None = None,
-           heute: date | None = None, ausgabe: IO[str] | None = None) -> int:
+           heute: date | None = None, ausgabe: IO[str] | None = None,
+           schreib_pause: Callable[[float], None] | None = None, schreib_abstand_s: float = SCHREIB_ABSTAND_S) -> int:
     """`python -m selbstbild funde`. Alle Schluesselargumente ausser den CLI-Optionen sind fuer Tests injizierbar
-    (`gh_fabrik(konto) -> GitHub`, Bericht-Ordner, Basis des Issue-Stands, Analyse-Stand, Datum, stdout)."""
+    (`gh_fabrik(konto) -> GitHub`, Bericht-Ordner, Basis des Issue-Stands, Analyse-Stand, Datum, stdout, Pause und
+    Abstand zwischen Schreibaufrufen).
+
+    Schliess-Kommentare nennen den vermessenen Commit (`meta.bericht.commit`), ohne lesbaren Vermessungsbericht HEAD
+    (mit Notiz). Ist der vermessene Commit kein Vorfahr von HEAD, gelten doppelung und tot als unlesbar."""
     wurzel = Path(wurzel)
     if senden and offline:
         raise ValueError("--senden und --offline schliessen sich aus")
@@ -413,6 +470,13 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
     inv = inventar(wurzel, stand_unter=stand_unter)
     funde.append(inventar_fund(inv))
     notizen += inv.notizen
+    analyse = analyse_commit_lesen(wurzel, stand_unter)
+    if commit is not None:
+        if analyse is None:
+            notizen.append("Analyse-Commit unbekannt (kein lesbarer Vermessungsbericht): Schliess-Kommentare "
+                           "nennen HEAD")
+        else:
+            notizen += analyse_stand_pruefen(wurzel, analyse, commit)
 
     unlesbar = unlesbare_arten(notizen)  # immer aus allen Notizen (S5-19)
     if nur:
@@ -432,7 +496,8 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
     gruppen, ohne = nach_ziel(funde, ziele)
     ergebnisse = [
         _abgleich_je_ziel(z, fs, senden=senden, offline=offline, commit=commit, stand=stand, heute=tag,
-                          geprueft=geprueft, unlesbar=unlesbar, gh_fabrik=fabrik)
+                          geprueft=geprueft, unlesbar=unlesbar, gh_fabrik=fabrik, schliess_commit=analyse,
+                          pause=schreib_pause, schreib_abstand_s=schreib_abstand_s)
         for z, fs in gruppen]
 
     arten = [a for a in ARTEN if not nur or a in nur]

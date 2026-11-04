@@ -179,6 +179,7 @@ class FakeGh:
         self.fehler_bei: tuple[str, str] | None = None  # (Methode, Pfad-Ende) -> HTTP 502
         self.ausnahme_bei_anlegen: int | None = None  # n-tes POST issues -> RuntimeError (interner Fehler)
         self.anlegen_versuche = 0
+        self.kommentare: list[tuple[int, str]] = []
 
     def issue(self, titel: str, body: str, *, state: str = "open") -> int:
         n = self.naechste
@@ -236,6 +237,7 @@ class FakeGh:
                     i[k] = daten[k]
             return ok({"number": i["number"]})
         if len(rest) == 3 and rest[2] == "comments" and methode == "POST":
+            self.kommentare.append((int(rest[1]), daten["body"]))
             return ok({"id": 1})
         raise AssertionError(f"unerwarteter Aufruf {methode} {pfad}")
 
@@ -285,7 +287,8 @@ class Umgebung:
 
     def optionen(self, **extra: Any) -> dict[str, Any]:
         o: dict[str, Any] = {"gh_fabrik": lambda konto: GitHub(konto, laufzeit=self.fake),
-                             "bericht_ordner": self.bericht, "stand_basis": self.basis, "heute": HEUTE}
+                             "bericht_ordner": self.bericht, "stand_basis": self.basis, "heute": HEUTE,
+                             "schreib_abstand_s": 0}
         o.update(extra)
         return o
 
@@ -668,3 +671,83 @@ def test_analyse_stand_ungleich_head_nur_notiz(umg: Umgebung, capsys: pytest.Cap
     erwartet = f"analyse-stand {gemessen[:7]} != HEAD {head[:7]}"
     assert code == 0 and erwartet in j["notizen"] and erwartet in umg.text()
     assert j["funde"] == vorher
+
+
+# ---------- finale Review-Fixes Stufe 5 ----------
+
+def test_schliess_kommentar_nennt_analyse_commit(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
+    """Fix 3: der Schliess-Kommentar nennt den vermessenen Commit, nicht HEAD."""
+    from selbstbild.vermessen import vermessen
+
+    _pruefliste(umg.wurzel, [])
+    gemessen = vermessen(umg.wurzel).commit
+    umg.repo.datei("neu.txt", "x\n")
+    head = umg.repo.commit("weiter")
+    assert gemessen[:7] != head[:7]
+    alt = _einzel_issue(umg.fake, "doku_widerspruch", "0" * 16, "aussen")
+    code, j = umg.lauf(capsys, "--senden")
+    assert code == 0 and umg.fake.issues[alt]["state"] == "closed"
+    assert (alt, f"Fund im Code verschwunden (Commit `{gemessen[:7]}`)") in umg.fake.kommentare
+    assert not any(n.startswith("quelle-unlesbar:analyse-stand") for n in j["notizen"])  # Vorfahr: lesbar
+
+
+def test_schliess_kommentar_ohne_analyse_nennt_head(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
+    _pruefliste(umg.wurzel, [])
+    head = umg.repo.git("rev-parse", "HEAD")
+    alt = _einzel_issue(umg.fake, "doku_widerspruch", "0" * 16, "aussen")
+    code, j = umg.lauf(capsys, "--senden")
+    assert code == 0
+    assert (alt, f"Fund im Code verschwunden (Commit `{head[:7]}`)") in umg.fake.kommentare
+    assert any("Analyse-Commit unbekannt" in n and "HEAD" in n for n in j["notizen"])
+
+
+def test_analyse_commit_kein_vorfahr_doppelung_tot_unlesbar(umg: Umgebung,
+                                                           capsys: pytest.CaptureFixture[str]) -> None:
+    """Fix 3: Analyse-Commit kein Vorfahr von HEAD -> doppelung und tot unlesbar, nichts davon geschlossen."""
+    from selbstbild.funde.sync import unlesbare_arten
+    from selbstbild.vermessen import vermessen
+
+    _pruefliste(umg.wurzel, [])
+    gemessen = vermessen(umg.wurzel).commit
+    umg.repo.git("checkout", "-q", "--orphan", "anders")
+    head = umg.repo.commit("neue Geschichte")
+    alt_doppel = _einzel_issue(umg.fake, "doppelung", "2" * 16, "aussen")
+    alt_doku = _einzel_issue(umg.fake, "doku_widerspruch", "0" * 16, "aussen")
+    code, j = umg.lauf(capsys, "--senden")
+    assert code == 0
+    notiz = [n for n in j["notizen"] if n.startswith("quelle-unlesbar:analyse-stand")]
+    assert len(notiz) == 1 and gemessen[:7] in notiz[0] and head[:7] in notiz[0]
+    assert unlesbare_arten(notiz) == frozenset({"doppelung", "tot"})
+    assert umg.fake.issues[alt_doppel]["state"] == "open"
+    assert umg.fake.issues[alt_doku]["state"] == "closed"  # andere Arten schliessen weiter
+    assert notiz[0] in umg.text()
+
+
+def test_analyse_stand_pruefen(git_repo: Any) -> None:
+    from selbstbild.funde.bericht import analyse_stand_pruefen
+
+    git_repo.datei("a.txt", "a\n")
+    a = git_repo.commit("a")
+    git_repo.datei("b.txt", "b\n")
+    b = git_repo.commit("b")
+    assert analyse_stand_pruefen(git_repo.wurzel, a, b) == []
+    assert analyse_stand_pruefen(git_repo.wurzel, b, b) == []
+    (n,) = analyse_stand_pruefen(git_repo.wurzel, b, a)  # b ist kein Vorfahr von a
+    assert n.startswith("quelle-unlesbar:analyse-stand:") and b[:7] in n
+    (n,) = analyse_stand_pruefen(git_repo.wurzel, "f" * 40, b)  # unbekannter Commit: fail-closed
+    assert n.startswith("quelle-unlesbar:analyse-stand:")
+
+
+def test_analyse_stand_pruefen_mit_zeitgrenze(git_repo: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess as sp
+
+    from selbstbild.funde import bericht as modul
+    gesehen: list[Any] = []
+
+    def lauf(args: list[str], **kw: Any) -> Any:
+        gesehen.append(kw.get("timeout"))
+        raise sp.TimeoutExpired(args, 30)
+
+    monkeypatch.setattr(modul.subprocess, "run", lauf)
+    (n,) = modul.analyse_stand_pruefen(git_repo.wurzel, "a" * 40, "b" * 40)
+    assert gesehen == [modul.GIT_TIMEOUT_S] and n.startswith("quelle-unlesbar:analyse-stand:")
