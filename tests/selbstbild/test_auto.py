@@ -544,12 +544,23 @@ def test_label_fehlt_sperrt_rueckfragen_und_sync(u: Umg, monkeypatch: pytest.Mon
     assert u.schritte() == ["vermessen", "analysieren"]
     assert u.stand()["sperren"] == {ZIEL: "label_fehlt"}
     assert IssueStand.laden(stand_pfad(u.wurzel, u.tmp / "issues-basis")).sperren == {ZIEL: "label_fehlt"}
-    # naechster Lauf: keine Rueckfragen mehr, funde laeuft (und meldet die Sperre selbst)
+    # naechster Lauf: keine Rueckfragen mehr, funde laeuft und meldet die Sperre selbst (ziel_gesperrt, Exit 1):
+    # einmal, als neuer Fehler
     u.neuer_commit()
+    u.rc["funde"] = 1
+    u.funde = _funde_json(fehler="ziel_gesperrt")
     u.uhr = TAG1 + timedelta(days=1)
-    assert u.lauf() == 0
+    assert u.lauf() == 1
     assert len(u.rueckfragen) == 1
     assert u.schritte()[-1] == "funde"
+    assert len(u.texte) == 2 and "Selbstbild-Lauf fehlgeschlagen: funde, exit_1:ziel_gesperrt" in u.texte[1]
+    assert "Rückfragen gesperrt (label_fehlt)" in u.texte[1]
+    # R10: an den Folgetagen derselbe Fehler, keine Nachricht mehr
+    for tag in (2, 3):
+        u.uhr = TAG1 + timedelta(days=tag)
+        assert u.lauf() == 1
+    assert len(u.texte) == 2 and u.stand()["ausstehend"] == []
+    assert len(u.rueckfragen) == 1
 
 
 def test_sync_sperre_gilt_auch_fuer_rueckfragen(u: Umg, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -578,6 +589,88 @@ def test_funde_exit_1_ist_fehler_mit_zeilen(u: Umg) -> None:
     assert u.lauf() == 1
     t = u.texte[0]
     assert "Selbstbild-Lauf fehlgeschlagen: funde, exit_1" in t and "1 neu" in t and "http_502" in t
+
+
+def test_gleicher_ziel_fehler_nur_einmal_gemeldet(u: Umg) -> None:
+    u.rc["funde"] = 1
+    u.funde = _funde_json(fehler="ziel_gesperrt")
+    for tag in range(3):
+        u.uhr = TAG1 + timedelta(days=tag)
+        assert u.lauf() == 1
+    assert len(u.texte) == 1
+    assert "Selbstbild-Lauf fehlgeschlagen: funde, exit_1:ziel_gesperrt" in u.texte[0]
+    assert "Issues in Test/ziel: Fehler ziel_gesperrt" in u.texte[0]
+    s = u.stand()
+    assert s["letzter_fehler"] == "funde:exit_1:ziel_gesperrt" and s["ausstehend"] == []
+    # eine andere Fehlerart am vierten Tag: genau eine neue Nachricht
+    u.funde = _funde_json(fehler="http_502")
+    u.uhr = TAG1 + timedelta(days=3)
+    assert u.lauf() == 1
+    assert len(u.texte) == 2
+    assert "exit_1:http_502" in u.texte[1] and "Fehler http_502" in u.texte[1]
+    assert "ziel_gesperrt" not in u.texte[1]
+
+
+def test_gleicher_ziel_fehler_geht_als_kontext_mit(u: Umg) -> None:
+    """Steht am Folgetag ohnehin etwas an, geht die Fehlerzeile des Ziels als Begleitzeile mit."""
+    u.rc["funde"] = 1
+    u.funde = _funde_json(fehler="ziel_gesperrt")
+    assert u.lauf() == 1
+    u.funde = _funde_json({"anlegen": 1}, fehler="ziel_gesperrt")
+    u.uhr = TAG1 + timedelta(days=1)
+    assert u.lauf() == 1
+    assert len(u.texte) == 2
+    assert "1 neu" in u.texte[1] and "Fehler ziel_gesperrt" in u.texte[1]
+    assert "Selbstbild-Lauf fehlgeschlagen" not in u.texte[1]
+
+
+def test_stand_mit_falschen_typen_gilt_als_leer(u: Umg) -> None:
+    u.ordner.mkdir(parents=True)
+    (u.ordner / auto.STAND_DATEI).write_text(json.dumps({
+        "gemeldet": {"doppelt": 5, "wartet": ["abc"]}, "ausstehend": "x", "kopf": 3, "sperren": {ZIEL: 1},
+        "antworten": [], "rueckfrage": "kaputt", "letzte_nachricht_tag": None}), encoding="utf-8")
+    u.funde = _funde_json({"anlegen": 1})
+    assert u.lauf() == 0
+    assert u.schritte() == ["vermessen", "analysieren", "funde"]
+    t = u.texte[0]
+    assert "falscher Typ" in t
+    for k in ("gemeldet.doppelt", "ausstehend", "kopf", "sperren", "antworten", "rueckfrage"):
+        assert k in t
+    s = u.stand()
+    assert s["gemeldet"] == {"doppelt": [], "wartet": ["abc"]} and s["ausstehend"] == [] and s["sperren"] == {}
+
+
+@pytest.mark.parametrize("gemeldet", [5, "x", {"doppelt": [True], "wartet": 3}, {"doppelt": ["1"]}])
+def test_stand_laden_wirft_nie(tmp_path: Path, gemeldet: Any) -> None:
+    p = tmp_path / auto.STAND_DATEI
+    p.write_text(json.dumps({"gemeldet": gemeldet, "ausstehend": [1, "a"]}), encoding="utf-8")
+    s, notiz = auto.stand_laden(p)
+    assert notiz is not None and "falscher Typ" in notiz
+    assert s["gemeldet"]["doppelt"] == [] and s["ausstehend"] == []
+
+
+def test_jetzt_wirft_meldet_nur_den_typ(u: Umg) -> None:
+    def kaputt() -> datetime:
+        raise RuntimeError("Uhr kaputt " + SCHLUESSEL_WERT)
+    w = u.werkzeuge()
+    w.jetzt = kaputt
+    assert auto.lauf(u.wurzel, werkzeuge=w) == 1
+    assert u.kinder == []
+    assert len(u.texte) == 1 and "Selbstbild-Lauf fehlgeschlagen: start, RuntimeError" in u.texte[0]
+    assert SCHLUESSEL_WERT not in u.texte[0]
+    assert not (u.ordner / auto.SPERRE).exists()
+
+
+def test_fehler_in_der_fehlerbehandlung_kommt_nicht_heraus(u: Umg, monkeypatch: pytest.MonkeyPatch,
+                                                           capsys: pytest.CaptureFixture[str]) -> None:
+    u.rc["analysieren"] = 1
+
+    def kaputt(self: Any) -> None:
+        raise ValueError("geheim")
+    monkeypatch.setattr(auto._Lauf, "abschliessen", kaputt)
+    assert u.lauf() == 1
+    err = capsys.readouterr().err
+    assert "Selbstbild-Lauf fehlgeschlagen: abschluss, ValueError" in err and "geheim" not in err
 
 
 def test_tor_zeile_nur_bei_aenderung_allein_nachricht(u: Umg) -> None:

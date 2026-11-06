@@ -37,8 +37,8 @@ from pathlib import Path
 from typing import Any
 
 from .analyse.lauf import gespeicherte_analyse
-from .auto_text import (ERSATZ_TEXT, MAX_TEXT, TEXT_KOPF, anzahl, erinnerungen, funde_zeilen, nachricht, nummer,
-                        rueckfrage_zeilen)
+from .auto_text import (ERSATZ_TEXT, MAX_TEXT, TEXT_KOPF, erinnerungen, funde_zeilen, nachricht, nummer,
+                        rueckfrage_zeilen, ziel_fehler)
 from .doku.konfig import aus_regeln
 from .doku.schluessel import sieht_aus_wie_schluessel
 from .doku.schreibvorgang import kopf, kopf_pruefen
@@ -195,8 +195,9 @@ def _leerer_stand() -> dict[str, Any]:
 
 
 def stand_laden(pfad: Path) -> tuple[dict[str, Any], str | None]:
-    """(Stand, Notiz). Fehlt die Datei: leerer Stand ohne Notiz; kaputt oder falsche Typen: leer bzw. Vorgabe je
-    Schluessel, mit Notiz bei kaputter Datei."""
+    """(Stand, Notiz). Fehlt die Datei: leerer Stand ohne Notiz; kaputt: leerer Stand mit Notiz. Ein Schluessel mit
+    falschem Typ (auch innen, z. B. `gemeldet.doppelt`) gilt als leer bzw. Vorgabe, mit Notiz (R11); nie eine
+    Ausnahme."""
     s = _leerer_stand()
     try:
         roh = json.loads(Path(pfad).read_text(encoding="utf-8"))
@@ -206,22 +207,40 @@ def stand_laden(pfad: Path) -> tuple[dict[str, Any], str | None]:
         return s, f"{STAND_DATEI} unlesbar ({type(e).__name__}): neu angelegt"
     if not isinstance(roh, dict):
         return s, f"{STAND_DATEI} unlesbar (kein Objekt): neu angelegt"
+    falsch: list[str] = []
+
+    def nehmen(k: str, ok: Callable[[Any], bool], wandeln: Callable[[Any], Any] = lambda v: v) -> None:
+        if k not in roh or roh[k] is None:
+            return
+        if ok(roh[k]):
+            s[k] = wandeln(roh[k])
+        else:
+            falsch.append(k)
+
+    def ist_liste_von(art: type) -> Callable[[Any], bool]:
+        return lambda v: isinstance(v, list) and all(isinstance(x, art) and not isinstance(x, bool) for x in v)
+
     for k in ("kopf", "goldsatz_hash", "letzte_nachricht_tag", "letzter_fehler", "letzter_lauf", "ergebnis", "tor",
               "erinnert_tag"):
-        if isinstance(roh.get(k), str):
-            s[k] = roh[k]
-    if isinstance(roh.get("antworten"), dict):
-        s["antworten"] = roh["antworten"]
-    if isinstance(roh.get("ausstehend"), list):
-        s["ausstehend"] = [z for z in roh["ausstehend"] if isinstance(z, str)]
-    if isinstance(roh.get("rueckfrage"), dict):
-        s["rueckfrage"] = roh["rueckfrage"]
-    if isinstance(roh.get("sperren"), dict):
-        s["sperren"] = {str(r): str(g) for r, g in roh["sperren"].items() if isinstance(g, str)}
+        nehmen(k, lambda v: isinstance(v, str))
+    nehmen("antworten", lambda v: isinstance(v, dict))
+    nehmen("ausstehend", ist_liste_von(str))
+    nehmen("rueckfrage", lambda v: isinstance(v, dict))
+    nehmen("sperren", lambda v: isinstance(v, dict) and all(isinstance(g, str) for g in v.values()))
     gemeldet = roh.get("gemeldet")
     if isinstance(gemeldet, dict):
-        s["gemeldet"] = {"doppelt": [n for n in gemeldet.get("doppelt") or [] if anzahl(n)],
-                         "wartet": [h for h in gemeldet.get("wartet") or [] if isinstance(h, str)]}
+        for k, art in (("doppelt", int), ("wartet", str)):
+            wert = gemeldet.get(k)
+            if wert is None:
+                continue
+            if ist_liste_von(art)(wert):
+                s["gemeldet"][k] = list(wert)
+            else:
+                falsch.append(f"gemeldet.{k}")
+    elif gemeldet is not None:
+        falsch.append("gemeldet")
+    if falsch:
+        return s, f"{STAND_DATEI}: falscher Typ bei {', '.join(falsch)}, leer angenommen"
     return s, None
 
 
@@ -245,18 +264,30 @@ def _ausgeben(text: str) -> None:
 
 class _Lauf:
     def __init__(self, wurzel: Path, w: Werkzeuge, trocken: bool) -> None:
+        """Wirft nie (R11): ein Fehler hier wird in `ausfuehren` als `start, <Typ>` gemeldet."""
         self.wurzel, self.w, self.trocken = wurzel, w, trocken
-        self.zeit = w.jetzt()
-        self.heute = self.zeit.date()
-        self.pfad = Path(w.ordner) / STAND_DATEI
-        self.stand, notiz = stand_laden(self.pfad)
         self.zeilen: list[str] = []  # loesen eine Nachricht aus
         self.kontext: list[str] = []  # gehen nur mit anderen Zeilen mit
-        if notiz:
-            self.kontext.append(notiz)
         self.schritt = "start"
         self.ergebnis = "ok"
         self.geschlossen: set[int] = set()  # in diesem Lauf geschlossene Rueckfragen (keine Erinnerung)
+        self.start_fehler: str | None = None
+        self.stand = _leerer_stand()
+        try:
+            zeit = w.jetzt()
+            self.heute = zeit.date()
+            self.zeit = zeit
+        except Exception as e:  # noqa: BLE001
+            self.start_fehler = type(e).__name__
+            self.zeit = datetime.now()
+            self.heute = self.zeit.date()
+        self.pfad = Path(w.ordner) / STAND_DATEI
+        try:
+            self.stand, notiz = stand_laden(self.pfad)
+        except Exception as e:  # noqa: BLE001 -- stand_laden wirft nicht; nur die letzte Sicherung
+            self.stand, notiz = _leerer_stand(), f"{STAND_DATEI} unlesbar ({type(e).__name__}): neu angelegt"
+        if notiz:
+            self.kontext.append(notiz)
 
     # ---------- Ende ----------
 
@@ -321,13 +352,22 @@ class _Lauf:
 
     # ---------- Ablauf ----------
 
-    def ausfuehren(self) -> int:
+    def ausfuehren(self, vorab: tuple[str, str] | None = None) -> int:
+        """Nichts kommt hier als Ausnahme heraus (R11). `vorab`: ein Fehler vor dem Lauf (z. B. die Sperre)."""
         try:
-            return self._ablauf()
-        except _Abbruch as a:
-            return self.fehler(a.schritt, a.typ)
-        except Exception as e:  # noqa: BLE001 -- nur der Typ, nie der Text
-            return self.fehler(self.schritt, type(e).__name__)
+            try:
+                if vorab is not None:
+                    return self.fehler(*vorab)
+                if self.start_fehler is not None:
+                    return self.fehler("start", self.start_fehler)
+                return self._ablauf()
+            except _Abbruch as a:
+                return self.fehler(a.schritt, a.typ)
+            except Exception as e:  # noqa: BLE001 -- nur der Typ, nie der Text
+                return self.fehler(self.schritt, type(e).__name__)
+        except Exception as e:  # noqa: BLE001 -- Fehler in der Fehlerbehandlung selbst: nur noch stderr
+            sys.stderr.write(f"Selbstbild-Lauf fehlgeschlagen: abschluss, {type(e).__name__}\n")
+            return 1
 
     def _ablauf(self) -> int:
         self.schritt = "konfig"
@@ -374,12 +414,17 @@ class _Lauf:
         self.schritt = "funde"
         rc = self._kind("funde", [] if self.trocken else ["--senden"])
         daten = letztes_json(Path(self.w.ordner) / "auto-funde.log")
+        # Fehlerschluessel mit den Fehlerarten der Ziele: derselbe Ziel-Fehler an mehreren Tagen wird nur beim
+        # ersten Mal gemeldet (Spec 4.4.6, R10); seine Zeilen gehen danach nur noch als Begleitzeilen mit
+        arten = ziel_fehler(daten)
+        typ = f"exit_{rc}" + (f":{','.join(arten)}" if arten else "")
+        schon_gemeldet = rc not in (0, 3) and f"funde:{typ}" == self.stand["letzter_fehler"]
         if daten is not None:
-            self._funde_zeilen(daten)
+            self._funde_zeilen(daten, fehler_als_kontext=schon_gemeldet)
         if rc == 3:
             self.zeilen.append("Funde nicht gesendet: ein anderer Sendelauf lief (Sperre)")
         elif rc != 0:
-            raise _Abbruch("funde", f"exit_{rc}")
+            raise _Abbruch("funde", typ)
         elif daten is None:
             raise _Abbruch("funde", "json_fehlt")
 
@@ -484,9 +529,10 @@ class _Lauf:
 
     # ---------- Zusammenfassung ----------
 
-    def _funde_zeilen(self, daten: dict[str, Any]) -> None:
-        zeilen, kontext, self.stand["tor"] = funde_zeilen(daten, self.stand["tor"])
+    def _funde_zeilen(self, daten: dict[str, Any], *, fehler_als_kontext: bool) -> None:
+        zeilen, fehler, kontext, self.stand["tor"] = funde_zeilen(daten, self.stand["tor"])
         self.zeilen += zeilen
+        (self.kontext if fehler_als_kontext else self.zeilen).extend(fehler)
         self.kontext += kontext
 
     def _erinnern(self, bestand: list[dict[str, Any]] | None) -> None:
@@ -510,7 +556,7 @@ def lauf(wurzel: Path, *, trocken: bool = False, werkzeuge: Werkzeuge | None = N
         except SperreBelegt:
             return 3
         except OSError as e:  # Ordner oder Sperrdatei nicht anlegbar: nur der Typ
-            return _Lauf(wurzel, w, trocken).fehler("sperre", type(e).__name__)
+            return _Lauf(wurzel, w, trocken).ausfuehren(vorab=("sperre", type(e).__name__))
         lauf_ = _Lauf(wurzel, w, trocken)
         if uebernommen:
             lauf_.kontext.append("Hinweis: verwaiste Sperre übernommen (ein früherer Lauf brach ab)")

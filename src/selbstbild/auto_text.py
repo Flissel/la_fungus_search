@@ -48,10 +48,21 @@ def anzahl(wert: object) -> int:
     return wert if isinstance(wert, int) and not isinstance(wert, bool) and wert > 0 else 0
 
 
-def funde_zeilen(daten: dict[str, Any], tor_alt: str | None) -> tuple[list[str], list[str], str | None]:
-    """(zeilen, kontext, Tor-Text) aus der JSON-Zusammenfassung von `funde`. Der Stand des Tors loest nur eine
-    Nachricht aus, wenn er sich gegen `tor_alt` geaendert hat; sonst geht er nur mit."""
+def ziel_fehler(daten: dict[str, Any] | None) -> list[str]:
+    """Die Fehlerarten der Ziele (`ziele[*].fehler`), sortiert und ohne Doppelte."""
+    if daten is None:
+        return []
+    return sorted({z["fehler"] for z in daten.get("ziele") or []
+                   if isinstance(z, dict) and isinstance(z.get("fehler"), str) and z["fehler"]})
+
+
+def funde_zeilen(daten: dict[str, Any],
+                 tor_alt: str | None) -> tuple[list[str], list[str], list[str], str | None]:
+    """(zeilen, fehler_zeilen, kontext, Tor-Text) aus der JSON-Zusammenfassung von `funde`. Der Stand des Tors loest
+    nur eine Nachricht aus, wenn er sich gegen `tor_alt` geaendert hat; sonst geht er nur mit. Die Fehlerzeilen je
+    Ziel gibt es getrennt: ob sie eine Nachricht ausloesen, entscheidet der Fehlerschluessel (nur beim ersten Mal)."""
     zeilen: list[str] = []
+    fehler: list[str] = []
     kontext: list[str] = []
     for z in daten.get("ziele") or []:
         if not isinstance(z, dict):
@@ -64,13 +75,13 @@ def funde_zeilen(daten: dict[str, Any], tor_alt: str | None) -> tuple[list[str],
             zeilen.append(f"Issues in {repo}{trocken}: {neu} neu, {akt} aktualisiert, {zu} geschlossen: "
                           f"https://github.com/{repo}/issues?q=label%3Aselbstbild")
         if isinstance(z.get("fehler"), str) and z["fehler"]:
-            zeilen.append(f"Issues in {repo}: Fehler {z['fehler']}")
+            fehler.append(f"Issues in {repo}: Fehler {z['fehler']}")
     tor = daten.get("tor_tot")
     text = tor.get("text") if isinstance(tor, dict) else None
     if not isinstance(text, str) or not text:
-        return zeilen, kontext, tor_alt
+        return zeilen, fehler, kontext, tor_alt
     (zeilen if text != tor_alt else kontext).append(text)
-    return zeilen, kontext, text
+    return zeilen, fehler, kontext, text
 
 
 def rueckfrage_zeilen(rb: RueckfrageBericht, gemeldet: dict[str, list[Any]],
