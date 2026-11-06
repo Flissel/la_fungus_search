@@ -318,3 +318,42 @@ def test_analyse_mit_fremdcode_regel_im_commit_gefunden(umgebung) -> None:
     funde, notizen = _sammeln(wurzel)
     assert [f.art for f in funde] == ["doppelung"]
     assert not any("veraltet" in n for n in notizen)
+
+
+def _mit_fremdcode(wurzel: Path, heim: Path, dop, regeln=("vibemind-os/openclaw/**",)) -> None:
+    """Regel einchecken und Stand am Commit der Regel anlegen (die Analyse haengt am Regel-Digest)."""
+    with (wurzel / "selbstbild.yaml").open("a", encoding="utf-8") as f:
+        f.write(f"fremdcode: {json.dumps(list(regeln))}\n")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.org", "-c", "core.hooksPath=NUL"]
+    for args in (["init", "-q"], ["add", "selbstbild.yaml"], ["commit", "-q", "-m", "regeln"]):
+        subprocess.run([*git, *args], cwd=wurzel, check=True, capture_output=True)
+    sha = subprocess.run([*git, "rev-parse", "HEAD"], cwd=wurzel, check=True, capture_output=True,
+                         text=True).stdout.strip()
+    _stand(wurzel, heim, dop=dop, commit=sha, fremdcode=list(regeln))
+
+
+def test_doppelung_nur_fremd_entfaellt(umgebung) -> None:
+    wurzel, heim = umgebung
+    _mit_fremdcode(wurzel, heim, [_dop("datei:aussen/vibemind-os:openclaw/a.py",
+                                       "datei:aussen/vibemind-os:openclaw/b.py")])
+    funde, notizen = _sammeln(wurzel)
+    assert funde == []
+    assert "fremdcode: 1 Doppelungen nur in Fremdcode ausgelassen" in notizen
+    assert not any(n.startswith("quelle-unlesbar:") and "fremdcode" in n for n in notizen)
+
+
+def test_doppelung_gemischt_bleibt(umgebung) -> None:
+    wurzel, heim = umgebung
+    _mit_fremdcode(wurzel, heim, [_dop("datei:aussen/vibemind-os:openclaw/a.py", "datei:aussen:src/b.py")])
+    funde, notizen = _sammeln(wurzel)
+    assert [f.art for f in funde] == ["doppelung"]
+    assert not any(n.startswith("fremdcode:") for n in notizen)
+
+
+def test_ohne_fremdcode_wie_bisher(umgebung) -> None:
+    wurzel, heim = umgebung
+    _stand(wurzel, heim, dop=[_dop("datei:aussen/vibemind-os:openclaw/a.py",
+                                   "datei:aussen/vibemind-os:openclaw/b.py")])
+    funde, notizen = _sammeln(wurzel)
+    assert [f.art for f in funde] == ["doppelung"]
+    assert not any(n.startswith("fremdcode:") for n in notizen)

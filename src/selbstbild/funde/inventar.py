@@ -45,7 +45,7 @@ import re
 import sqlite3
 import subprocess
 from collections import Counter, defaultdict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -54,6 +54,7 @@ import yaml
 
 from .._glob import glob_passt, glob_regex
 from ..analyse.lauf import _stand_meta
+from ..fremdcode import fremd_pruefer
 from ..parser.daten import _PS_RE
 from ..quelle import _git_args, _git_env
 from ..regeln import REGELDATEI, STANDARD_AUSGENOMMEN, Regeln, regeln_laden
@@ -588,9 +589,23 @@ def _datei_von(ort: str) -> str:
     return m.group(1) if m else ort
 
 
-def produktiv(ort: str) -> bool:
-    """S5-13: Lesestelle in produktivem Code (nicht Test/Beispiel/Vendor, kein `site-packages`)."""
+def _repo_pfad(ort: str, repos: Sequence[str]) -> tuple[str, str] | None:
+    """`<repo>/<pfad>` -> (Repo, Pfad) mit dem laengsten passenden Repo-Praefix; None ohne Treffer."""
+    treffer = [r for r in repos if ort.startswith(r + "/")]
+    if not treffer:
+        return None
+    repo = max(treffer, key=len)
+    return repo, ort[len(repo) + 1:]
+
+
+def produktiv(ort: str, fremd: Callable[[str, str], bool] | None = None, repos: Sequence[str] = ()) -> bool:
+    """S5-13: Lesestelle in produktivem Code (nicht Test/Beispiel/Vendor, kein `site-packages`, kein Fremdcode).
+    `ort` ist `<repo>/<pfad>[:zeile]`; `repos` sind die bekannten Repo-Namen fuer die Zerlegung."""
     pfad = _datei_von(ort)
+    if fremd is not None:
+        teile = _repo_pfad(pfad, repos)
+        if teile is not None and fremd(*teile):
+            return False
     return not ist_nicht_produktiv(pfad) and not any(t in _FREMD_SEGMENTE for t in pfad.split("/")[:-1])
 
 
@@ -599,7 +614,8 @@ def _sortierschluessel_name(n: Name) -> tuple[int, str]:
 
 
 def _env_eintraege(setzen: dict[str, set[str]], lesen: dict[str, set[str]], *,
-                   mit_tot: bool) -> list[tuple[Name, tuple[str, ...]]]:
+                   mit_tot: bool, fremd: Callable[[str, str], bool] | None = None,
+                   repos: Sequence[str] = ()) -> list[tuple[Name, tuple[str, ...]]]:
     """(Eintrag, Schreibweisen): Namen ohne Gross-/Kleinschreibung zusammengefuehrt (Windows-Env), angezeigt gross;
     die Schreibweisen braucht nur der Schluesselfilter (ein `ghp_…` waere gross geschrieben unsichtbar fuer ihn)."""
     gruppen: dict[str, set[str]] = defaultdict(set)
@@ -615,7 +631,7 @@ def _env_eintraege(setzen: dict[str, set[str]], lesen: dict[str, set[str]], *,
             befund.append("doppelt")
         if gesetzt and not gelesen and mit_tot:
             befund.append("tot")
-        if not gesetzt and name not in SYSTEM_NAMEN and any(produktiv(o) for o in gelesen):
+        if not gesetzt and name not in SYSTEM_NAMEN and any(produktiv(o, fremd, repos) for o in gelesen):
             befund.append("ungesetzt")
         art: InventarArt = "key" if name.endswith(KEY_ENDEN) else "env"
         aus.append((Name(art, name, gelesen, gesetzt, sorted(befund)), schreib))
@@ -671,6 +687,8 @@ def inventar(wurzel: Path, *, stand_unter: Path | None = None) -> Inventar:
     dienste_konfiguriert = regeln_aussen.dienste is not None
     dienste_pfad = (regeln_aussen.dienste or DIENSTE_STANDARD).replace("\\", "/")
     dateien, fehlende = _dateien(wurzel, aussen, notizen)
+    repo_namen = [aussen, *(f"{aussen}/{s}" for s in _submodul_pfade(wurzel))]
+    fremd = fremd_pruefer(regeln_aussen.fremdcode, aussen) if regeln_aussen.fremdcode else None
     ports: list[tuple[int, str, str]] = []
     clients: list[LlmClient] = []
     nicht_lesbar: Counter[str] = Counter()
@@ -745,7 +763,7 @@ def inventar(wurzel: Path, *, stand_unter: Path | None = None) -> Inventar:
         notizen.append(f"{offen_am_ende} Env-Beispieldatei(en) mit offenem Anführungszeichen am Ende: "
                        "Rest übersprungen")
 
-    roh = (_env_eintraege(setzen, lesen, mit_tot=graph_ok) + [(p, ()) for p in _port_eintraege(ports)]
+    roh = (_env_eintraege(setzen, lesen, mit_tot=graph_ok, fremd=fremd, repos=repo_namen) + [(p, ()) for p in _port_eintraege(ports)]
            + [(c, ()) for c in _client_eintraege(
                sorted(clients, key=lambda c: (c.anbieter, c.fundstelle, c.modell or "")))])
     namen, verdacht = [], Counter[tuple[str, str]]()

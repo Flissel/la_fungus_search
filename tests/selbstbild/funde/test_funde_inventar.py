@@ -554,3 +554,15 @@ def test_konfig_issue_text_mit_belegen_unter_grenze() -> None:
     titel, body = _einzel_mit_repo(f)
     assert len(body) <= 64000
     assert all(f"- `{b}`" in body for b in f.belege)
+
+
+def test_ungesetzt_ohne_fremdcode(git_repo, graph_stand) -> None:
+    kante = _kante("FREMD_VAR", "aussen", "vibemind-os/openclaw/src/a.py", 1)
+    knoten = [Knoten("env:FREMD_VAR", "env", "FREMD_VAR", None)]
+    wurzel = _klein(git_repo, {"app/x.py": "x = 1\n"})
+    stand = graph_stand(knoten, [kante])
+    assert _eintrag(inventar(wurzel, stand_unter=stand), "FREMD_VAR").befund == ["ungesetzt"]
+    (wurzel / "selbstbild.yaml").write_text(
+        "name: aussen\nfremdcode: ['vibemind-os/openclaw/**']\n", encoding="utf-8")
+    eintrag = _eintrag(inventar(wurzel, stand_unter=stand), "FREMD_VAR")
+    assert eintrag.gelesen and eintrag.befund == []

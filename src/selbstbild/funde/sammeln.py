@@ -16,7 +16,7 @@ import json
 import re
 import sqlite3
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from ..analyse.doppelt import Doppelung
@@ -25,6 +25,7 @@ from ..analyse.lader import ANALYSE_VERSION
 from ..analyse.lauf import _stand_meta, fremdcode_am_commit, parameter
 from ..doku.konfig import Konfig
 from ..doku.pruefliste import pruefliste_laden, pruefliste_pfad
+from ..fremdcode import fremd_pruefer, ist_fremd_id
 from ..regeln import REGELDATEI, regeln_laden
 from ..speicher import pfad_kennung
 from ..vermessen import stand_finden
@@ -175,34 +176,43 @@ def _stand_ordner(wurzel: Path, stand_unter: Path | None) -> Path | None:
     return None
 
 
-def _analyse_lesen(wurzel: Path, stand_unter: Path | None) -> tuple[Analyse | None, str]:
+def _analyse_lesen(wurzel: Path, stand_unter: Path | None) -> tuple[Analyse | None, str, list[str]]:
+    """(Analyse, Hinweis, Fremdcode-Regeln am Graph-Commit); die Regeln sind leer, solange kein Commit bekannt ist."""
     stand = _stand_ordner(wurzel, stand_unter)
+    fremdcode: list[str] = []
     if stand is None or not (stand / "analyse.sqlite").is_file():
-        return None, f"{UNLESBAR_PRAEFIX}analyse: Analyse fehlt (erst `python -m selbstbild analysieren`): keine Doppelungen, kein toter Code"
+        return None, f"{UNLESBAR_PRAEFIX}analyse: Analyse fehlt (erst `python -m selbstbild analysieren`): keine Doppelungen, kein toter Code", fremdcode
     try:
         commit, gemessen_um = _stand_meta(stand)
         if commit is None:
-            return None, f"{UNLESBAR_PRAEFIX}analyse: Analyse nicht lesbar (Stand ohne Graph): keine Doppelungen, kein toter Code"
+            return None, f"{UNLESBAR_PRAEFIX}analyse: Analyse nicht lesbar (Stand ohne Graph): keine Doppelungen, kein toter Code", fremdcode
         fremdcode = fremdcode_am_commit(wurzel, commit)
         for kolonie, budget in ((True, True), (True, False), (False, False)):
             a = lesen(stand, commit, ANALYSE_VERSION, digest_von(parameter(kolonie, budget, fremdcode)),
                       graph_gemessen_um=gemessen_um or "")
             if a is not None:
-                return a, ""
+                return a, "", fremdcode
     except (RuntimeError, sqlite3.Error, OSError, ValueError, KeyError, TypeError) as fehler:
-        return None, f"{UNLESBAR_PRAEFIX}analyse: Analyse nicht lesbar ({type(fehler).__name__}): keine Doppelungen, kein toter Code"
-    return None, f"{UNLESBAR_PRAEFIX}analyse: Analyse veraltet (Graph neu vermessen): keine Doppelungen, kein toter Code"
+        return None, f"{UNLESBAR_PRAEFIX}analyse: Analyse nicht lesbar ({type(fehler).__name__}): keine Doppelungen, kein toter Code", fremdcode
+    return None, f"{UNLESBAR_PRAEFIX}analyse: Analyse veraltet (Graph neu vermessen): keine Doppelungen, kein toter Code", fremdcode
 
 
 _FEHLERHAFT = (AttributeError, KeyError, TypeError, ValueError, IndexError)
 
 
-def _doppel_funde(a: Analyse) -> tuple[list[Fund], int]:
-    """(Funde, Zahl uebersprungener fehlerhafter Eintraege)."""
+def _nur_fremd(d: Doppelung, fremd: Callable[[str], bool] | None) -> bool:
+    """Alle Mitglieder sind Fremdcode (leere Doppelung nie)."""
+    return fremd is not None and bool(d.mitglieder) and all(fremd(_posix(m)) for m in d.mitglieder)
+
+
+def _doppel_funde(a: Analyse, fremd: Callable[[str], bool] | None = None) -> tuple[list[Fund], int]:
+    """(Funde, Zahl uebersprungener fehlerhafter Eintraege). Doppelungen nur aus Fremdcode entfallen."""
     funde: dict[str, Fund] = {}
     kaputt = 0
     for d in a.doppelungen:
         try:
+            if _nur_fremd(d, fremd):
+                continue
             _doppel_eintrag(d, funde)
         except _FEHLERHAFT:
             kaputt += 1
@@ -225,6 +235,18 @@ def _doppel_eintrag(d: Doppelung, funde: dict[str, Fund]) -> None:
         titel=f"{len(mitglieder)} Mitglieder, Ähnlichkeit {d.aehnlichkeit:.2f}: {pfade[0]}",
         text=f"{d.art}, Ähnlichkeit {d.aehnlichkeit:.4f}, {len(mitglieder)} Mitglieder.",
         belege=tuple(pfade), anker=anker)
+
+
+def _fremd_anker(a: Analyse, fremd: Callable[[str], bool] | None) -> int:
+    """Zahl der verschiedenen Doppelungen, die `_doppel_funde` wegen Fremdcode auslaesst."""
+    anker: set[tuple[str, ...]] = set()
+    for d in a.doppelungen:
+        try:
+            if _nur_fremd(d, fremd):
+                anker.add(tuple(sorted({_posix(m) for m in d.mitglieder})))
+        except _FEHLERHAFT:
+            continue
+    return len(anker)
 
 
 def _tot_funde(a: Analyse) -> tuple[list[Fund], int]:
@@ -280,12 +302,17 @@ def funde_sammeln(wurzel: Path, *, doku_konfig: Konfig, stand_unter: Path | None
     if hinweis_doku:
         notizen.append(hinweis_doku)
     funde = _doku_funde(doku_konfig, aussen, _submodul_pfade(wurzel))
-    analyse, hinweis = _analyse_lesen(wurzel, stand_unter)
+    analyse, hinweis, fremdcode = _analyse_lesen(wurzel, stand_unter)
     if hinweis:
         notizen.append(hinweis)
     if analyse is not None:
-        neu, kaputt = _doppel_funde(analyse)
+        pruefer = fremd_pruefer(fremdcode, aussen)
+        fremd = (lambda graph_id: ist_fremd_id(pruefer, graph_id)) if fremdcode else None
+        neu, kaputt = _doppel_funde(analyse, fremd)
         funde += neu
+        weg = _fremd_anker(analyse, fremd)
+        if weg:
+            notizen.append(f"fremdcode: {weg} Doppelungen nur in Fremdcode ausgelassen")
         if kaputt:
             notizen.append(f"{UNLESBAR_PRAEFIX}analyse: {kaputt} fehlerhafte Doppelungs-Einträge übersprungen")
     if not tor.offen:
