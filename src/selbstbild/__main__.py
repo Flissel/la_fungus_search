@@ -332,8 +332,26 @@ def _auto(args: argparse.Namespace) -> int:
 
 def _auto_unterbefehl(rest: list[str]) -> int:
     """`auto <unterbefehl> ...` vor argparse (wie `doku`), damit `auto <wurzel>` und `auto aufgabe <wurzel>` sich
-    nicht beissen. Stufe 6a Task 5 haengt hier `aufgabe` an."""
-    return _fehler(f"auto {rest[0]}: noch nicht verfügbar", 2)
+    nicht beissen."""
+    if rest[0] != "aufgabe":
+        return _fehler(f"auto {rest[0]}: unbekannter Unterbefehl", 2)
+    import selbstbild.auto as auto
+
+    p = argparse.ArgumentParser(prog="selbstbild auto aufgabe",
+                                description="Windows-Aufgabe fuer den taeglichen Lauf: ohne Schalter einrichten.")
+    p.add_argument("wurzel", type=Path)
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--pruefen", action="store_true", help="nur pruefen: fehlt, bereit oder aktion weicht ab")
+    g.add_argument("--zurueck", action="store_true", help="Aufgabe entfernen")
+    p.add_argument("--trocken", action="store_true", help="nur ausgeben, schtasks nicht aufrufen")
+    try:
+        args = p.parse_args(rest[1:])
+    except SystemExit as e:  # argparse beendet sonst den Prozess; Exit 2 wie bei jedem Aufruffehler
+        return e.code if isinstance(e.code, int) else 2
+    if not args.wurzel.is_dir():
+        return _fehler(f"auto aufgabe: Wurzel ist kein Verzeichnis: {args.wurzel}", 2)
+    modus = "pruefen" if args.pruefen else "zurueck" if args.zurueck else "einrichten"
+    return auto.aufgabe(args.wurzel.absolute(), modus, trocken=args.trocken, schtasks=auto.standard_schtasks)
 
 
 # Woerter nach `auto`, die nie eine Wurzel sind (Abzweig vor argparse)

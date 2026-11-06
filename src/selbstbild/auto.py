@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from .analyse.lauf import gespeicherte_analyse
+from .auto_aufgabe import AUFGABE, aufgabe, aufgabe_xml, standard_schtasks
 from .auto_text import (ERSATZ_TEXT, MAX_TEXT, TEXT_KOPF, erinnerungen, funde_zeilen, nachricht, nummer,
                         rueckfrage_zeilen, ziel_fehler)
 from .doku.konfig import aus_regeln
@@ -51,7 +52,6 @@ from .regeln import REGELDATEI, regeln_laden
 from .sperre import SperreBelegt, sperre
 
 MIN_FREI_GB = 3.0
-AUFGABE = "VibeMind Selbstbild-Funde"
 STAND_DATEI = "auto-stand.json"
 SPERRE = "auto.lock"
 STAND_VERSION = 1
@@ -60,8 +60,9 @@ TELEGRAM_TIMEOUT_S = 60.0
 MAX_AUSSTEHEND = 60
 ZURUECKGEHALTEN = "[Zeile zurückgehalten: Schlüssel-Verdacht]"
 __all__ = ["AUFGABE", "ERSATZ_TEXT", "MAX_TEXT", "MIN_FREI_GB", "SPERRE", "STAND_DATEI", "TEXT_KOPF", "Werkzeuge",
-           "antworten_signatur", "frei_gb_standard", "kind_standard", "lauf", "letztes_json", "nachricht",
-           "stand_laden", "standard_werkzeuge", "telegram_standard"]
+           "antworten_signatur", "aufgabe", "aufgabe_xml", "frei_gb_standard", "kind_standard", "lauf",
+           "letztes_json", "nachricht", "stand_laden", "standard_schtasks", "standard_werkzeuge",
+           "telegram_standard"]
 _KEIN_FENSTER = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -561,3 +562,4 @@ def lauf(wurzel: Path, *, trocken: bool = False, werkzeuge: Werkzeuge | None = N
         if uebernommen:
             lauf_.kontext.append("Hinweis: verwaiste Sperre übernommen (ein früherer Lauf brach ab)")
         return lauf_.ausfuehren()
+

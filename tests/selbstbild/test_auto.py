@@ -408,8 +408,11 @@ def test_cli_auto_aufgabe_ist_keine_wurzel(u: Umg, monkeypatch: pytest.MonkeyPat
     def nie(wurzel: Path) -> auto.Werkzeuge:
         raise AssertionError("auto aufgabe darf nie als Lauf starten")
     monkeypatch.setattr(auto, "standard_werkzeuge", nie)
-    assert main(["auto", "aufgabe"]) == 2
-    assert main(["auto", "aufgabe", str(u.wurzel)]) == 2
+    gesehen: list[str] = []
+    monkeypatch.setattr(auto, "aufgabe", lambda w, modus, **kw: gesehen.append(modus) or 0)  # nie echtes schtasks
+    assert main(["auto", "aufgabe"]) == 2  # ohne Wurzel: Aufruffehler, kein Lauf
+    assert main(["auto", "aufgabe", str(u.wurzel)]) == 0  # Task 5: Unterbefehl, kein Lauf mit Wurzel "aufgabe"
+    assert gesehen == ["einrichten"]
 
 
 def test_cli_auto_ohne_verzeichnis_exit_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
