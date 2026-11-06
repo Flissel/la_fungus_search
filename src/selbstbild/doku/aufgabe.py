@@ -274,14 +274,14 @@ class PowerShellBackend:
                               "VM_ARGUMENTS": aktion.arguments, "VM_WD": aktion.working_directory})
 
 
-def import_pruefen(python: str, wurzel: Path) -> str | None:
-    """Laeuft `import selbstbild.doku.__main__` mit diesem Python ohne PYTHONPATH (wie in der Aufgabe, Arbeitsordner
+def import_pruefen(python: str, wurzel: Path, modul: str = "selbstbild.doku.__main__") -> str | None:
+    """Laeuft `import <modul>` (Vorgabe `selbstbild.doku.__main__`; `auto aufgabe` nimmt `selbstbild.auto`) mit diesem Python ohne PYTHONPATH (wie in der Aufgabe, Arbeitsordner
     = Wurzel)? None = ja, sonst Grund. Nur lesend."""
     if not Path(python).is_file():
         return "Datei fehlt"
     env = {k: v for k, v in os.environ.items() if k.upper() != "PYTHONPATH"}
     try:
-        lauf = subprocess.run([python, "-c", "import selbstbild.doku.__main__"], cwd=wurzel, env=env,
+        lauf = subprocess.run([python, "-c", f"import {modul}"], cwd=wurzel, env=env,
                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                               timeout=IMPORT_TIMEOUT_S, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:

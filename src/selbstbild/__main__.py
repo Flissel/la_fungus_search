@@ -344,6 +344,8 @@ def _auto_unterbefehl(rest: list[str]) -> int:
     g.add_argument("--pruefen", action="store_true", help="nur pruefen: fehlt, bereit oder aktion weicht ab")
     g.add_argument("--zurueck", action="store_true", help="Aufgabe entfernen")
     p.add_argument("--trocken", action="store_true", help="nur ausgeben, schtasks nicht aufrufen")
+    p.add_argument("--python", help="Python der Aufgabe (Standard: das feste .venv-selbstbild wie bei doku aufgabe; "
+                                    "nie sys.executable); muss selbstbild ohne PYTHONPATH laden")
     try:
         args = p.parse_args(rest[1:])
     except SystemExit as e:  # argparse beendet sonst den Prozess; Exit 2 wie bei jedem Aufruffehler
@@ -351,7 +353,8 @@ def _auto_unterbefehl(rest: list[str]) -> int:
     if not args.wurzel.is_dir():
         return _fehler(f"auto aufgabe: Wurzel ist kein Verzeichnis: {args.wurzel}", 2)
     modus = "pruefen" if args.pruefen else "zurueck" if args.zurueck else "einrichten"
-    return auto.aufgabe(args.wurzel.absolute(), modus, trocken=args.trocken, schtasks=auto.standard_schtasks)
+    nach = {"python": Path(args.python)} if args.python else {}
+    return auto.aufgabe(args.wurzel.absolute(), modus, trocken=args.trocken, schtasks=auto.standard_schtasks, **nach)
 
 
 # Woerter nach `auto`, die nie eine Wurzel sind (Abzweig vor argparse)
