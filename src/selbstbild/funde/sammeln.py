@@ -22,7 +22,7 @@ from pathlib import Path
 from ..analyse.doppelt import Doppelung
 from ..analyse.ergebnis import Analyse, digest_von, lesen
 from ..analyse.lader import ANALYSE_VERSION
-from ..analyse.lauf import _stand_meta, parameter
+from ..analyse.lauf import _stand_meta, fremdcode_am_commit, parameter
 from ..doku.konfig import Konfig
 from ..doku.pruefliste import pruefliste_laden, pruefliste_pfad
 from ..regeln import REGELDATEI, regeln_laden
@@ -183,8 +183,9 @@ def _analyse_lesen(wurzel: Path, stand_unter: Path | None) -> tuple[Analyse | No
         commit, gemessen_um = _stand_meta(stand)
         if commit is None:
             return None, f"{UNLESBAR_PRAEFIX}analyse: Analyse nicht lesbar (Stand ohne Graph): keine Doppelungen, kein toter Code"
+        fremdcode = fremdcode_am_commit(wurzel, commit)
         for kolonie, budget in ((True, True), (True, False), (False, False)):
-            a = lesen(stand, commit, ANALYSE_VERSION, digest_von(parameter(kolonie, budget)),
+            a = lesen(stand, commit, ANALYSE_VERSION, digest_von(parameter(kolonie, budget, fremdcode)),
                       graph_gemessen_um=gemessen_um or "")
             if a is not None:
                 return a, ""

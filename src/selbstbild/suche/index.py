@@ -13,11 +13,12 @@ import sqlite3
 import time
 from contextlib import ExitStack
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Iterator
 
 from ..analyse.ergebnis import Analyse, digest_von, lesen
 from ..analyse.lader import ANALYSE_VERSION, GraphDaten, StandOhneGraph, StandUnlesbar, datei_von, laden
-from ..analyse.lauf import _stand_meta, parameter
+from ..analyse.lauf import _stand_meta, fremdcode_am_commit, parameter
 from ..quelle import Baum, BlobLeser, baum_lesen
 
 INDEX_VERSION: int = 2  # 2: doku_seite traegt ihren Blob (Frische-Pruefung im Hook)
@@ -70,7 +71,8 @@ def _repo_pfad(k_id: str) -> tuple[str | None, str | None]:
 
 # --- Analyse ---------------------------------------------------------------
 
-def _gefundener_digest(stand: Path, commit: str, gemessen_um: str | None) -> str | None:
+def _gefundener_digest(stand: Path, commit: str, gemessen_um: str | None,
+                       fremdcode: Sequence[str] = ()) -> str | None:
     """Parameter-Digest des gespeicherten Laufs zu diesem Graphen (leichte Abfrage ohne Dekodieren)."""
     db = Path(stand) / "analyse.sqlite"
     if not db.is_file():
@@ -78,7 +80,7 @@ def _gefundener_digest(stand: Path, commit: str, gemessen_um: str | None) -> str
     c = sqlite3.connect(f"{db.resolve().as_uri()}?mode=ro", uri=True)
     try:
         for mit_kolonie, mit_budget in _PARAMETER:
-            digest = digest_von(parameter(mit_kolonie, mit_budget))
+            digest = digest_von(parameter(mit_kolonie, mit_budget, fremdcode))
             try:
                 z = c.execute("SELECT 1 FROM lauf l JOIN herkunft h ON h.commit_id=l.commit_id AND"
                               " h.version=l.version AND h.parameter_digest=l.parameter_digest"
@@ -94,8 +96,9 @@ def _gefundener_digest(stand: Path, commit: str, gemessen_um: str | None) -> str
         c.close()
 
 
-def _analyse_lesen(stand: Path, commit: str, gemessen_um: str | None) -> tuple[Analyse | None, str]:
-    digest = _gefundener_digest(stand, commit, gemessen_um)
+def _analyse_lesen(stand: Path, commit: str, gemessen_um: str | None,
+                   fremdcode: Sequence[str] = ()) -> tuple[Analyse | None, str]:
+    digest = _gefundener_digest(stand, commit, gemessen_um, fremdcode)
     if digest is None:
         return None, ""
     return lesen(stand, commit, ANALYSE_VERSION, digest, graph_gemessen_um=gemessen_um or ""), digest
@@ -121,7 +124,7 @@ def _zahl(text: str | None) -> float | None:
 
 
 def _bauen(d: GraphDaten, wurzel: Path, stand: Path, ziel: Path) -> dict[str, int]:
-    analyse, digest = _analyse_lesen(stand, d.commit, d.gemessen_um)
+    analyse, digest = _analyse_lesen(stand, d.commit, d.gemessen_um, fremdcode_am_commit(wurzel, d.commit))
     bereich_von: dict[str, str] = {}
     tot_von: dict[str, str] = {}
     warnung_von: dict[str, set[str]] = {}
@@ -230,8 +233,9 @@ def index_bauen(wurzel: Path, stand: Path) -> dict[str, int]:
     return zaehler
 
 
-def index_aktuell(stand: Path) -> bool:
-    """Commit und `gemessen_um` des Graphen sowie der Analyse-Digest stimmen mit dem Index ueberein."""
+def index_aktuell(stand: Path, wurzel: Path | None = None) -> bool:
+    """Commit und `gemessen_um` des Graphen sowie der Analyse-Digest stimmen mit dem Index ueberein.
+    Mit `wurzel` zaehlt die `fremdcode`-Regel des Commits zum Digest (sonst wie ohne Regel)."""
     stand = Path(stand)
     ziel = index_pfad(stand)
     if not ziel.is_file() or not (stand / "graph.sqlite").is_file():
@@ -245,7 +249,8 @@ def index_aktuell(stand: Path) -> bool:
             meta = dict(c.execute("SELECT k, v FROM meta"))
         finally:
             c.close()
-        digest = _gefundener_digest(stand, commit, gemessen_um) or ""
+        fremdcode = [] if wurzel is None else fremdcode_am_commit(wurzel, commit)
+        digest = _gefundener_digest(stand, commit, gemessen_um, fremdcode) or ""
     except (sqlite3.DatabaseError, StandOhneGraph, StandUnlesbar):
         return False
     return (meta.get("commit") == commit and meta.get("gemessen_um") == (gemessen_um or "")

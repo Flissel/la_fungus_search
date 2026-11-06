@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -47,16 +48,16 @@ def _pruefliste(wurzel: Path, offen: list[dict], struktur: list[dict]) -> None:
     pfad.write_text(json.dumps({"offen": offen, "struktur": struktur}), encoding="utf-8")
 
 
-def _stand(wurzel: Path, heim: Path, *, tot=(), dop=()) -> Path:
+def _stand(wurzel: Path, heim: Path, *, tot=(), dop=(), commit: str = COMMIT, fremdcode=()) -> Path:
     ordner = heim / f"aussen-{pfad_kennung(wurzel)}"
     ordner.mkdir(parents=True)
     c = sqlite3.connect(str(ordner / "graph.sqlite"))
     c.execute("CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT)")
-    for k, v in (("commit", COMMIT), ("gemessen_um", "t0")):
+    for k, v in (("commit", commit), ("gemessen_um", "t0")):
         c.execute("INSERT INTO meta VALUES (?, ?)", (json.dumps(k), json.dumps(v)))
     c.commit()
     c.close()
-    a = Analyse(commit=COMMIT, version=ANALYSE_VERSION, parameter=parameter(False), bereiche=(), pagerank_top=(),
+    a = Analyse(commit=commit, version=ANALYSE_VERSION, parameter=parameter(False, fremdcode=fremdcode), bereiche=(), pagerank_top=(),
                 betweenness_top=(), hotspots=(), tot=tuple(tot), doppelungen=tuple(dop), kolonie=None, luecken=())
     speichern(ordner, a, graph_gemessen_um="t0")
     return ordner
@@ -301,3 +302,19 @@ def test_fehlerhafte_eintraege_uebersprungen(umgebung) -> None:
     assert any("1 fehlerhafte Doppelungs-Einträge" in n for n in notizen)
     assert any("1 fehlerhafte Tot-Einträge" in n for n in notizen)
     assert all(n.startswith("quelle-unlesbar:") for n in notizen if "fehlerhafte" in n)
+
+
+def test_analyse_mit_fremdcode_regel_im_commit_gefunden(umgebung) -> None:
+    """Die Regel am Graph-Commit gehoert zum Digest: der Leser findet die Analyse, kein "veraltet"."""
+    wurzel, heim = umgebung
+    with (wurzel / "selbstbild.yaml").open("a", encoding="utf-8") as f:
+        f.write("fremdcode: ['lib/**']\n")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.org", "-c", "core.hooksPath=NUL"]
+    for args in (["init", "-q"], ["add", "selbstbild.yaml"], ["commit", "-q", "-m", "regeln"]):
+        subprocess.run([*git, *args], cwd=wurzel, check=True, capture_output=True)
+    sha = subprocess.run([*git, "rev-parse", "HEAD"], cwd=wurzel, check=True, capture_output=True,
+                         text=True).stdout.strip()
+    _stand(wurzel, heim, dop=[_dop("datei:r:src/a.py", "datei:r:src/b.py")], commit=sha, fremdcode=["lib/**"])
+    funde, notizen = _sammeln(wurzel)
+    assert [f.art for f in funde] == ["doppelung"]
+    assert not any("veraltet" in n for n in notizen)

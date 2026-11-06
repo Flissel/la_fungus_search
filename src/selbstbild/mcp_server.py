@@ -139,7 +139,7 @@ def _lage(wurzel: Path) -> tuple[Path, Antwort] | Antwort:
     stand = graph.parent
     if not index_pfad(stand).is_file():
         return {"fehler": f"Index fehlt: python -m selbstbild index {wurzel}"}
-    if not index_aktuell(stand):
+    if not index_aktuell(stand, Path(wurzel)):
         return {"fehler": f"Index veraltet: python -m selbstbild index {wurzel}"}
     commit, _ = _stand_meta(stand)
     return stand, {"commit": commit, "index_aktuell": True}

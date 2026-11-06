@@ -312,6 +312,7 @@ def test_parameter_fremdcode_aendert_digest():
 
 def test_parameter_ohne_fremdcode_wie_bisher():
     assert "fremdcode" not in dict(parameter(False))
+    assert parameter(False) == parameter(False, fremdcode=[])
 
 
 def _mit_fremdcode(git_repo) -> None:

@@ -54,9 +54,9 @@ def _treffer(stand: Path, frage: str) -> set[str]:
     return {i for (i,) in _zeilen(stand, "SELECT id FROM volltext WHERE volltext MATCH ?", frage)}
 
 
-def _analyse(sha: str, stand: Path, gemessen_um: str | None = None) -> None:
+def _analyse(sha: str, stand: Path, gemessen_um: str | None = None, fremdcode: tuple[str, ...] = ()) -> None:
     a = Analyse(
-        commit=sha, version=ANALYSE_VERSION, parameter=parameter(False),
+        commit=sha, version=ANALYSE_VERSION, parameter=parameter(False, fremdcode=fremdcode),
         bereiche=(Bereich("b1", "Versand", (A, B), 0.5),), pagerank_top=(), betweenness_top=(),
         hotspots=(), tot=(TotFund(SYM, "sicher_tot", ("kein Aufrufer",), None),),
         doppelungen=(Doppelung("gleiche_datei", (A, B), 1.0),), kolonie=None, luecken=())
@@ -186,3 +186,15 @@ def test_index_bauen_wiederholt_replace_bei_permissionerror(git_repo, graph_stan
     with pytest.raises(PermissionError):
         idx.index_bauen(git_repo.wurzel, stand)
     assert not list(stand.glob("suche.sqlite.*tmp"))
+
+
+def test_analyse_mit_fremdcode_regel_im_commit_gefunden(git_repo, graph_stand):
+    git_repo.datei("selbstbild.yaml", "fremdcode: ['lib/**']\n")
+    sha = _repo(git_repo)
+    stand = graph_stand(_knoten(), [], commit=sha)
+    _analyse(sha, stand, fremdcode=("lib/**",))
+    index_bauen(git_repo.wurzel, stand)
+    assert _zeilen(stand, "SELECT tot, bereich FROM eintrag WHERE id=?", SYM) == [("sicher_tot", "Versand")]
+    digest = digest_von(parameter(False, fremdcode=["lib/**"]))
+    assert _zeilen(stand, "SELECT v FROM meta WHERE k='analyse_digest'") == [(digest,)]
+    assert index_aktuell(stand, git_repo.wurzel)

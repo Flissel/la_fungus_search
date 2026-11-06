@@ -102,7 +102,7 @@ def parameter(kolonie: bool, kolonie_budget: bool = False,
         "tot_tage": str(TOT_TAGE),
     }
     if fremdcode:  # leer: Schluessel fehlt, alte Laeufe bleiben gueltig
-        roh = json.dumps(sorted(fremdcode))
+        roh = json.dumps(sorted(fremdcode), ensure_ascii=True)
         p["fremdcode"] = hashlib.sha256(roh.encode("utf-8")).hexdigest()[:16]
     if kolonie:
         k = KolonieParameter()
@@ -228,8 +228,8 @@ def analysieren(wurzel: Path, *, kolonie: bool = True, pruefen_reproduzierbar: b
     luecken = tuple(sorted(d.luecken.items()))  # Ruling S3: erst nach allen Analysen
     commit = d.commit
     del d  # Graph vor dem Schreiben freigeben
-    a = Analyse(commit=commit, version=ANALYSE_VERSION, parameter=parameter(kolonie, kolonie_budget, regeln.fremdcode),
-                bereiche=m.bereiche, pagerank_top=m.pagerank_top, betweenness_top=m.betweenness_top,
+    a = Analyse(commit=commit, version=ANALYSE_VERSION,
+                parameter=parameter(kolonie, kolonie_budget, regeln.fremdcode), bereiche=m.bereiche, pagerank_top=m.pagerank_top, betweenness_top=m.betweenness_top,
                 hotspots=m.hotspots, tot=m.tot, doppelungen=m.doppelungen, kolonie=kol,
                 luecken=luecken, statistik=tuple(sorted(stat.items())))
     speichern(stand, a, graph_gemessen_um=gemessen_um or "")
@@ -256,6 +256,11 @@ def _stand_meta(stand: Path) -> tuple[str | None, str | None]:
         c.close()
 
 
+def fremdcode_am_commit(wurzel: Path, commit: str) -> list[str]:
+    """Die `fremdcode`-Muster der Regeln am Graph-Commit; Teil des Parameter-Digests aller Analyse-Leser."""
+    return list(_regeln_aus_commit(Path(wurzel), commit).fremdcode)
+
+
 def gespeicherte_analyse(wurzel: Path) -> Analyse:
     """Der gespeicherte Lauf zum aktuellen Graphen (gleicher Commit UND gleiches `gemessen_um`;
     mit Kolonie bevorzugt, sonst ohne). Ein neu vermessener Graph verlangt eine neue Analyse."""
@@ -264,7 +269,7 @@ def gespeicherte_analyse(wurzel: Path) -> Analyse:
     commit, gemessen_um = _stand_meta(stand)
     if commit is None:
         raise StandOhneGraph(f"Stand {stand} ohne Graph: neu vermessen (`python -m selbstbild vermessen`)")
-    fremdcode = _regeln_aus_commit(wurzel, commit).fremdcode
+    fremdcode = fremdcode_am_commit(wurzel, commit)
     for mit_kolonie, mit_budget in ((True, True), (True, False), (False, False)):
         a = lesen(stand, commit, ANALYSE_VERSION, digest_von(parameter(mit_kolonie, mit_budget, fremdcode)),
                   graph_gemessen_um=gemessen_um or "")
