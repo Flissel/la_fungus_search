@@ -10,7 +10,11 @@ nicht auf `sync._MARKE`/`sync._SAMMEL`, so fasst die Fund-Synchronisation Rueckf
 Sonderfaelle (Spec 4.4, Punkt 4):
 - mehrere Antwort-Labels: einmal kommentieren (Merker `stand["kommentiert"]`), nichts uebernehmen;
 - kein Label und das Symbol ist nicht mehr toter Code: schliessen, der Goldsatz bleibt;
-- ohne Antwort-Label geschlossen und noch `unklar`: einmal melden (Merker `stand["gemeldet"]`), nie wieder oeffnen.
+- ohne Antwort-Label geschlossen und noch `unklar`: einmal melden (Merker `stand["gemeldet"]`), nie wieder oeffnen;
+- uebernommen wird nur in Eintraege, die noch `unklar` sind (R6). Steht dort schon genau die Antwort: schliessen mit
+  „schon übernommen“; steht ein anderes Urteil: nichts uebernehmen, schliessen als erledigt;
+- geschlossen mit genau einem Antwort-Label und noch `unklar`: uebernehmen wie offen, dann nur kommentieren (R7);
+- leeres `noch_tot`: nichts wird als erledigt geschlossen (R8a).
 
 Fehler von GitHub erscheinen nur als `GitHubFehler.art`; der erste Schreibfehler beendet den Lauf (`fehler`).
 """
@@ -86,6 +90,7 @@ class RueckfrageBericht:
     notizen: list[str] = field(default_factory=list)
     fehler: str | None = None
     links: dict[int, str] = field(default_factory=dict)
+    goldsatz_commit: str | None = None
 
 
 def _hash(symbol: str) -> str:
@@ -210,7 +215,8 @@ def _goldsatz_repo(pfad: Path) -> tuple[Path | None, str | None]:
 
 def _uebernehmen_committen(pfad: Path, antworten: dict[str, tuple[str, bool]]) -> tuple[str | None, str | None]:
     """(sha7 oder `SCHON`, None) bei Erfolg, sonst (None, Grund). Geschrieben und committet wird nur `pfad`; scheitert
-    der Commit, wird die Datei auf den committeten Stand zurueckgesetzt."""
+    der Commit, wird die Datei auf den committeten Stand zurueckgesetzt. Ist HEAD nach dem Commit nicht lesbar, gilt
+    das als nicht bestaetigt (`commit_unbestaetigt`): die Datei bleibt, die Issues bleiben offen."""
     repo, grund = _goldsatz_repo(pfad)
     if repo is None:
         return None, grund
@@ -228,10 +234,17 @@ def _uebernehmen_committen(pfad: Path, antworten: dict[str, tuple[str, bool]]) -
         zurueck = git(ordner, "checkout", "HEAD", "--", name) is not None
         return None, "commit_fehlgeschlagen" + ("" if zurueck else ", Datei nicht zurückgesetzt")
     sha = kopf(repo)
-    return (sha[:7] if sha else "?"), None
+    if not sha:  # Commit nicht bestaetigbar: Issues bleiben offen; der naechste Lauf schliesst mit `SCHON`
+        return None, "commit_unbestaetigt"
+    return sha[:7], None
 
 
 # ---------- Abgleich ----------
+
+def _uebernommen_text(antwort: tuple[str, bool], stand_commit: str) -> str:
+    urteil, bleibt = antwort
+    return f"Antwort übernommen: {urteil}{', bleibt' if bleibt else ''} (Goldsatz-Commit {stand_commit})."
+
 
 def _zahlen(wert: object) -> set[int]:
     if not isinstance(wert, list):
@@ -290,9 +303,11 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
         b.fehler = f"goldsatz_unlesbar:{type(e).__name__}"
         return b
     symbole: dict[str, str] = {}
+    zustand: dict[str, tuple[str, bool]] = {}  # Symbol -> (urteil, bleibt) des ersten Eintrags
     for e in eintraege:
         if isinstance(e.get("symbol"), str) and e["symbol"]:
             symbole.setdefault(_hash(e["symbol"]), e["symbol"])
+            zustand.setdefault(e["symbol"], (str(e.get("urteil", "offen")), e.get("bleibt") is True))
 
     # 1. Bestand (nur lesend); nur Issues mit Rueckfrage-Marke zaehlen
     if gh is None:
@@ -316,20 +331,39 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
         url = issue.get("html_url")
         b.links[nr] = url if isinstance(url, str) and url else _link(gh, repo, nr)
 
-    # 2. Offene Rueckfragen der Reihe nach
-    gesammelt: list[tuple[int, str, tuple[str, bool]]] = []
+    # 2. Rueckfragen der Reihe nach. Uebernommen wird nur in Eintraege, die noch `unklar` sind (R6): eine Antwort
+    #    des Users wird nie ueberschrieben. Geschlossene mit genau einem Antwort-Label zaehlen mit (R7).
+    gesammelt: list[tuple[int, str, tuple[str, bool], bool]] = []  # (nr, symbol, antwort, offen)
     antwort_je_symbol: dict[str, set[tuple[str, bool]]] = defaultdict(set)
+    noch_tot_leer = False
     for nr, issue, symbol in eigene:
-        if issue.get("state") != "open":
+        offen = issue.get("state") == "open"
+        gesetzt = sorted(x for x in _labels(issue) if x in ANTWORTEN)
+        if not offen:
+            if symbol is not None and len(gesetzt) == 1 and symbol in unklar:
+                antwort = ANTWORTEN[gesetzt[0]]
+                gesammelt.append((nr, symbol, antwort, False))
+                antwort_je_symbol[symbol].add(antwort)
             continue
         if symbol is None:
             b.notizen.append(f"Rückfrage #{nr}: Symbol nicht im Goldsatz, nichts übernommen")
             continue
-        gesetzt = sorted(x for x in _labels(issue) if x in ANTWORTEN)
         if len(gesetzt) == 1:
             antwort = ANTWORTEN[gesetzt[0]]
-            gesammelt.append((nr, symbol, antwort))
-            antwort_je_symbol[symbol].add(antwort)
+            if symbol in unklar:
+                gesammelt.append((nr, symbol, antwort, True))
+                antwort_je_symbol[symbol].add(antwort)
+                continue
+            if zustand.get(symbol) == antwort:
+                if not schreiben("schliessen", nr, _uebernommen_text(antwort, SCHON)):
+                    return b
+                b.uebernommen.append(nr)
+            else:
+                urteil_jetzt = zustand.get(symbol, ("?", False))[0]
+                text = f"Im Goldsatz inzwischen anders beurteilt ({urteil_jetzt}), Rückfrage erledigt."
+                if not schreiben("schliessen", nr, text):
+                    return b
+                b.erledigt.append(nr)
         elif len(gesetzt) > 1:
             if nr not in kommentiert:
                 if not schreiben("kommentieren", nr, DOPPELT_TEXT):
@@ -337,6 +371,8 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
                 kommentiert.add(nr)
                 merken("kommentiert", kommentiert)
             b.doppelt_beantwortet.append(nr)
+        elif not noch_tot:
+            noch_tot_leer = True  # R8a: leere Menge heisst eher "Analyse fehlt" als "alles lebt"
         elif symbol not in noch_tot:
             text = f"Nicht mehr als toter Code erkannt (Commit {sha7}), Rückfrage erledigt."
             if not schreiben("schliessen", nr, text):
@@ -345,24 +381,29 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
             merken("gemeldet", gemeldet)
             b.erledigt.append(nr)
 
-    # 3. Antworten uebernehmen (ein Commit fuer alle), dann schliessen
+    if noch_tot_leer:
+        b.notizen.append("noch_tot leer: keine Rückfrage als erledigt geschlossen")
+
+    # 3. Antworten uebernehmen (ein Commit fuer alle), dann offene schliessen, geschlossene nur kommentieren
     widerspruch = {s for s, a in antwort_je_symbol.items() if len(a) > 1}
-    for nr, symbol, _ in gesammelt:
+    for nr, symbol, _, _ in gesammelt:
         if symbol in widerspruch:
             b.notizen.append(f"Rückfrage #{nr} ({_name(symbol)}): widersprüchliche Antworten in mehreren Issues, "
                              "nichts übernommen")
     gesammelt = [g for g in gesammelt if g[1] not in widerspruch]
     if gesammelt:
         if senden:
-            stand_commit, grund = _uebernehmen_committen(goldsatz_pfad, {s: a for _, s, a in gesammelt})
+            stand_commit, grund = _uebernehmen_committen(goldsatz_pfad, {s: a for _, s, a, _ in gesammelt})
         else:
             stand_commit, grund = (None, _goldsatz_repo(goldsatz_pfad)[1])
         if grund:
-            b.wartet += [f"#{nr} {_name(symbol)}: {grund}" for nr, symbol, _ in gesammelt]
+            b.wartet += [f"#{nr} {_name(symbol)}: {grund}" for nr, symbol, _, _ in gesammelt]
         else:
-            for nr, _, (urteil, bleibt) in gesammelt:
-                text = f"Antwort übernommen: {urteil}{', bleibt' if bleibt else ''} (Goldsatz-Commit {stand_commit})."
-                if not schreiben("schliessen", nr, text):
+            if senden and stand_commit != SCHON:
+                b.goldsatz_commit = stand_commit
+            for nr, _, antwort, offen in gesammelt:
+                text = _uebernommen_text(antwort, stand_commit or SCHON)
+                if not schreiben("schliessen" if offen else "kommentieren", nr, text):
                     return b
                 b.uebernommen.append(nr)
 

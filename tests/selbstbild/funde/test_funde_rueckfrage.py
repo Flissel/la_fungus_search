@@ -357,3 +357,91 @@ def test_code_ausschnitt_liest_head_und_untermodul(git_repo: Any, tmp_path: Path
     assert code_ausschnitt(wurzel, "symbol:anders/sub:m.py#K.m") is None
     assert code_ausschnitt(wurzel, "symbol:vibemind/fehlt:m.py#K.m") is None
     assert code_ausschnitt(wurzel, "symbol:vibemind:README.md#x") is None
+
+
+# ---------- Fix-Runde 1 (R6, R7, R8a, R8b) ----------
+
+def test_antwort_ueberschreibt_kein_urteil(gold: Any, git_repo: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "ja")])
+    roh = g.read_bytes()
+    fake = FakeGh()
+    n = _rf(fake, _sym(0), ("antwort:benutzt",))
+    vorher = git_repo.git("rev-parse", "HEAD")
+    b = _lauf(fake, g, tmp_path)
+    assert git_repo.git("rev-parse", "HEAD") == vorher and g.read_bytes() == roh
+    assert fake.issues[n]["state"] == "closed"
+    assert _kommentare(fake, n) == ["Im Goldsatz inzwischen anders beurteilt (ja), Rückfrage erledigt."]
+    assert b.erledigt == [n] and b.uebernommen == [] and b.goldsatz_commit is None
+
+
+def test_antwort_bleibt_bei_ja_ohne_bleibt_ist_anders(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "ja")])
+    roh = g.read_bytes()
+    fake = FakeGh()
+    n = _rf(fake, _sym(0), ("antwort:bleibt",))
+    b = _lauf(fake, g, tmp_path)
+    assert g.read_bytes() == roh and b.erledigt == [n]
+    assert _kommentare(fake, n) == ["Im Goldsatz inzwischen anders beurteilt (ja), Rückfrage erledigt."]
+
+
+def test_geschlossen_mit_antwort_wird_uebernommen(gold: Any, git_repo: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    fake = FakeGh()
+    n = _rf(fake, _sym(0), ("antwort:weg",), state="closed")
+    stand: dict[str, Any] = {}
+    b = _lauf(fake, g, tmp_path, stand=stand)
+    sha7 = git_repo.git("rev-parse", "--short=7", "HEAD")
+    assert _tot(g)[0]["urteil"] == "ja" and git_repo.git("log", "-1", "--format=%s") == MELDUNG
+    assert b.uebernommen == [n] and b.geschlossen_ohne_antwort == [] and b.goldsatz_commit == sha7
+    assert _kommentare(fake, n) == [f"Antwort übernommen: ja (Goldsatz-Commit {sha7})."]
+    assert fake.issues[n]["state"] == "closed"
+    assert not any(m == "PATCH" for m, _ in fake.aufrufe)  # nie wieder geoeffnet, nicht noch einmal geschlossen
+    # zweiter Lauf: nichts mehr zu tun
+    b2 = _lauf(fake, g, tmp_path, stand=stand)
+    assert b2.uebernommen == [] and len(_kommentare(fake, n)) == 1 and b2.goldsatz_commit is None
+
+
+def test_geschlossen_mit_antwort_wartet_bei_unsauber(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    g.write_bytes(g.read_bytes() + b"# fremde Notiz\n")
+    fake = FakeGh()
+    n = _rf(fake, _sym(0), ("antwort:weg",), state="closed")
+    b = _lauf(fake, g, tmp_path)
+    assert b.wartet and f"#{n}" in b.wartet[0] and "unsauber" in b.wartet[0]
+    assert b.uebernommen == [] and _kommentare(fake, n) == [] and b.geschlossen_ohne_antwort == []
+
+
+def test_noch_tot_leer_schliesst_nichts_als_erledigt(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    fake = FakeGh()
+    n = _rf(fake, _sym(0))
+    b = _lauf(fake, g, tmp_path, noch_tot=frozenset())
+    assert b.erledigt == [] and fake.issues[n]["state"] == "open" and _schreibend(fake) == []
+    assert "noch_tot leer: keine Rückfrage als erledigt geschlossen" in b.notizen
+
+
+def test_goldsatz_commit_im_bericht(gold: Any, git_repo: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    fake = FakeGh()
+    _rf(fake, _sym(0), ("antwort:weg",))
+    b = _lauf(fake, g, tmp_path)
+    assert b.goldsatz_commit == git_repo.git("rev-parse", "--short=7", "HEAD")
+
+
+def test_kopf_unlesbar_nach_commit_kein_fragezeichen(gold: Any, git_repo: Any, tmp_path: Path,
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    import selbstbild.funde.rueckfrage as rf
+
+    g = gold([(_sym(0), "unklar")])
+    fake = FakeGh()
+    n = _rf(fake, _sym(0), ("antwort:weg",))
+    monkeypatch.setattr(rf, "kopf", lambda repo: None)
+    b = _lauf(fake, g, tmp_path)
+    assert b.wartet and "commit_unbestaetigt" in b.wartet[0] and b.goldsatz_commit is None
+    assert fake.issues[n]["state"] == "open" and _kommentare(fake, n) == []
+    assert not any("?" in t for _, t in fake.kommentare)
+    # naechster Lauf (HEAD wieder lesbar): Antwort steht schon im Goldsatz -> "schon übernommen"
+    monkeypatch.undo()
+    b2 = _lauf(fake, g, tmp_path)
+    assert b2.uebernommen == [n]
+    assert _kommentare(fake, n) == ["Antwort übernommen: ja (Goldsatz-Commit schon übernommen)."]
