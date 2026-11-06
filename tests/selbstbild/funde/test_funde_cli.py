@@ -470,6 +470,49 @@ def test_exit2_argparse(argv: list[str], umg: Umgebung) -> None:
     assert e.value.code == 2
 
 
+# ---------- Stufe 6a: Sperre im Sendeweg ----------
+
+def test_senden_bei_belegter_sperre_exit_3_ohne_gh_aufruf(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
+    from selbstbild.funde.bericht import SENDE_SPERRE
+    from selbstbild.sperre import sperre
+
+    _pruefliste(umg.wurzel, ZWEI_DOKU)
+
+    def nie(konto: str) -> GitHub:
+        raise AssertionError("gh bei belegter Sperre")
+
+    with sperre(umg.bericht / SENDE_SPERRE):
+        code = cli.main(["funde", str(umg.wurzel), "--senden"], funde_optionen=umg.optionen(gh_fabrik=nie))
+    aus = capsys.readouterr()
+    assert code == 3 and aus.out == ""
+    assert aus.err == "funde --senden: ein anderer Sendelauf läuft (Sperre)\n"
+    assert umg.fake.aufrufe == []
+    # nach Freigabe laeuft derselbe Aufruf, und die Sperre bleibt nicht liegen
+    code, _ = umg.lauf(capsys, "--senden")
+    assert code == 0 and not (umg.bericht / SENDE_SPERRE).exists()
+
+
+def test_trockenlauf_ignoriert_sperre(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
+    from selbstbild.funde.bericht import SENDE_SPERRE
+    from selbstbild.sperre import sperre
+
+    _pruefliste(umg.wurzel, ZWEI_DOKU)
+    with sperre(umg.bericht / SENDE_SPERRE):
+        code, j = umg.lauf(capsys)
+        assert code == 0 and _ziel(j)["modus"] == "trocken"
+        code, j = umg.lauf(capsys, "--offline")
+        assert code == 0 and _ziel(j)["modus"] == "offline"
+
+
+def test_senden_gibt_sperre_auch_bei_fehler_frei(umg: Umgebung, capsys: pytest.CaptureFixture[str]) -> None:
+    from selbstbild.funde.bericht import SENDE_SPERRE
+
+    _pruefliste(umg.wurzel, ZWEI_DOKU)
+    umg.fake.fehler_bei = ("POST", "/issues")
+    code, _ = umg.lauf(capsys, "--senden")
+    assert code == 1 and not (umg.bericht / SENDE_SPERRE).exists()
+
+
 # ---------- S5-19 --nur ----------
 
 def _einzel_issue(fake: FakeGh, art: str, hash16: str, code_repo: str) -> int:

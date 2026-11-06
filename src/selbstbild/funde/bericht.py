@@ -7,7 +7,8 @@ Schluessel aussieht, wird vor der Ausgabe geschwaerzt und nur als Mustername gez
 
 Modi je Ziel: `senden` (Abgleich mit Schreiben), `trocken` (Konto da: GitHub wird nur gelesen, Ruling S5-16),
 `offline` (`--offline`: nie gh) und `bericht` (Ziel ohne Konto, S5-1). Exit (Ruling S5-17): 0 ok; 2 bei `--senden`
-ohne `issues:`-Ziel oder mit einem Ziel ohne Konto (vor jedem Lesen), bei ungueltiger Regeldatei; 1 bei jedem
+ohne `issues:`-Ziel oder mit einem Ziel ohne Konto (vor jedem Lesen), bei ungueltiger Regeldatei; 3, wenn ein anderer Sendelauf die Sperre `senden.lock` haelt
+(`--senden`, vor jedem gh-Aufruf); 1 bei jedem
 `Bericht.fehler` (auch `ziel_gesperrt`), `GitHubFehler` oder unbekanntem Commit -- Bericht und JSON entstehen trotzdem.
 """
 from __future__ import annotations
@@ -22,6 +23,7 @@ import tempfile
 import time
 from collections import Counter
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -34,6 +36,7 @@ from ..doku.schluessel import schluessel_muster, schwaerzen
 from ..quelle import _git_args, _git_env
 from ..regeln import REGELDATEI, Regeln, regeln_laden
 from ..speicher import pfad_kennung, stand_basis
+from ..sperre import SperreBelegt, sperre
 from ..vermessen import stand_finden
 from .github import GitHub, GitHubFehler
 from .goldsatz_tor import ToterCodeTor, tor_tot
@@ -56,6 +59,7 @@ from .text import _art_name, _zelle
 from .typen import ARTEN, FremdAusgelassen, Fund
 
 BERICHT_NAME = "funde-bericht.md"
+SENDE_SPERRE = "senden.lock"
 GIT_TIMEOUT_S = 30
 SCHWEREN = ("hoch", "mittel", "niedrig")
 _SHA = re.compile(r"[0-9a-f]{7,64}")
@@ -495,15 +499,22 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
     if abweichung:
         notizen.append(abweichung)
 
-    stand = IssueStand.laden(stand_pfad(wurzel, stand_basis))
-    tag = heute if heute is not None else date.today()
-    gruppen, ohne = nach_ziel(funde, ziele)
-    ergebnisse = [
-        _abgleich_je_ziel(z, fs, senden=senden, offline=offline, commit=commit, stand=stand, heute=tag,
-                          geprueft=geprueft, unlesbar=unlesbar, gh_fabrik=fabrik, schliess_commit=analyse,
-                          fremd_ausgelassen=fremd_aus,
-                          pause=schreib_pause, schreib_abstand_s=schreib_abstand_s)
-        for z, fs in gruppen]
+    ordner = Path(bericht_ordner) if bericht_ordner is not None else bericht_ordner_standard(wurzel)
+    # Ein Sendelauf zur Zeit: die Sperre umschliesst Laden des Issue-Stands bis nach dem Abgleich (nur `--senden`).
+    try:
+        with sperre(ordner / SENDE_SPERRE) if senden else nullcontext():
+            stand = IssueStand.laden(stand_pfad(wurzel, stand_basis))
+            tag = heute if heute is not None else date.today()
+            gruppen, ohne = nach_ziel(funde, ziele)
+            ergebnisse = [
+                _abgleich_je_ziel(z, fs, senden=senden, offline=offline, commit=commit, stand=stand, heute=tag,
+                                  geprueft=geprueft, unlesbar=unlesbar, gh_fabrik=fabrik, schliess_commit=analyse,
+                                  fremd_ausgelassen=fremd_aus,
+                                  pause=schreib_pause, schreib_abstand_s=schreib_abstand_s)
+                for z, fs in gruppen]
+    except SperreBelegt:
+        sys.stderr.write("funde --senden: ein anderer Sendelauf läuft (Sperre)\n")
+        return 3
 
     arten = [a for a in ARTEN if not nur or a in nur]
     zaehler = _zaehlen(funde, arten)
@@ -515,7 +526,6 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
     text = bericht_text(aussen=aussen, commit=commit, modus=modus, nur=nur, funde=funde, zaehler=zaehler, tor=tor,
                         ziele=ergebnisse, ohne_ziel=len(ohne), notizen=notizen, inventar_text=inventar_tabelle(inv))
     text = schwaerzen_zaehlen(text, treffer)
-    ordner = Path(bericht_ordner) if bericht_ordner is not None else bericht_ordner_standard(wurzel)
     pfad = ordner / BERICHT_NAME
     bericht_fehler: str | None = None
     try:
