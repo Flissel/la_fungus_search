@@ -28,3 +28,9 @@ def test_ist_fremd_id():
     assert ist_fremd_id(P, "datei:vibemind/vibemind-os/openclaw:a/b.ts")
     assert not ist_fremd_id(P, "symbol:vibemind/vibemind-os/coding-engine:a.py#f")
     assert not ist_fremd_id(P, "doku:vibemind:x.md")
+
+
+def test_ist_fremd_id_raute_im_pfad():
+    assert ist_fremd_id(P, "symbol:vibemind:lib/a#b/external/x.py#f")  # letzte Raute trennt den Qualifizierer
+    assert ist_fremd_id(P, "datei:vibemind:lib/a#b/external/x.py")  # Datei-Id: kein Qualifizierer
+    assert not ist_fremd_id(P, "symbol:vibemind:lib/a#b/intern/x.py#f")

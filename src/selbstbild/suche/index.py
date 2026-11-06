@@ -233,9 +233,9 @@ def index_bauen(wurzel: Path, stand: Path) -> dict[str, int]:
     return zaehler
 
 
-def index_aktuell(stand: Path, wurzel: Path | None = None) -> bool:
+def index_aktuell(stand: Path, wurzel: Path) -> bool:
     """Commit und `gemessen_um` des Graphen sowie der Analyse-Digest stimmen mit dem Index ueberein.
-    Mit `wurzel` zaehlt die `fremdcode`-Regel des Commits zum Digest (sonst wie ohne Regel)."""
+    Die `fremdcode`-Regel des Commits in `wurzel` zaehlt zum Digest."""
     stand = Path(stand)
     ziel = index_pfad(stand)
     if not ziel.is_file() or not (stand / "graph.sqlite").is_file():
@@ -249,7 +249,7 @@ def index_aktuell(stand: Path, wurzel: Path | None = None) -> bool:
             meta = dict(c.execute("SELECT k, v FROM meta"))
         finally:
             c.close()
-        fremdcode = [] if wurzel is None else fremdcode_am_commit(wurzel, commit)
+        fremdcode = fremdcode_am_commit(wurzel, commit)
         digest = _gefundener_digest(stand, commit, gemessen_um, fremdcode) or ""
     except (sqlite3.DatabaseError, StandOhneGraph, StandUnlesbar):
         return False

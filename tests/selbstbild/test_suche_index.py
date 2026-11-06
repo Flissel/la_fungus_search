@@ -109,18 +109,18 @@ def test_mit_analyse(git_repo, graph_stand):
 def test_index_aktuell(git_repo, graph_stand):
     sha = _repo(git_repo)
     stand = graph_stand(_knoten(), [], commit=sha)
-    assert not index_aktuell(stand)  # noch kein Index
+    assert not index_aktuell(stand, git_repo.wurzel)  # noch kein Index
     index_bauen(git_repo.wurzel, stand)
-    assert index_aktuell(stand)
+    assert index_aktuell(stand, git_repo.wurzel)
     with Speicher(stand / "graph.sqlite") as s:
         s.meta_setzen("gemessen_um", "2026-10-29T10:00:00Z")
-    assert not index_aktuell(stand)  # Graph neu vermessen
+    assert not index_aktuell(stand, git_repo.wurzel)  # Graph neu vermessen
     index_bauen(git_repo.wurzel, stand)
-    assert index_aktuell(stand)
+    assert index_aktuell(stand, git_repo.wurzel)
     _analyse(sha, stand, "2026-10-29T10:00:00Z")
-    assert not index_aktuell(stand)  # Analyse ist dazugekommen
+    assert not index_aktuell(stand, git_repo.wurzel)  # Analyse ist dazugekommen
     index_bauen(git_repo.wurzel, stand)
-    assert index_aktuell(stand)
+    assert index_aktuell(stand, git_repo.wurzel)
 
 
 def test_neubau_ersetzt_und_ist_deterministisch(git_repo, graph_stand):

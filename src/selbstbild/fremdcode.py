@@ -29,5 +29,6 @@ def ist_fremd_id(pruefer: Callable[[str, str], bool], graph_id: str) -> bool:
     teile = graph_id.split(":", 2)
     if len(teile) != 3 or teile[0] not in ("symbol", "datei"):
         return False
-    pfad = teile[2].split("#", 1)[0]
+    # wie tot._pfad und sammeln._id_teile: der Qualifizierer steht hinter dem LETZTEN `#`; eine Datei-Id hat keinen
+    pfad = teile[2].rpartition("#")[0] if teile[0] == "symbol" and "#" in teile[2] else teile[2]
     return pruefer(teile[1], pfad)

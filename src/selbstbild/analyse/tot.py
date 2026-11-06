@@ -298,7 +298,11 @@ def verweise(wurzel: Path, commit: str, kandidaten: Iterable[str]) -> tuple[froz
     """`(namensverweis, dynamisch_geladen)`: die Kandidaten (Symbol-Ids), die ein Namensverweis (S8) bzw. ein
     dynamischer Lader rettet. Ein Durchlauf ueber die Code-Blobs am Commit (nur ueber `quelle`, nie der
     Arbeitsbaum); behalten werden je (Repo, Name) hoechstens zwei Dateipfade, das genuegt fuer "eine andere
-    Datei"."""
+    Datei".
+
+    Hinweis zur Verwendung: Die Scan-Rettungen (erst `namensverweis`, dann `dynamisch_geladen`) wirken nur auf
+    noch `sicher_tot`. `gruende` nennt deshalb nur den ersten Retter; ein fehlender Grund heisst nicht
+    "trifft nicht zu"."""
     je_datei: dict[tuple[str, str], set[str]] = {}
     namen: set[str] = set()
     alle: list[str] = []
