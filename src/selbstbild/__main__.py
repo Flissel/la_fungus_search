@@ -1,4 +1,4 @@
-"""CLI: `python -m selbstbild doku|vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|pruefen|suche-messen|funde <wurzel> ...`."""
+"""CLI: `python -m selbstbild doku|vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|pruefen|suche-messen|funde|auto <wurzel> ...`."""
 from __future__ import annotations
 
 import argparse
@@ -320,12 +320,34 @@ def _funde(args: argparse.Namespace, optionen: Mapping[str, Any]) -> int:
                   **optionen)
 
 
+def _auto(args: argparse.Namespace) -> int:
+    # erst hier importieren, wie `_funde`: ein kaputtes `auto` darf keinen anderen Befehl brechen
+    import selbstbild.auto as auto
+
+    if not args.wurzel.is_dir():  # nie ein Lauf (und nie eine Telegram-Nachricht) fuer einen Tippfehler
+        return _fehler(f"auto: Wurzel ist kein Verzeichnis: {args.wurzel}", 2)
+    wurzel = args.wurzel.absolute()
+    return auto.lauf(wurzel, trocken=args.trocken, werkzeuge=auto.standard_werkzeuge(wurzel))
+
+
+def _auto_unterbefehl(rest: list[str]) -> int:
+    """`auto <unterbefehl> ...` vor argparse (wie `doku`), damit `auto <wurzel>` und `auto aufgabe <wurzel>` sich
+    nicht beissen. Stufe 6a Task 5 haengt hier `aufgabe` an."""
+    return _fehler(f"auto {rest[0]}: noch nicht verfügbar", 2)
+
+
+# Woerter nach `auto`, die nie eine Wurzel sind (Abzweig vor argparse)
+AUTO_UNTERBEFEHLE = ("aufgabe",)
+
+
 def main(argv: list[str] | None = None, *, funde_optionen: Mapping[str, Any] | None = None) -> int:
     """`funde_optionen`: nur fuer Tests, an `funde.bericht.befehl` durchgereicht (z. B. `gh_fabrik`)."""
     roh = list(sys.argv[1:] if argv is None else argv)
     ohne_v = [a for a in roh if a not in ("-v", "--ausfuehrlich")]
     if ohne_v[:1] == ["doku"]:  # Doku-Loop: der Rest geht unveraendert an dessen eigenes argparse
         return _doku(roh[roh.index("doku") + 1:])
+    if ohne_v[:1] == ["auto"] and ohne_v[1:2] and ohne_v[1] in AUTO_UNTERBEFEHLE:
+        return _auto_unterbefehl(ohne_v[1:])
     p = argparse.ArgumentParser(prog="selbstbild", description="Vermisst ein Git-Repo als Graph.")
     p.add_argument("-v", "--ausfuehrlich", action="store_true", help="Fortschritt nach stderr")
     befehle = p.add_subparsers(dest="befehl", required=True)
@@ -399,6 +421,10 @@ def main(argv: list[str] | None = None, *, funde_optionen: Mapping[str, Any] | N
     fu.add_argument("--goldsatz", type=Path, default=None,
                     help="Goldsatz fuer das Tor toter Code (Standard: docs/selbstbild/goldsatz-<name>.yaml im "
                          "selbstbild-Repo)")
+    au = befehle.add_parser("auto", help="taeglicher Lauf: vermessen, analysieren, Rueckfragen, funde --senden, "
+                                         "hoechstens eine Telegram-Zusammenfassung pro Tag")
+    au.add_argument("wurzel", type=Path)
+    au.add_argument("--trocken", action="store_true", help="nichts senden, keinen Stand schreiben; Text auf stdout")
     args = p.parse_args(argv)
 
     if args.ausfuehrlich:
@@ -438,6 +464,8 @@ def main(argv: list[str] | None = None, *, funde_optionen: Mapping[str, Any] | N
         return _suche_messen(args)
     if args.befehl == "funde":
         return _funde(args, funde_optionen or {})
+    if args.befehl == "auto":
+        return _auto(args)
     return _status(args.wurzel)
 
 

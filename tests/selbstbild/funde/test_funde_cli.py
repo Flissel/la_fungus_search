@@ -79,9 +79,10 @@ def test_cli_struktur_bestehender_befehle_unveraendert(monkeypatch: pytest.Monke
     vorher = json.loads((DATEN / "cli_struktur_vor_funde.json").read_text(encoding="utf-8"))
     jetzt = struktur(_parser_fangen(monkeypatch))
     befehle = next(e for e in jetzt if e["klasse"] == "_SubParsersAction")
-    assert "funde" in befehle["unter"]
-    befehle["unter"].pop("funde")
-    befehle["unter_hilfe"].pop("funde")
+    for neu in ("funde", "auto"):  # auto: Stufe 6a, Task 4
+        assert neu in befehle["unter"]
+        befehle["unter"].pop(neu)
+        befehle["unter_hilfe"].pop(neu)
     assert jetzt == vorher
 
 
@@ -99,6 +100,9 @@ _BEFEHLE: list[tuple[list[str], str]] = [
     (["suche-messen", "w"], "_suche_messen"),
     (["hooks", "entfernen", "s"], "_hooks"),
     (["funde", "w"], "_funde"),
+    (["auto", "w"], "_auto"),
+    (["auto", "w", "--trocken"], "_auto"),
+    (["auto", "aufgabe", "w"], "_auto_unterbefehl"),
 ]
 
 
@@ -153,9 +157,17 @@ def test_funde_import_kaputt_bricht_andere_befehle_nicht(monkeypatch: pytest.Mon
         cli.main(["funde", "w"])
 
 
+def test_auto_import_kaputt_bricht_andere_befehle_nicht(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setitem(sys.modules, "selbstbild.auto", None)
+    monkeypatch.setattr(cli, "_status", lambda w: 23)
+    assert cli.main(["status", "w"]) == 23
+    with pytest.raises(ImportError):
+        cli.main(["auto", str(tmp_path)])
+
+
 def test_einstieg_importiert_funde_nicht() -> None:
     code = ("import sys, selbstbild.__main__; "
-            "print(sorted(m for m in sys.modules if m.startswith('selbstbild.funde')))")
+            "print(sorted(m for m in sys.modules if m.startswith('selbstbild.funde') or m == 'selbstbild.auto'))")
     erg = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=True)
     assert erg.stdout.strip() == "[]"
 
