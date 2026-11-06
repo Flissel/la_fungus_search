@@ -89,6 +89,7 @@ def regeln_digest() -> str:
         "generiert_dist": "dist-*,*-dist", "testname": a._TESTNAME.pattern, "test_ordner": sorted(a.TEST_ORDNER),
         "inerte_dekoratoren": sorted(t.INERTE_DEKORATOREN), "inerte_praefixe": list(t.INERTE_PRAEFIXE),
         "sprachfamilien": sorted(ld.SPRACHFAMILIEN.items()),
+        "doku_verweis_ausnahmen": "v1",  # Regel aus selbstbild.yaml am Graph-Commit; alte Analysen kannten sie nicht
     }
     roh = json.dumps(teile, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
     return hashlib.sha256(roh.encode("ascii")).hexdigest()[:16]

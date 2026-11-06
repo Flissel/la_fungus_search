@@ -44,9 +44,11 @@ def _seiten_aus_graph(d: GraphDaten) -> set[tuple[str, str]]:
 
 def _sammeln(baum: Baum, seiten: set[tuple[str, str]] | None, erg: dict[str, set[str]]) -> None:
     muster = [glob_regex(m) for m in baum.regeln.doku_pfade]
+    ohne = [glob_regex(m) for m in baum.regeln.doku_verweis_ausnahmen]
     gewaehlt = [
         e for e in baum.eintraege
         if ((e.repo, e.pfad) in seiten if seiten is not None else any(rx.match(e.pfad) for rx in muster))
+        and not any(rx.match(e.pfad) for rx in ohne)
     ]
     if gewaehlt:
         ids = erg.setdefault(baum.repo, set())
@@ -61,7 +63,8 @@ def doku_bezeichner(wurzel: Path, commit: str, d: GraphDaten | None = None) -> d
     """Repo-Name (wie in den Ids) -> Bezeichner seiner Doku-Seiten am Commit.
 
     Mit `d` zaehlen genau die Dateien, die dort einen `doku_seite`-Knoten haben; ohne `d` die Dateien,
-    die auf `Regeln.doku_pfade` des jeweiligen Repos passen."""
+    die auf `Regeln.doku_pfade` des jeweiligen Repos passen. In beiden Faellen fallen Dateien aus
+    `Regeln.doku_verweis_ausnahmen` des jeweiligen Repos heraus."""
     baum = baum_lesen(Path(wurzel), commit)
     erg: dict[str, set[str]] = {}
     _sammeln(baum, None if d is None else _seiten_aus_graph(d), erg)

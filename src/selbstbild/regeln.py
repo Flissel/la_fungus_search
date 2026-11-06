@@ -73,6 +73,9 @@ class Regeln(BaseModel):
 
     name: str | None = None
     doku_pfade: list[str] = Field(default_factory=lambda: ["**/*.md"])
+    # Doku-Seiten (repo-relativ), die Doku bleiben, deren Bezeichner aber nicht vor `sicher_tot` retten
+    # (z. B. datierte Plaene/Specs: Momentaufnahmen, kein Beleg fuer heutige Nutzung).
+    doku_verweis_ausnahmen: list[str] = Field(default_factory=list)
     struktur: list[Strukturregel] = Field(default_factory=list)
     einstiegspunkte: list[str] = Field(default_factory=list)
     ausgenommen: list[str] = Field(default_factory=list)

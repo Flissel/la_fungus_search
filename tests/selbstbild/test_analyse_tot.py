@@ -170,6 +170,26 @@ def test_doku_bezeichner_nur_doku_seiten_aus_graph(git_repo, graph_stand):
     assert "andere_seite" in doku_bezeichner(git_repo.wurzel, sha)["repo"]  # Regeln: **/*.md
 
 
+def test_doku_verweis_ausnahmen_retten_nicht(git_repo, graph_stand):
+    """Plaene/Specs bleiben Doku-Seiten, ihre Bezeichner retten aber nicht vor `sicher_tot`."""
+    git_repo.datei("selbstbild.yaml", 'doku_verweis_ausnahmen: ["docs/superpowers/**"]\n')
+    git_repo.datei("docs/a.md", "`bleibt_doku` text\n")
+    git_repo.datei("docs/superpowers/plans/p.md", "`nur_im_plan` text\n")
+    sha = git_repo.commit("doku")
+    ids = doku_bezeichner(git_repo.wurzel, sha)["repo"]
+    assert "bleibt_doku" in ids and "nur_im_plan" not in ids
+    d = laden(graph_stand([Knoten(id_doku_seite("repo", "docs/a.md"), "doku_seite", "docs/a.md", None),
+                           Knoten(id_doku_seite("repo", "docs/superpowers/plans/p.md"), "doku_seite",
+                                  "docs/superpowers/plans/p.md", None)], [], commit_zeit=STICHTAG))
+    assert doku_bezeichner(git_repo.wurzel, sha, d)["repo"] == frozenset({"bleibt_doku"})
+
+
+def test_doku_verweis_ausnahmen_leer_wie_bisher(git_repo):
+    git_repo.datei("docs/superpowers/plans/p.md", "`nur_im_plan` text\n")
+    sha = git_repo.commit("doku")
+    assert "nur_im_plan" in doku_bezeichner(git_repo.wurzel, sha)["repo"]
+
+
 def test_s4_mts_klasse(graph_stand):
     erg = _finden(graph_stand, [_d("a.mts"), _s("a.mts", "K", "klasse"), _s("a.cjs", "x")])
     assert erg[_i("a.mts", "K")].stufe == "wahrscheinlich_tot"
