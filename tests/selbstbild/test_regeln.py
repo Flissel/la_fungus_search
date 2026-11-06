@@ -42,3 +42,20 @@ def test_konstanten():
     assert REGELDATEI == "selbstbild.yaml"
     assert ".git/**" in STANDARD_AUSGENOMMEN
     assert len(STANDARD_AUSGENOMMEN) == 12
+
+
+def test_fremdcode_vorgabe_leer():
+    assert regeln_laden("name: x").fremdcode == []
+
+
+def test_fremdcode_liste():
+    r = regeln_laden("fremdcode:\n  - vibemind-os/openclaw/**\n  - '**/external/**'\n")
+    assert r.fremdcode == ["vibemind-os/openclaw/**", "**/external/**"]
+
+
+def test_hook_leser_ignoriert_fremdcode():
+    from selbstbild.hooks import regeln_lesen
+
+    ohne = "name: x\nstruktur:\n  - art: space\n    ort: spaces/*\n    pflicht: [README.md]\n"
+    mit = ohne + "fremdcode:\n  - vibemind-os/openclaw/**\n  - '**/external/**'\n"
+    assert regeln_lesen(mit) == regeln_lesen(ohne)

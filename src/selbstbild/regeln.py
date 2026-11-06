@@ -82,6 +82,8 @@ class Regeln(BaseModel):
     issues: IssuesAbschnitt | None = None
     dienste: str | None = None
     max_dateigroesse_kb: int = 512
+    # Globs relativ zur äußeren Wurzel. Gilt für alle darunter vermessenen Repos, wie `doku.ausschluss_pfade`.
+    fremdcode: list[str] = Field(default_factory=list)
     # Doku-Loop (Stufe 4): Schluessel und Werte prueft erst `selbstbild.doku.konfig.aus_regeln`
     doku: dict[str, Any] | None = None
 
