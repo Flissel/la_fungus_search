@@ -39,7 +39,7 @@ from ..speicher import pfad_kennung, stand_basis
 from ..sperre import SperreBelegt, sperre
 from ..vermessen import stand_finden
 from .github import GitHub, GitHubFehler
-from .goldsatz_tor import ToterCodeTor, tor_tot
+from .goldsatz_tor import ToterCodeTor, goldsatz_bleibt, tor_tot
 from .inventar import _graph_db, inventar, inventar_fund, inventar_tabelle
 from .sammeln import UNLESBAR_PRAEFIX, _aussen_name, funde_sammeln, geprueft_repos
 from .sync import (
@@ -470,9 +470,15 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
 
     commit = commit_holen(wurzel)
     aussen = _aussen_name(wurzel)
-    tor, notizen = tor_laden(Path(goldsatz) if goldsatz is not None else goldsatz_standard(aussen))
+    gold_pfad = Path(goldsatz) if goldsatz is not None else goldsatz_standard(aussen)
+    tor, notizen = tor_laden(gold_pfad)
+    try:
+        bleibt = goldsatz_bleibt(gold_pfad)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, AttributeError, TypeError, ValueError):
+        bleibt = frozenset()  # fehlt oder unlesbar: das meldet schon tor_laden
     ausgelassen: list[FremdAusgelassen] = []
-    funde, n_sammeln = funde_sammeln(wurzel, doku_konfig=k, stand_unter=stand_unter, tor=tor, ausgelassen=ausgelassen)
+    funde, n_sammeln = funde_sammeln(wurzel, doku_konfig=k, stand_unter=stand_unter, tor=tor, ausgelassen=ausgelassen,
+                                     bleibt=bleibt)
     fremd_aus = ausgelassen[0] if ausgelassen else None
     notizen += n_sammeln
     inv = inventar(wurzel, stand_unter=stand_unter)

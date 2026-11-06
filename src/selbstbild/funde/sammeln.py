@@ -294,11 +294,13 @@ def geprueft_repos(wurzel: Path, *, doku_konfig: Konfig) -> frozenset[str]:
 
 def funde_sammeln(wurzel: Path, *, doku_konfig: Konfig, stand_unter: Path | None = None,
                   tor: ToterCodeTor,
-                  ausgelassen: list[FremdAusgelassen] | None = None) -> tuple[list[Fund], list[str]]:
+                  ausgelassen: list[FremdAusgelassen] | None = None,
+                  bleibt: frozenset[str] = frozenset()) -> tuple[list[Fund], list[str]]:
     """Funde (nach Schwere, Art, Repo, Anker sortiert) und Hinweise. Schreibt nichts.
 
     `ausgelassen`: optionaler Sammler; bekommt (nur bei Fremdcode-Auslassungen) ein `FremdAusgelassen` angehaengt,
-    damit `abgleichen` Schliess-Kommentare ehrlich formulieren kann (F1)."""
+    damit `abgleichen` Schliess-Kommentare ehrlich formulieren kann (F1).
+    `bleibt`: Symbole, die der Betreiber als „bleibt“ markiert hat; ihre `tot`-Funde entfallen (mit Notiz)."""
     wurzel = Path(wurzel)
     aussen = _aussen_name(wurzel)
     notizen: list[str] = []
@@ -327,6 +329,10 @@ def funde_sammeln(wurzel: Path, *, doku_konfig: Konfig, stand_unter: Path | None
         notizen.append(f"toter Code: gesperrt ({tor.ja}/{tor.beurteilt} bestätigt)")
     elif analyse is not None:
         neu, kaputt = _tot_funde(analyse)
+        bleibend = [f for f in neu if f.anker in bleibt]
+        if bleibend:
+            neu = [f for f in neu if f.anker not in bleibt]
+            notizen.append(f"toter Code: {len(bleibend)} als „bleibt“ markiert ausgelassen")
         funde += neu
         if kaputt:
             notizen.append(f"{UNLESBAR_PRAEFIX}analyse: {kaputt} fehlerhafte Tot-Einträge übersprungen")

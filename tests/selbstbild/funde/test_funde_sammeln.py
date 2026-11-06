@@ -369,3 +369,22 @@ def test_ohne_fremdcode_wie_bisher(umgebung) -> None:
     funde, notizen = _sammeln(wurzel)
     assert [f.art for f in funde] == ["doppelung"]
     assert not any(n.startswith("fremdcode:") for n in notizen)
+
+
+def test_bleibt_symbol_kein_tot_fund(umgebung) -> None:
+    wurzel, heim = umgebung
+    _stand(wurzel, heim, tot=[
+        TotFund("symbol:r:a.py#f", "sicher_tot", ("kein Aufruf",), None),
+        TotFund("symbol:r:b.py#g", "sicher_tot", ("kein Aufruf",), None),
+    ])
+    funde, notizen = funde_sammeln(wurzel, doku_konfig=aus_regeln(wurzel), tor=OFFEN,
+                                   bleibt=frozenset({"symbol:r:a.py#f"}))
+    assert [f.anker for f in funde if f.art == "tot"] == ["symbol:r:b.py#g"]
+    assert "toter Code: 1 als „bleibt“ markiert ausgelassen" in notizen
+
+
+def test_ohne_bleibt_keine_bleibt_notiz(umgebung) -> None:
+    wurzel, heim = umgebung
+    _stand(wurzel, heim, tot=[TotFund("symbol:r:a.py#f", "sicher_tot", ("x",), None)])
+    _, notizen = _sammeln(wurzel, OFFEN)
+    assert not any("als „bleibt“" in n for n in notizen)
