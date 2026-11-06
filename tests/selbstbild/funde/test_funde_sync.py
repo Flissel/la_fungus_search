@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 
@@ -57,6 +57,8 @@ class FakeGh:
         self.fehler_text = b"gh: Server Error (HTTP 502) geheimer antworttext"
         self.privat = True
         self.label_verwerfen = False
+        self.label_daten: dict[str, dict[str, Any]] = {}
+        self.gesendete_labels: list[list[str]] = []
 
     # Hilfen fuer Tests
     def issue(self, titel: str, body: str, *, state: str = "open", state_reason: str | None = None,
@@ -65,7 +67,8 @@ class FakeGh:
         self.naechste += 1
         self.issues[n] = {"number": n, "title": titel, "body": body, "state": state, "state_reason": state_reason,
                           "labels": [{"name": x} for x in labels],
-                          "created_at": f"{(created or date(2026, 1, 1)).isoformat()}T12:00:00Z"}
+                          "created_at": f"{(created or date(2026, 1, 1)).isoformat()}T12:00:00Z",
+                          "html_url": f"https://github.com/{REPO}/issues/{n}"}
         return n
 
     def methoden(self) -> set[str]:
@@ -111,19 +114,22 @@ class FakeGh:
             alle = sorted((i for i in self.issues.values() if any(x["name"] == "selbstbild" for x in i["labels"])),
                           key=lambda i: -i["number"])
             return self._ok(argv, alle[(seite - 1) * 100: seite * 100])
-        if rest == ["labels", "selbstbild"] and methode == "GET":
-            if "selbstbild" in self.labels:
-                return self._ok(argv, {"name": "selbstbild"})
+        if len(rest) == 2 and rest[0] == "labels" and methode == "GET":
+            name = unquote(rest[1])
+            if name in self.labels:
+                return self._ok(argv, {"name": name})
             return self._fehler(argv, b"gh: Not Found (HTTP 404)")
         if rest == ["labels"] and methode == "POST":
             self.labels.add(daten["name"])
+            self.label_daten[daten["name"]] = daten
             return self._ok(argv, {"name": daten["name"]})
         if rest == ["issues"] and methode == "POST":
             self.anlegen_versuche += 1
             if self.fehler_bei_anlegen == self.anlegen_versuche:
                 return self._fehler(argv, self.fehler_text)
-            assert daten["labels"] == ["selbstbild"]
-            labels = () if self.label_verwerfen else ("selbstbild",)
+            assert daten["labels"] in (["selbstbild"], ["selbstbild", "selbstbild:rueckfrage"])
+            self.gesendete_labels.append(list(daten["labels"]))
+            labels = () if self.label_verwerfen else tuple(daten["labels"])
             n = self.issue(daten["title"], daten["body"], created=self.tag, labels=labels)
             if self.verloren_bei_anlegen == self.anlegen_versuche:
                 return self._fehler(argv, b"gh: Gateway Timeout (HTTP 504)")
@@ -953,3 +959,64 @@ def test_unlesbare_arten_quelle_genau() -> None:
 def test_ohne_gh_notiz_sagt_offline(tmp_path: Path) -> None:
     b = _lauf(None, [_fund(1)], tmp_path, senden=False)
     assert any("offline" in n for n in b.notizen) and not any("nur Bericht" in n for n in b.notizen)
+
+
+# ---------- Stufe 6a, Task 3: Labels, Kommentare, Rueckfrage-Spur ----------
+
+def test_anlegen_mit_zusatzlabel_sendet_beide() -> None:
+    fake = FakeGh()
+    gh = GitHub("Flissel", laufzeit=fake)
+    n = gh.anlegen(REPO, "t", "b", labels=["selbstbild:rueckfrage"])
+    assert fake.gesendete_labels == [["selbstbild", "selbstbild:rueckfrage"]]
+    assert {x["name"] for x in fake.issues[n]["labels"]} == {"selbstbild", "selbstbild:rueckfrage"}
+    # ohne Zusatz unveraendert nur `selbstbild`
+    gh.anlegen(REPO, "t2", "b2")
+    assert fake.gesendete_labels[-1] == ["selbstbild"]
+
+
+def test_anlegen_label_fehlt_nur_fuer_selbstbild() -> None:
+    fake = FakeGh()
+    fake.label_verwerfen = True
+    with pytest.raises(GitHubFehler) as e:
+        GitHub("Flissel", laufzeit=fake).anlegen(REPO, "t", "b", labels=["selbstbild:rueckfrage"])
+    assert e.value.art == "label_fehlt"
+
+
+def test_kommentieren_post_comments() -> None:
+    fake = FakeGh()
+    gh = GitHub("Flissel", laufzeit=fake)
+    n = fake.issue("t", "b")
+    gh.kommentieren(REPO, n, "Hallo")
+    assert fake.kommentare == [(n, "Hallo")]
+    assert ("POST", f"/repos/{REPO}/issues/{n}/comments") in fake.aufrufe
+    assert fake.issues[n]["state"] == "open"
+
+
+def test_label_sicherstellen_je_name_gecacht() -> None:
+    fake = FakeGh()
+    gh = GitHub("Flissel", laufzeit=fake)
+    gh.label_sicherstellen(REPO, "antwort:weg", "d73a4a", "Unbenutzt, kann weg")
+    gh.label_sicherstellen(REPO, "antwort:weg", "d73a4a", "Unbenutzt, kann weg")
+    gh.label_sicherstellen(REPO)
+    assert fake.labels == {"antwort:weg", "selbstbild"}
+    assert fake.label_daten["antwort:weg"] == {"name": "antwort:weg", "color": "d73a4a",
+                                                "description": "Unbenutzt, kann weg"}
+    assert fake.aufrufe.count(("POST", f"/repos/{REPO}/labels")) == 2
+    # der Name geht kodiert in den Pfad (`:` wird `%3A`)
+    assert ("GET", f"/repos/{REPO}/labels/antwort%3Aweg") in fake.aufrufe
+
+
+def test_sync_ignoriert_rueckfrage_issues(tmp_path: Path) -> None:
+    from selbstbild.funde.rueckfrage import RUECKFRAGE_LABEL, marke
+    from selbstbild.funde.sync import _MARKE, _SAMMEL
+
+    m = marke("symbol:vibemind:pkg/a.py#f")
+    assert not _MARKE.search(m) and not _SAMMEL.search(m)
+    fake = FakeGh()
+    n = fake.issue("[selbstbild] Rückfrage: f (vibemind/pkg/a.py)", f"Text\n\n{m}\n",
+                   labels=("selbstbild", RUECKFRAGE_LABEL))
+    b = _lauf(fake, [_fund(1)], tmp_path)
+    assert b.fehler is None
+    assert fake.issues[n]["state"] == "open" and fake.issues[n]["body"] == f"Text\n\n{m}\n"
+    assert not any(p.startswith(f"/repos/{REPO}/issues/{n}") for _, p in fake.aufrufe)
+    assert all(k != n for k, _ in fake.kommentare)

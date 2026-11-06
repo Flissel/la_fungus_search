@@ -11,8 +11,9 @@ import json
 import os
 import re
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
+from urllib.parse import quote
 
 LABEL = "selbstbild"
 LABEL_FARBE = "5319e7"
@@ -65,6 +66,13 @@ def _repo(repo: str) -> str:
     return repo
 
 
+def _label(name: str) -> str:
+    """Label-Name: 1-50 Zeichen, ohne Steuerzeichen (GitHub-Grenze)."""
+    if not isinstance(name, str) or not 0 < len(name) <= 50 or not name.isprintable() or name != name.strip():
+        raise GitHubFehler("label_ungueltig")
+    return name
+
+
 def _nummer(nummer: int) -> int:
     if isinstance(nummer, bool) or not isinstance(nummer, int) or nummer <= 0:
         raise GitHubFehler("nummer_ungueltig")
@@ -84,7 +92,7 @@ class GitHub:
         self.timeout_s = timeout_s
         self.host = host
         self._token: _Geheim | None = None
-        self._label_da: set[str] = set()
+        self._label_da: set[tuple[str, str]] = set()
 
     def __repr__(self) -> str:
         return f"GitHub(konto={self.konto!r})"
@@ -177,25 +185,29 @@ class GitHub:
 
     # ---------- Schreiben ----------
 
-    def label_sicherstellen(self, repo: str) -> None:
-        r = _repo(repo)
-        if r in self._label_da:
+    def label_sicherstellen(self, repo: str, name: str = LABEL, farbe: str = LABEL_FARBE,
+                            text: str = LABEL_TEXT) -> None:
+        """Legt das Label `name` an, falls es fehlt (je `(repo, name)` einmal je Instanz gecacht)."""
+        r, n = _repo(repo), _label(name)
+        if (r, n) in self._label_da:
             return
         fehlt = False
         try:
-            self._api("GET", f"/repos/{r}/labels/{LABEL}")
+            self._api("GET", f"/repos/{r}/labels/{quote(n, safe='')}")
         except GitHubFehler as f:
             if f.art != "http_404":
                 raise
             fehlt = True
         if fehlt:  # ausserhalb des except-Blocks: kein __context__
-            self._api("POST", f"/repos/{r}/labels", {"name": LABEL, "color": LABEL_FARBE, "description": LABEL_TEXT})
-        self._label_da.add(r)
+            self._api("POST", f"/repos/{r}/labels", {"name": n, "color": farbe, "description": text})
+        self._label_da.add((r, n))
 
-    def anlegen(self, repo: str, titel: str, text: str) -> int:
-        """Legt ein Issue mit Label `selbstbild` an. Verwirft GitHub das Label still (ohne Schreibrecht auf
-        Labels), wirft `GitHubFehler("label_fehlt")`: das Issue existiert dann, ist aber im Bestand unsichtbar."""
-        antwort = self._api("POST", f"/repos/{_repo(repo)}/issues", {"title": titel, "body": text, "labels": [LABEL]})
+    def anlegen(self, repo: str, titel: str, text: str, labels: Sequence[str] = ()) -> int:
+        """Legt ein Issue mit Label `selbstbild` (plus `labels`) an. Verwirft GitHub das Label `selbstbild` still
+        (ohne Schreibrecht auf Labels), wirft `GitHubFehler("label_fehlt")`: das Issue existiert dann, ist aber im
+        Bestand unsichtbar. Fuer die Zusatz-Labels gilt das nicht."""
+        namen_neu = list(dict.fromkeys([LABEL, *(_label(x) for x in labels)]))
+        antwort = self._api("POST", f"/repos/{_repo(repo)}/issues", {"title": titel, "body": text, "labels": namen_neu})
         nummer = antwort.get("number") if isinstance(antwort, dict) else None
         if isinstance(nummer, bool) or not isinstance(nummer, int):
             raise GitHubFehler("antwort_unlesbar")
@@ -211,8 +223,11 @@ class GitHub:
     def oeffnen(self, repo: str, nummer: int) -> None:
         self._api("PATCH", f"/repos/{_repo(repo)}/issues/{_nummer(nummer)}", {"state": "open"})
 
+    def kommentieren(self, repo: str, nummer: int, text: str) -> None:
+        self._api("POST", f"/repos/{_repo(repo)}/issues/{_nummer(nummer)}/comments", {"body": text})
+
     def schliessen(self, repo: str, nummer: int, kommentar: str) -> None:
         """Erst der Kommentar, dann zu (`state_reason: completed`)."""
         r, n = _repo(repo), _nummer(nummer)
-        self._api("POST", f"/repos/{r}/issues/{n}/comments", {"body": kommentar})
+        self.kommentieren(r, n, kommentar)
         self._api("PATCH", f"/repos/{r}/issues/{n}", {"state": "closed", "state_reason": "completed"})
