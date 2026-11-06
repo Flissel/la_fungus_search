@@ -53,7 +53,8 @@ from .kolonie import (BUDGET_JE_DATEI, BUDGET_MAX_SCHRITTE, KolonieErgebnis, Kol
                       kolonie_laufen)
 from .lader import (ANALYSE_VERSION, SEED, GraphDaten, StandOhneGraph, _meta, datei_von, db_fehler, laden,
                     quersprachig)
-from .tot import NAME_MIN, TOT_TAGE, TotFund, generiert_zaehlen, namensverweis_abstufen, namensverweise, tot_finden
+from .tot import (NAME_MIN, TOT_TAGE, TotFund, dynamisch_abstufen, generiert_zaehlen, namensverweis_abstufen,
+                  tot_finden, verweise)
 from .zentral import BETWEENNESS_CUTOFF, DAEMPFUNG, Hotspot, betweenness, dateien_top, hotspots, pagerank
 
 PAGERANK_TOP = 500
@@ -81,6 +82,7 @@ def regeln_digest() -> str:
         "vorlagen_endungen": list(t.VORLAGEN_ENDUNGEN), "code_sprachen": sorted(a.CODE_SPRACHEN),
         "scan_daten_sprachen": sorted(t.SCAN_DATEN_SPRACHEN), "konfig_endungen": list(t.KONFIG_ENDUNGEN),
         "konfig_namen": sorted(t.KONFIG_NAMEN), "konfig_praefixe": list(t.KONFIG_PRAEFIXE),
+        "lade_aufruf": t.LADE_AUFRUF.pattern, "lade_literal": t.LADE_LITERAL.pattern,
         "lockdatei": t._LOCKDATEI.pattern, "bezeichner": t._BEZEICHNER.pattern,
         "generiert_ordner": sorted(a._GENERIERT_ORDNER), "generiert_name": a._GENERIERT_NAME.pattern,
         "generiert_dist": "dist-*,*-dist", "testname": a._TESTNAME.pattern, "test_ordner": sorted(a.TEST_ORDNER),
@@ -138,7 +140,9 @@ def _mathe(wurzel: Path, d: GraphDaten, fremd: Callable[[str], bool] | None = No
     doku = doku_bezeichner(wurzel, d.commit, d)
     tot = tot_finden(d, e, doku, fremd)
     kandidaten = [t.symbol for t in tot if t.stufe == "sicher_tot"]
-    tot = namensverweis_abstufen(tot, namensverweise(wurzel, d.commit, kandidaten))  # Ruling S8
+    nennung, geladen = verweise(wurzel, d.commit, kandidaten)  # ein Blob-Durchlauf
+    tot = namensverweis_abstufen(tot, nennung)  # Ruling S8
+    tot = dynamisch_abstufen(tot, geladen)
     del e, doku  # grosse Mengen vor den naechsten Schritten freigeben
     ber = bereiche_finden(d, AUFLOESUNG)
     pr = pagerank(d)

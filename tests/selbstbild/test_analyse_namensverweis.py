@@ -8,7 +8,7 @@ import pytest
 from selbstbild.analyse.erreichbar import erreichbarkeit
 from selbstbild.analyse.lader import laden
 from selbstbild.analyse.lauf import analysieren
-from selbstbild.analyse.tot import namensverweise, tot_finden
+from selbstbild.analyse.tot import TotFund, dynamisch_abstufen, namensverweise, tot_finden, verweise
 from selbstbild.typen import Knoten, id_datei, id_symbol
 from selbstbild.vermessen import vermessen
 
@@ -213,3 +213,68 @@ def test_s8_liest_konfig_und_unicode_namen(git_repo, heim):
     gerettet = namensverweise(git_repo.wurzel, d.commit, kandidaten)
     erwartet = {_s("pkg/cli.py", n) for n in NAMEN if n not in ("aus_lock", "nur_hier")}
     assert gerettet == erwartet
+
+
+
+# --- Task 3: dynamisch geladene Dateien ----------------------------------------------------------
+WERKZEUG = "class Rueckfall:\n    pass\n"
+LADER = ("import importlib.util\nimport os\n\n"
+         "p = os.path.join(d, 'src', 'tools', 'werkzeug.py')\n"
+         "spec = importlib.util.spec_from_file_location(\"werkzeug\", p)\n")
+
+
+def _geladen(git_repo, dateien: dict[str, str], kandidat: str = "src/tools/werkzeug.py") -> frozenset[str]:
+    for pfad, text in dateien.items():
+        git_repo.datei(pfad, text)
+    sha = git_repo.commit("alt", datum="2025-01-01T00:00:00Z")
+    return verweise(git_repo.wurzel, sha, [_s(kandidat, "Rueckfall")])[1]
+
+
+def test_dynamisch_geladen_rettet(git_repo):
+    geladen = _geladen(git_repo, {"src/tools/werkzeug.py": WERKZEUG, "plug/agent.py": LADER})
+    sid = _s("src/tools/werkzeug.py", "Rueckfall")
+    assert geladen == {sid}
+    fund = TotFund(sid, "sicher_tot", ("unerreichbar",), None)
+    (neu,) = dynamisch_abstufen((fund,), geladen)
+    assert neu.stufe == "wahrscheinlich_tot" and "dynamisch_geladen" in neu.gruende
+    assert dynamisch_abstufen((TotFund("x:y:z#w", "sicher_tot", (), None),), geladen)[0].stufe == "sicher_tot"
+
+
+def test_dynamisch_punktpfad(git_repo):
+    lader = 'import importlib\nm = importlib.import_module("paket.modul")\n'
+    geladen = _geladen(git_repo, {"paket/modul.py": WERKZEUG, "x/lader.py": lader}, "paket/modul.py")
+    assert geladen == {_s("paket/modul.py", "Rueckfall")}
+
+
+def test_string_ohne_ladeaufruf_rettet_nicht(git_repo):
+    geladen = _geladen(git_repo, {"src/tools/werkzeug.py": WERKZEUG,
+                                  "check_all.py": "DATEIEN = ['src/tools/werkzeug.py']\n"})
+    assert geladen == frozenset()
+
+
+def test_dynamisch_nur_produktiv(git_repo):
+    geladen = _geladen(git_repo, {"src/tools/werkzeug.py": WERKZEUG, "tests/test_x.py": LADER})
+    assert geladen == frozenset()
+
+
+def test_dynamisch_fremdes_repo_rettet_nicht(git_repo, tmp_path):
+    import os
+
+    from conftest import GitRepo
+
+    for name, dateien in (("a", {"x.py": WERKZEUG}), ("b", {"plug/agent.py": LADER.replace("werkzeug", "x")})):
+        r = GitRepo(tmp_path / f"ext_{name}", dict(os.environ))
+        for pfad, text in dateien.items():
+            r.datei(pfad, text)
+        r.commit("init")
+        git_repo.submodul(f"r/{name}", r)
+    sha = git_repo.commit("subs")
+    geladen = verweise(git_repo.wurzel, sha, [id_symbol("repo/r/a", "x.py", "Rueckfall")])[1]
+    assert geladen == frozenset()
+
+
+def test_namensverweise_unveraendert(git_repo):
+    _repo(git_repo)
+    sha = git_repo.git("rev-parse", "HEAD")
+    kand = [_s("typen.py", "NurTyp"), _s("einsam.py", "einsam_fn"), _s("klasse.py", "Dienst.methode")]
+    assert namensverweise(git_repo.wurzel, sha, kand) == verweise(git_repo.wurzel, sha, kand)[0]

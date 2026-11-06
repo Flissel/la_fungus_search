@@ -265,24 +265,47 @@ def _in_eigener_datei(e: Eintrag, roh: bytes, text: str, eigene: set[str]) -> se
     return erg
 
 
-def namensverweise(wurzel: Path, commit: str, kandidaten: Iterable[str]) -> frozenset[str]:
-    """Die Kandidaten (Symbol-Ids), die ein Namensverweis rettet. Ein Durchlauf ueber die Code-Blobs
-    am Commit (nur ueber `quelle`, nie der Arbeitsbaum); behalten werden je (Repo, Name) hoechstens
-    zwei Dateipfade, das genuegt fuer "eine andere Datei"."""
+# Task 3: Dateien, die per Pfad oder Modulname zur Laufzeit geladen werden (importlib, runpy), erzeugen keine
+# Graphkante. Ein produktiver Python-Lader mit Lade-Aufruf nennt den Stamm der Zieldatei in einem
+# String-Literal; reine Pfadlisten ohne Lade-Aufruf (Pruefskripte, Tests) retten nichts.
+LADE_AUFRUF = re.compile(r"\b(spec_from_file_location|import_module|run_path|SourceFileLoader|__import__)\s*\(")
+LADE_LITERAL = re.compile(r"[\"']([^\"'\n]{1,200})[\"']")
+
+
+def _lade_staemme(text: str) -> set[str]:
+    """Stamm-Kandidaten aus den String-Literalen eines Laders (letztes `/`-Teil, letztes Punktpfad-Teil)."""
+    erg: set[str] = set()
+    for m in LADE_LITERAL.finditer(text):
+        lit = m.group(1)
+        stamm = lit.rpartition("/")[2]
+        erg.add(stamm[:-3] if stamm.endswith(".py") else stamm)
+        if "/" not in lit:
+            erg.add(lit.rpartition(".")[2])
+    erg.discard("__init__")
+    return erg
+
+
+def verweise(wurzel: Path, commit: str, kandidaten: Iterable[str]) -> tuple[frozenset[str], frozenset[str]]:
+    """`(namensverweis, dynamisch_geladen)`: die Kandidaten (Symbol-Ids), die ein Namensverweis (S8) bzw. ein
+    dynamischer Lader rettet. Ein Durchlauf ueber die Code-Blobs am Commit (nur ueber `quelle`, nie der
+    Arbeitsbaum); behalten werden je (Repo, Name) hoechstens zwei Dateipfade, das genuegt fuer "eine andere
+    Datei"."""
     je_datei: dict[tuple[str, str], set[str]] = {}
     namen: set[str] = set()
     alle: list[str] = []
-    for sid in sorted(set(kandidaten)):
+    ids = sorted(set(kandidaten))
+    for sid in ids:
         name = _einfach(sid)
         if len(name) < NAME_MIN:
             continue
         je_datei.setdefault((_repo(sid), _pfad(sid)), set()).add(sid)
         namen.add(name)
         alle.append(sid)
-    if not namen:
-        return frozenset()
+    if not ids:
+        return frozenset(), frozenset()
     dateien: dict[tuple[str, str], set[str]] = {}
     gerettet: set[str] = set()
+    lader: dict[str, set[str]] = {}  # Repo -> Staemme, die produktive Lader per String laden
     for b in _baeume(baum_lesen(Path(wurzel), commit)):
         with BlobLeser(b.wurzel) as leser:
             code = [e for e in b.eintraege
@@ -292,21 +315,35 @@ def namensverweise(wurzel: Path, commit: str, kandidaten: Iterable[str]) -> froz
                     continue  # Ruling S9: Build-Ausgabe verweist nicht; Lock-Dateien auch nicht
                 roh = leser.lesen(e.blob)
                 text = roh.decode("utf-8", errors="replace")
-                # gestreamt: grosse JSON-Dateien erzeugen keine Liste aller Bezeichner
-                for name in {w for m in _BEZEICHNER.finditer(text) if (w := m.group()) in namen}:
-                    s = dateien.setdefault((e.repo, name), set())
-                    if len(s) < 2:
-                        s.add(e.pfad)
-                eigene = je_datei.get((e.repo, e.pfad)) if e.sprache in CODE_SPRACHEN else None
-                if eigene:
-                    gerettet |= _in_eigener_datei(e, roh, text, eigene)
+                if e.sprache == "python" and not ist_testdatei(e.pfad) and LADE_AUFRUF.search(text):
+                    lader.setdefault(e.repo, set()).update(_lade_staemme(text))
+                if namen:
+                    # gestreamt: grosse JSON-Dateien erzeugen keine Liste aller Bezeichner
+                    for name in {w for m in _BEZEICHNER.finditer(text) if (w := m.group()) in namen}:
+                        s = dateien.setdefault((e.repo, name), set())
+                        if len(s) < 2:
+                            s.add(e.pfad)
+                    eigene = je_datei.get((e.repo, e.pfad)) if e.sprache in CODE_SPRACHEN else None
+                    if eigene:
+                        gerettet |= _in_eigener_datei(e, roh, text, eigene)
     for sid in alle:
         if sid in gerettet:
             continue
         name, repo, pfad = _einfach(sid), _repo(sid), _pfad(sid)
         if any(a != repo or p != pfad for a in _vorfahren(repo) for p in dateien.get((a, name), ())):
             gerettet.add(sid)
-    return frozenset(gerettet)
+    geladen: set[str] = set()
+    for sid in ids:
+        stamm = _pfad(sid).rpartition("/")[2]
+        stamm = stamm[:-3] if stamm.endswith(".py") else stamm
+        if stamm != "__init__" and any(stamm in lader.get(a, ()) for a in _vorfahren(_repo(sid))):
+            geladen.add(sid)
+    return frozenset(gerettet), frozenset(geladen)
+
+
+def namensverweise(wurzel: Path, commit: str, kandidaten: Iterable[str]) -> frozenset[str]:
+    """Nur der Namensverweis-Teil von `verweise` (Ruling S8)."""
+    return verweise(wurzel, commit, kandidaten)[0]
 
 
 def namensverweis_abstufen(funde: tuple[TotFund, ...], gerettet: frozenset[str]) -> tuple[TotFund, ...]:
@@ -314,4 +351,12 @@ def namensverweis_abstufen(funde: tuple[TotFund, ...], gerettet: frozenset[str])
     return tuple(
         TotFund(f.symbol, "wahrscheinlich_tot", tuple(sorted({*f.gruende, "namensverweis"})), f.zuletzt)
         if f.stufe == "sicher_tot" and f.symbol in gerettet else f
+        for f in funde)
+
+
+def dynamisch_abstufen(funde: tuple[TotFund, ...], geladen: frozenset[str]) -> tuple[TotFund, ...]:
+    """`sicher_tot` aus dynamisch geladener Datei wird `wahrscheinlich_tot` (Grund `dynamisch_geladen`)."""
+    return tuple(
+        TotFund(f.symbol, "wahrscheinlich_tot", tuple(sorted({*f.gruende, "dynamisch_geladen"})), f.zuletzt)
+        if f.stufe == "sicher_tot" and f.symbol in geladen else f
         for f in funde)
