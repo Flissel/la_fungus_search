@@ -33,7 +33,7 @@ doppelt:
   - datei:vibemind/vibemind-os:examples/mcp-agents/taskmanager/event_task.py
   - datei:vibemind/vibemind-os:examples/mcp-agents/tavily/event_task.py
   - datei:vibemind/vibemind-os:examples/mcp-agents/time/event_task.py
-  urteil: offen
+  urteil: nein
 - aehnlichkeit: '1.0000'
   art: aehnliche_datei
   mitglieder:
@@ -53,7 +53,7 @@ doppelt:
   - datei:vibemind/vibemind-os:examples/mcp-agents/taskmanager/taskmanager_constants.py
   - datei:vibemind/vibemind-os:examples/mcp-agents/tavily/tavily_constants.py
   - datei:vibemind/vibemind-os:examples/mcp-agents/time/time_constants.py
-  urteil: offen
+  urteil: ja
 - aehnlichkeit: '1.0000'
   art: aehnliche_datei
   mitglieder:
@@ -67,26 +67,26 @@ doppelt:
   - datei:vibemind/vibemind-os:examples/mcp-agents/taskmanager/user_interaction_utils.py
   - datei:vibemind/vibemind-os:examples/mcp-agents/tavily/user_interaction_utils.py
   - datei:vibemind/vibemind-os:examples/mcp-agents/time/user_interaction_utils.py
-  urteil: offen
+  urteil: ja
 - aehnlichkeit: '1.0000'
   art: aehnliche_datei
   mitglieder:
   - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/agents/deploy_agent.py
   - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/agents/migrate_agent.py
   - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/agents/monitor_agent.py
-  urteil: offen
+  urteil: ja
 - aehnlichkeit: '1.0000'
   art: aehnliche_datei
   mitglieder:
   - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/grpc_host_pb2.py
   - datei:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/grpc_worker/proto/propagation_pb2.py
-  urteil: offen
+  urteil: ja
 - aehnlichkeit: '1.0000'
   art: aehnliche_datei
   mitglieder:
   - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/grpc_host/grpc_host_pb2_grpc.py
   - datei:vibemind/vibemind-os/spaces/shuttles/swe_desgine:requirements_engineer/grpc_worker/proto/propagation_pb2_grpc.py
-  urteil: offen
+  urteil: ja
 - aehnlichkeit: '1.0000'
   art: aehnliche_datei
   mitglieder:
@@ -94,7 +94,7 @@ doppelt:
   - datei:vibemind/vibemind-os/coding-engine:mcp_plugins/servers/supermemory/simulate.py
   - datei:vibemind/vibemind-os:examples/mcp-agents/postgres/simulate.py
   - datei:vibemind/vibemind-os:examples/mcp-agents/supermemory/simulate.py
-  urteil: offen
+  urteil: ja
 - aehnlichkeit: '1.0000'
   art: aehnliche_datei
   mitglieder:
@@ -108,7 +108,7 @@ doppelt:
   - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/infra_gen.py
   - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/reviewer.py
   - datei:vibemind/vibemind-os/coding-engine:src/engine/agents/tester.py
-  urteil: offen
+  urteil: nein
 - aehnlichkeit: '1.0000'
   art: aehnliche_datei
   mitglieder:
@@ -119,7 +119,7 @@ doppelt:
   - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_data_classifier.py
   - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_data_scorer.py
   - datei:vibemind/vibemind-os/coding-engine:src/services/pipeline_step_reorchestrator.py
-  urteil: offen
+  urteil: nein
 - aehnlichkeit: '1.0000'
   art: aehnliche_datei
   mitglieder:
@@ -204,25 +204,25 @@ tot:
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/coding-engine:src/colony/lifecycle_controller.py#LifecycleController.complete_recovery
-  urteil: offen
+  urteil: ja
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/coding-engine:src/colony/security_gateway.py#SecurityGateway.generate_cell_policy
-  urteil: offen
+  urteil: ja
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/coding-engine:src/services/cell_import_service.py#CellImportService.remove_imported_cell
-  urteil: offen
+  urteil: ja
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/coding-engine:src/services/cell_security_scanner.py#CellSecurityScanner.analyze_behavior
-  urteil: offen
+  urteil: ja
 - gruende:
   - alt_90
   - kein_doku_verweis
@@ -234,97 +234,97 @@ tot:
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/coding-engine:src/teams/agents/debug_agent.py#create_debug_agent
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/coding-engine:src/tools/microservice_orchestrator.py#MicroserviceOrchestrator.create_service_directories
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/coding-engine:src/tools/supermemory_tools.py#LocalMemoryFallback
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/openclaw:extensions/matrix/src/matrix/accounts.ts#listEnabledMatrixAccounts
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/openclaw:extensions/nextcloud-talk/src/format.ts#markdownToNextcloudTalk
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/openclaw:extensions/twitch/src/client-manager-registry.ts#removeAllClientManagers
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/openclaw:extensions/voice-call/src/voice-mapping.ts#isOpenAiVoice
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/openclaw:extensions/zalouser/src/zalo-js.ts#clearProfileRuntimeArtifacts
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/openfang:sdk/python/openfang_client.py#_AgentResource.switch_session
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:agent/display.py#get_tool_preview_max_len
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/src/lib/yolo-session.ts#setGlobalYolo
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:apps/desktop/src/store/haptics.ts#setHapticsMuted
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:gateway/platforms/yuanbao.py#MarkdownProcessor.markdown_hint_system_prompt
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:hermes_cli/middleware.py#apply_api_request_middleware
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/spaces/captain_cook/hermes-agent:plugins/memory/honcho/cli.py#sync_honcho_profiles_quiet
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/spaces/shuttles/swe_desgine/external/arch_team:backend/services/manifest_integration.py#start_rewrite_stage
-  urteil: offen
+  urteil: nein
 - gruende:
   - alt_90
   - kein_doku_verweis
