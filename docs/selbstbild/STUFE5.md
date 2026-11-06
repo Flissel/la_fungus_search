@@ -74,28 +74,43 @@ Reviews: je Task Spec- und Quality-Review mit Fix-Runden. Das finale Gesamt-Revi
 
 ## Korrektur 06.11.: Fremdcode und dynamisch geladene Dateien
 
-Anlass: Die Goldsatz-Urteile vom 06.11. ergaben 4 „ja“ und 17 „nein“. 13 der „nein“ lagen in Forks fremder Projekte, `LocalMemoryFallback` wird per `spec_from_file_location` geladen.
+**Anlass:** Die Goldsatz-Urteile vom 06.11. (Runde 1, jetzt `goldsatz-vibemind-2026-11-04.yaml`) ergaben für toten Code 4 „ja“ und 16 „nein“.
+- 12 der „nein“ lagen in Forks fremder Projekte: openclaw 5, openfang 1, hermes-agent 6.
+- `LocalMemoryFallback` lebt in einer Datei, die per `spec_from_file_location` geladen wird.
+- 3 „nein“ sind unerklärt: `create_debug_agent`, `create_service_directories`, `start_rewrite_stage`.
 
-Änderung (la_fungus 530ba7e..a73b538, Regel in `Vibemind_V1/selbstbild.yaml` 36b87b10):
+**Änderung** (la_fungus 530ba7e..b725481, Regel in `Vibemind_V1/selbstbild.yaml` 36b87b10):
+- **Fremdcode.** `fremdcode:` (Globs) in `selbstbild.yaml`. Fremdcode ist nie `sicher_tot` (Grund `fremdcode`). Doppelungen, die nur in Fremdcode liegen, werden nicht gemeldet, und Fremdcode zählt nicht im `ungesetzt`-Befund.
+  - Wird ein Issue leer, weil seine Funde als Fremdcode ausgenommen sind, schließt es mit dem Kommentar „Sammlung leer: Funde als Fremdcode ausgenommen …“ statt „… im Code verschwunden“.
+- **Lader-Regel.** Ein Lader-Aufruf ist `spec_from_file_location`, `import_module`, `run_path`, `SourceFileLoader` oder `__import__`. Eine Datei ist nie `sicher_tot` (Grund `dynamisch_geladen`), wenn eine Datei mit einem solchen Aufruf sie per Literal nennt. Als Literal zählt:
+  - ein pfad- oder modulartiges Literal, also mit `/` oder `\`, mit Endung `.py` oder als gepunkteter Modulname;
+  - oder ein nacktes Literal direkt im Aufruf.
+- **Digest.** Beide Regeln gehen in den Regel-Digest ein, ältere Analysen gelten deshalb nicht mehr.
 
-- `fremdcode:` (Globs) in `selbstbild.yaml`. Fremdcode ist nie `sicher_tot` (Grund `fremdcode`). Doppelungen, die nur in Fremdcode liegen, werden nicht gemeldet. Fremdcode zählt nicht im `ungesetzt`-Befund.
-- Eine Datei, die ein dynamischer Lader (`spec_from_file_location`, `import_module`, `run_path`, `SourceFileLoader`, `__import__`) per Literal nennt, ist nie `sicher_tot` (Grund `dynamisch_geladen`).
-- Die Regeln gehen in den Regel-Digest ein. Alte Analysen gelten deshalb nicht mehr.
+**Abnahme** (Graph 36b87b10, Analyse nach dem Final-Fix):
 
-Abnahme (Commit 36b87b10, vermessen 2:45 min, analysiert 3:31 min):
-
-| Messgröße | vorher (2de425b) | nachher (36b87b10) |
+| Messgröße | vorher (2de425b) | nachher |
 |---|---|---|
-| `sicher_tot` gesamt | 1.109 | 737 (−372, Erwartung mindestens −294) |
+| `sicher_tot` gesamt | 1.109 | 802 (−307, Erwartung mindestens −294) |
 | Goldsatz „ja“ noch `sicher_tot` | 4/4 | 4/4 (Präzision 1,0) |
-| Fork-„nein“ noch `sicher_tot` | 13 | 0 (alle `fremdcode`) |
-| `LocalMemoryFallback` | `sicher_tot` | `wahrscheinlich_tot`. Der Lader-Befund allein rettet ihn, geprüft per `verweise` |
+| Fork-„nein“ noch `sicher_tot` | 12 | 0, alle `fremdcode`. Kein Fremdcode-Symbol ist `sicher_tot`. |
+| Abgestuft mit Grund `dynamisch_geladen` | – | 39 |
 | `ungesetzt` | 2.450 | 1.241 |
 | Doppelungen nur in Fremdcode | – | 461 ausgelassen |
-| Sammel-Issues, die schließen würden (Trockenlauf) | – | #294 openclaw, #295 openfang |
+| Sammel-Issues, die schließen würden (Trockenlauf) | – | #294 openclaw, #295 openfang, mit Fremdcode-Text |
 | Schlüssel-Treffer | 0 | 0 |
-| Tor toter Code | gesperrt | gesperrt (4/20 bestätigt) |
 
-Nebenbefund: `create_debug_agent`, `create_service_directories` und `start_rewrite_stage` (die 3 unerklärten „nein“) sind jetzt `wahrscheinlich_tot` mit Grund `doku_verweis`. Ursache ist nicht die neue Regel. Der Korrekturplan `docs/superpowers/plans/2026-11-06-selbstbild-fremdcode-tot.md` nennt sie, und `docs/**/*.md` zählt als Doku. Arbeitsnotizen unter `docs/superpowers/` sind damit ein Rettungssignal. Ob sie aus `doku_pfade` heraus sollen, ist offen (User).
+Das Gesamt-Review fand drei Dinge:
+- Die erste Fassung der Lader-Regel nahm jedes Literal einer Lader-Datei. Sie stufte so 104 Symbole ab, zum Beispiel `event_bus.py`, weil ein Dict-Schlüssel `"event_bus"` neben `import_module(variable)` stand. Mit dem Literal-Filter sind es noch 39.
+- Der Schließ-Text hätte #294 und #295 fälschlich als „verschwunden“ gemeldet. Beides ist behoben (dca3b75, a6a1b6f).
+- Goldsatz Runde 2 (40 Kandidaten) entstand aus der Zwischenanalyse mit 737 `sicher_tot`. Der Filter rettet nur weniger, deshalb ist diese Menge eine Teilmenge der 802, und die Kandidaten bleiben gültig. Die 65 seitdem wieder `sicher_tot` gewordenen Symbole sind in Runde 2 nicht vertreten.
+
+**Nebenbefund** `doku_verweis`: `LocalMemoryFallback` und die 3 unerklärten „nein“ sind jetzt `wahrscheinlich_tot` mit Grund `doku_verweis`.
+- **Ursache:** Der Korrekturplan `docs/superpowers/plans/2026-11-06-selbstbild-fremdcode-tot.md` nennt sie, und `doku_pfade` ist `docs/**/*.md`. `tot_finden` stuft sie deshalb schon vor der Lader-Prüfung ab, und `gruende` nennt nur den ersten Retter.
+- **Lader:** Dass der Lader `LocalMemoryFallback` auch allein rettet, ist per `verweise` getrennt geprüft.
+- **Folge:** Arbeitsnotizen unter `docs/superpowers/` sind damit ein Rettungssignal. Sie würden auch bestätigte „ja“ aus dem Tor nehmen, sobald ein Plan sie nennt.
+- **Offen (User):** Soll `docs/superpowers/**` aus `doku_pfade` heraus?
+
+**Bekannte Lücken der Lader-Regel:** f-Strings (`f"plugins.{name}"`), `imp.load_source`, `runpy.run_module`, `importlib.util.find_spec`, `pkgutil.iter_modules`, Lader über Verzeichnis-Globs und ein nacktes Literal auf einer Folgezeile des Aufrufs. In diesen Fällen bleibt das alte Verhalten: Sie werden nicht gerettet.
 
 Gesendet wurde nichts. `--senden` nur nach User-OK.
