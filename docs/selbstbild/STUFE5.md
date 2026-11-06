@@ -71,3 +71,31 @@ Reviews: je Task Spec- und Quality-Review mit Fix-Runden. Das finale Gesamt-Revi
 6. **Abstand gilt je Writer-Aufruf.** Kommentar und Schließen kommen deshalb direkt hintereinander.
 7. **D1 bündelt 19 Code-Repos in ein Ziel.** Das ergibt 21 Sammel-Issues; beim Umstellen je Repo neu bewerten.
 8. **Die Analyse ist älter als HEAD (2de425b).** Ein frischer Analyse-Lauf aktualisiert die Doppelungen beim nächsten Versand.
+
+## Korrektur 06.11.: Fremdcode und dynamisch geladene Dateien
+
+Anlass: Die Goldsatz-Urteile vom 06.11. ergaben 4 „ja“ und 17 „nein“. 13 der „nein“ lagen in Forks fremder Projekte, `LocalMemoryFallback` wird per `spec_from_file_location` geladen.
+
+Änderung (la_fungus 530ba7e..a73b538, Regel in `Vibemind_V1/selbstbild.yaml` 36b87b10):
+
+- `fremdcode:` (Globs) in `selbstbild.yaml`. Fremdcode ist nie `sicher_tot` (Grund `fremdcode`). Doppelungen, die nur in Fremdcode liegen, werden nicht gemeldet. Fremdcode zählt nicht im `ungesetzt`-Befund.
+- Eine Datei, die ein dynamischer Lader (`spec_from_file_location`, `import_module`, `run_path`, `SourceFileLoader`, `__import__`) per Literal nennt, ist nie `sicher_tot` (Grund `dynamisch_geladen`).
+- Die Regeln gehen in den Regel-Digest ein. Alte Analysen gelten deshalb nicht mehr.
+
+Abnahme (Commit 36b87b10, vermessen 2:45 min, analysiert 3:31 min):
+
+| Messgröße | vorher (2de425b) | nachher (36b87b10) |
+|---|---|---|
+| `sicher_tot` gesamt | 1.109 | 737 (−372, Erwartung mindestens −294) |
+| Goldsatz „ja“ noch `sicher_tot` | 4/4 | 4/4 (Präzision 1,0) |
+| Fork-„nein“ noch `sicher_tot` | 13 | 0 (alle `fremdcode`) |
+| `LocalMemoryFallback` | `sicher_tot` | `wahrscheinlich_tot`. Der Lader-Befund allein rettet ihn, geprüft per `verweise` |
+| `ungesetzt` | 2.450 | 1.241 |
+| Doppelungen nur in Fremdcode | – | 461 ausgelassen |
+| Sammel-Issues, die schließen würden (Trockenlauf) | – | #294 openclaw, #295 openfang |
+| Schlüssel-Treffer | 0 | 0 |
+| Tor toter Code | gesperrt | gesperrt (4/20 bestätigt) |
+
+Nebenbefund: `create_debug_agent`, `create_service_directories` und `start_rewrite_stage` (die 3 unerklärten „nein“) sind jetzt `wahrscheinlich_tot` mit Grund `doku_verweis`. Ursache ist nicht die neue Regel. Der Korrekturplan `docs/superpowers/plans/2026-11-06-selbstbild-fremdcode-tot.md` nennt sie, und `docs/**/*.md` zählt als Doku. Arbeitsnotizen unter `docs/superpowers/` sind damit ein Rettungssignal. Ob sie aus `doku_pfade` heraus sollen, ist offen (User).
+
+Gesendet wurde nichts. `--senden` nur nach User-OK.
