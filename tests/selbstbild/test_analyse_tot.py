@@ -31,9 +31,9 @@ def _ruft(a: str, b: str, sicher: bool = True) -> Kante:
     return Kante("ruft_auf", a, b, sicher, None)
 
 
-def _finden(graph_stand, knoten, kanten=(), doku=None) -> dict[str, TotFund]:
+def _finden(graph_stand, knoten, kanten=(), doku=None, fremd=None) -> dict[str, TotFund]:
     d = laden(graph_stand(knoten, list(kanten), commit_zeit=STICHTAG))
-    erg = tot_finden(d, erreichbarkeit(d), doku or {})
+    erg = tot_finden(d, erreichbarkeit(d), doku or {}, fremd)
     assert list(erg) == sorted(erg, key=lambda f: f.symbol)
     return {f.symbol: f for f in erg}
 
@@ -250,3 +250,23 @@ def test_ist_testdatei_erweiterung_s2():
 def test_doku_bezeichner_unicode():
     ids = bezeichner_aus_text("Die Funktion `größe_berechnen` und straßen_name werden genutzt.")
     assert {"größe_berechnen", "straßen_name"} <= ids
+
+
+def test_fremdcode_nie_sicher(graph_stand):
+    f = _finden(graph_stand, [_d("a.py"), _s("a.py", "alt_fn")],
+                fremd=lambda i: i == _i("a.py", "alt_fn"))[_i("a.py", "alt_fn")]
+    assert f.stufe == "wahrscheinlich_tot"
+    assert "fremdcode" in f.gruende and "unerreichbar" in f.gruende
+
+
+def test_ohne_fremd_unveraendert(graph_stand):
+    f = _finden(graph_stand, [_d("a.py"), _s("a.py", "alt_fn")])[_i("a.py", "alt_fn")]
+    assert f.stufe == "sicher_tot"
+
+
+def test_fremdcode_grund_auch_bei_nur_unsicher(graph_stand):
+    k = [_d("a.py"), _s("a.py", "main", einstieg="main"), _s("a.py", "x")]
+    f = _finden(graph_stand, k, [_ruft(_i("a.py", "main"), _i("a.py", "x"), sicher=False)],
+                fremd=lambda i: i == _i("a.py", "x"))[_i("a.py", "x")]
+    assert f.stufe == "wahrscheinlich_tot"
+    assert "nur_unsicher" in f.gruende and "fremdcode" in f.gruende

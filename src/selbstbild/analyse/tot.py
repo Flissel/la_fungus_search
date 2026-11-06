@@ -4,7 +4,7 @@ Ein falsches `sicher_tot` ist der teure Fehler (daraus werden Issues). Im Zweife
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -107,12 +107,14 @@ def _s4(d: GraphDaten, i: str) -> set[str]:
     return erg
 
 
-def _ausnahmen(d: GraphDaten, e: Erreichbarkeit, i: str) -> set[str]:
+def _ausnahmen(d: GraphDaten, e: Erreichbarkeit, i: str, fremd: Callable[[str], bool] | None = None) -> set[str]:
     """Gruende, aus denen ein Symbol nie `sicher_tot` sein darf (Global Constraints, E4, Ruling S4).
 
     Ruling S8: Verschachteltes (Qualname-Praefix in derselben Datei) erbt die S4/R22-Ausnahmen
     seiner Vorfahren mit demselben Grund, z. B. Handler in einer JSX-Komponente."""
     erg: set[str] = _s4(d, i)
+    if fremd is not None and fremd(i):
+        erg.add("fremdcode")  # Fork/Vendor-Code: Nutzung liegt ausserhalb des Graphen
     pfad = _pfad(i)
     kopf, _, qual = i.rpartition("#")
     einfach = qual.rpartition(".")[2]
@@ -150,7 +152,8 @@ def generiert_zaehlen(d: GraphDaten) -> int:
     return sum(1 for i, k in d.knoten.items() if k.art == "symbol" and ist_generiert(_pfad(i)))
 
 
-def tot_finden(d: GraphDaten, e: Erreichbarkeit, doku: Mapping[str, frozenset[str]]) -> tuple[TotFund, ...]:
+def tot_finden(d: GraphDaten, e: Erreichbarkeit, doku: Mapping[str, frozenset[str]],
+               fremd: Callable[[str], bool] | None = None) -> tuple[TotFund, ...]:
     """Nur Symbolknoten. Sortiert nach Symbol-Id, ohne Uhr (Stichtag = `d.commit_zeit`)."""
     grenze = d.commit_zeit - _SEKUNDEN
     funde: list[TotFund] = []
@@ -169,14 +172,14 @@ def tot_finden(d: GraphDaten, e: Erreichbarkeit, doku: Mapping[str, frozenset[st
             if i in e.sicher or not alt or pfad.endswith(_TS_ENDUNGEN):
                 continue  # TS: unsichere Kante genuegt (R15), kein Fund
             gruende = {"nur_unsicher", "alt_90"}
-            ausnahmen = _ausnahmen(d, e, i)
+            ausnahmen = _ausnahmen(d, e, i, fremd)
             gruende |= ausnahmen
             if _dokumentiert(i, doku):
                 gruende.add("doku_verweis")
             funde.append(TotFund(i, "wahrscheinlich_tot", tuple(sorted(gruende)), zuletzt))
             continue
         verwiesen = _dokumentiert(i, doku)
-        ausnahmen = _ausnahmen(d, e, i)
+        ausnahmen = _ausnahmen(d, e, i, fremd)
         gruende = {"unerreichbar", "doku_verweis" if verwiesen else "kein_doku_verweis"} | ausnahmen
         if alt:
             gruende.add("alt_90")

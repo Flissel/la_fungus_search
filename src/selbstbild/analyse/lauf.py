@@ -32,11 +32,14 @@ import json
 import sqlite3
 import sys
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .. import analyse as _analyse
+from ..fremdcode import fremd_pruefer, ist_fremd_id
+from ..quelle import _regeln_aus_commit
 from ..vermessen import stand_finden
 from . import doppelt
 from . import lader as _lader
@@ -88,7 +91,8 @@ def regeln_digest() -> str:
     return hashlib.sha256(roh.encode("ascii")).hexdigest()[:16]
 
 
-def parameter(kolonie: bool, kolonie_budget: bool = False) -> tuple[tuple[str, str], ...]:
+def parameter(kolonie: bool, kolonie_budget: bool = False,
+              fremdcode: Sequence[str] = ()) -> tuple[tuple[str, str], ...]:
     p = {
         "aufloesung": f"{AUFLOESUNG}", "betweenness_cutoff": str(BETWEENNESS_CUTOFF),
         "betweenness_top": str(BETWEENNESS_TOP), "daempfung": f"{DAEMPFUNG}",
@@ -97,6 +101,9 @@ def parameter(kolonie: bool, kolonie_budget: bool = False) -> tuple[tuple[str, s
         "namensverweis_min": str(NAME_MIN), "regeln": regeln_digest(), "seed": str(SEED),
         "tot_tage": str(TOT_TAGE),
     }
+    if fremdcode:  # leer: Schluessel fehlt, alte Laeufe bleiben gueltig
+        roh = json.dumps(sorted(fremdcode))
+        p["fremdcode"] = hashlib.sha256(roh.encode("utf-8")).hexdigest()[:16]
     if kolonie:
         k = KolonieParameter()
         p.update({"kolonie_agenten": str(k.agenten), "kolonie_schritte": str(k.schritte),
@@ -126,10 +133,10 @@ def _top(werte: dict[str, float], n: int) -> tuple[tuple[str, float], ...]:
     return tuple(sorted(werte.items(), key=lambda kv: (-kv[1], kv[0]))[:n])
 
 
-def _mathe(wurzel: Path, d: GraphDaten) -> _Mathe:
+def _mathe(wurzel: Path, d: GraphDaten, fremd: Callable[[str], bool] | None = None) -> _Mathe:
     e = erreichbarkeit(d)
     doku = doku_bezeichner(wurzel, d.commit, d)
-    tot = tot_finden(d, e, doku)
+    tot = tot_finden(d, e, doku, fremd)
     kandidaten = [t.symbol for t in tot if t.stufe == "sicher_tot"]
     tot = namensverweis_abstufen(tot, namensverweise(wurzel, d.commit, kandidaten))  # Ruling S8
     del e, doku  # grosse Mengen vor den naechsten Schritten freigeben
@@ -184,15 +191,21 @@ def analysieren(wurzel: Path, *, kolonie: bool = True, pruefen_reproduzierbar: b
     t = time.perf_counter_ns()
     d = laden(stand)  # liefert gemessen_um aus derselben Lese-Transaktion
     gemessen_um = d.gemessen_um
+    regeln = _regeln_aus_commit(wurzel, d.commit)
+    pruefer = fremd_pruefer(regeln.fremdcode, regeln.name or wurzel.resolve().name)
+
+    def fremd(i: str) -> bool:
+        return ist_fremd_id(pruefer, i)
+
     stat: dict[str, int] = {"laufzeit_laden_ms": _ms(t)}
     t = time.perf_counter_ns()
-    m = _mathe(wurzel, d)
+    m = _mathe(wurzel, d, fremd)
     stat["laufzeit_mathe_ms"] = _ms(t)
     stat["doppelt_eimer_uebersprungen"] = m.eimer_uebersprungen
     stat["tot_generiert_uebersprungen"] = m.tot_generiert
     stat["pagerank_quersprache_ausgelassen"] = m.quersprache
     if pruefen_reproduzierbar:
-        stat["reproduzierbar_mathe"] = int(_mathe(wurzel, d) == m)
+        stat["reproduzierbar_mathe"] = int(_mathe(wurzel, d, fremd) == m)
     kol = None
     if kolonie:
         t = time.perf_counter_ns()
@@ -215,7 +228,7 @@ def analysieren(wurzel: Path, *, kolonie: bool = True, pruefen_reproduzierbar: b
     luecken = tuple(sorted(d.luecken.items()))  # Ruling S3: erst nach allen Analysen
     commit = d.commit
     del d  # Graph vor dem Schreiben freigeben
-    a = Analyse(commit=commit, version=ANALYSE_VERSION, parameter=parameter(kolonie, kolonie_budget),
+    a = Analyse(commit=commit, version=ANALYSE_VERSION, parameter=parameter(kolonie, kolonie_budget, regeln.fremdcode),
                 bereiche=m.bereiche, pagerank_top=m.pagerank_top, betweenness_top=m.betweenness_top,
                 hotspots=m.hotspots, tot=m.tot, doppelungen=m.doppelungen, kolonie=kol,
                 luecken=luecken, statistik=tuple(sorted(stat.items())))
@@ -251,8 +264,9 @@ def gespeicherte_analyse(wurzel: Path) -> Analyse:
     commit, gemessen_um = _stand_meta(stand)
     if commit is None:
         raise StandOhneGraph(f"Stand {stand} ohne Graph: neu vermessen (`python -m selbstbild vermessen`)")
+    fremdcode = _regeln_aus_commit(wurzel, commit).fremdcode
     for mit_kolonie, mit_budget in ((True, True), (True, False), (False, False)):
-        a = lesen(stand, commit, ANALYSE_VERSION, digest_von(parameter(mit_kolonie, mit_budget)),
+        a = lesen(stand, commit, ANALYSE_VERSION, digest_von(parameter(mit_kolonie, mit_budget, fremdcode)),
                   graph_gemessen_um=gemessen_um or "")
         if a is not None:
             return a

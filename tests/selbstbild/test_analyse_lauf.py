@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from selbstbild.analyse.ergebnis import export_json
-from selbstbild.analyse.lauf import NichtAnalysiert, NichtVermessen, analysieren, gespeicherte_analyse
+from selbstbild.analyse.lauf import NichtAnalysiert, NichtVermessen, analysieren, gespeicherte_analyse, parameter
 from selbstbild.vermessen import stand_finden, vermessen
 
 SRC = Path(__file__).resolve().parents[2] / "src"
@@ -304,3 +304,41 @@ def test_pagerank_quersprache_gezaehlt(git_repo, heim):
     _klein(git_repo)
     vermessen(git_repo.wurzel)
     assert dict(analysieren(git_repo.wurzel, kolonie=False).statistik)["pagerank_quersprache_ausgelassen"] == 0
+
+
+def test_parameter_fremdcode_aendert_digest():
+    assert parameter(False) != parameter(False, fremdcode=["x/**"])
+
+
+def test_parameter_ohne_fremdcode_wie_bisher():
+    assert "fremdcode" not in dict(parameter(False))
+
+
+def _mit_fremdcode(git_repo) -> None:
+    git_repo.datei("selbstbild.yaml", 'fremdcode: ["lib/**"]\n')
+    git_repo.datei("main.py", MAIN)
+    git_repo.datei("app.py", APP)
+    git_repo.datei("lib/x.py", "def fremd_tot():\n    x = 1\n    y = 2\n    return x + y\n")
+    git_repo.commit("alt", datum="2025-01-01T00:00:00Z")
+    git_repo.datei("README.md", "Ein kleines Repo.\n")
+    git_repo.commit("neu", datum="2026-01-01T00:00:00Z")
+
+
+def test_analysieren_liest_fremdcode_aus_commit(git_repo, heim):
+    _mit_fremdcode(git_repo)
+    vermessen(git_repo.wurzel)
+    a = analysieren(git_repo.wurzel, kolonie=False)
+    tot = {t.symbol: t for t in a.tot}
+    f = tot["symbol:repo:lib/x.py#fremd_tot"]
+    assert f.stufe == "wahrscheinlich_tot" and "fremdcode" in f.gruende
+    assert tot["symbol:repo:app.py#alt_tot"].stufe == "sicher_tot"
+
+
+def test_gespeicherte_analyse_mit_fremdcode_gefunden(git_repo, heim, tmp_path):
+    _mit_fremdcode(git_repo)
+    vermessen(git_repo.wurzel)
+    a = analysieren(git_repo.wurzel, kolonie=False)
+    g = gespeicherte_analyse(git_repo.wurzel)
+    export_json(a, tmp_path / "a.json")
+    export_json(g, tmp_path / "g.json")
+    assert (tmp_path / "a.json").read_bytes() == (tmp_path / "g.json").read_bytes()
