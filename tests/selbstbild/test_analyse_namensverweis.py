@@ -246,6 +246,22 @@ def test_dynamisch_punktpfad(git_repo):
     assert geladen == {_s("paket/modul.py", "Rueckfall")}
 
 
+def test_lader_woertliches_dict_literal_rettet_nicht(git_repo):
+    """Regression F2: ein Dict-Schluessel in einer Lader-Datei (Argument ist eine Variable) ist kein Stamm."""
+    lader = ('import importlib\n\nREG = {"event_bus": 1}\n\n'
+             'def laden(module_path):\n    return importlib.import_module(module_path)\n')
+    geladen = _geladen(git_repo, {"src/mind/event_bus.py": WERKZEUG, "plug/bridge.py": lader},
+                       "src/mind/event_bus.py")
+    assert geladen == frozenset()
+
+
+def test_lader_nacktes_literal_als_argument_rettet(git_repo):
+    lader = 'import importlib\n\nm = importlib.import_module("event_bus")\n'
+    geladen = _geladen(git_repo, {"src/mind/event_bus.py": WERKZEUG, "plug/bridge.py": lader},
+                       "src/mind/event_bus.py")
+    assert geladen == {_s("src/mind/event_bus.py", "Rueckfall")}
+
+
 def test_string_ohne_ladeaufruf_rettet_nicht(git_repo):
     geladen = _geladen(git_repo, {"src/tools/werkzeug.py": WERKZEUG,
                                   "check_all.py": "DATEIEN = ['src/tools/werkzeug.py']\n"})

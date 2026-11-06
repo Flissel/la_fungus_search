@@ -83,6 +83,7 @@ def regeln_digest() -> str:
         "scan_daten_sprachen": sorted(t.SCAN_DATEN_SPRACHEN), "konfig_endungen": list(t.KONFIG_ENDUNGEN),
         "konfig_namen": sorted(t.KONFIG_NAMEN), "konfig_praefixe": list(t.KONFIG_PRAEFIXE),
         "lade_aufruf": t.LADE_AUFRUF.pattern, "lade_literal": t.LADE_LITERAL.pattern,
+        "lade_pfad": t.LADE_PFAD.pattern, "lade_modul": t.LADE_MODUL.pattern,
         "lockdatei": t._LOCKDATEI.pattern, "bezeichner": t._BEZEICHNER.pattern,
         "generiert_ordner": sorted(a._GENERIERT_ORDNER), "generiert_name": a._GENERIERT_NAME.pattern,
         "generiert_dist": "dist-*,*-dist", "testname": a._TESTNAME.pattern, "test_ordner": sorted(a.TEST_ORDNER),

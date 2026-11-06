@@ -271,12 +271,21 @@ def _in_eigener_datei(e: Eintrag, roh: bytes, text: str, eigene: set[str]) -> se
 LADE_AUFRUF = re.compile(r"\b(spec_from_file_location|import_module|run_path|SourceFileLoader|__import__)\s*\(")
 LADE_LITERAL = re.compile(r"[\"']([^\"'\n]{1,200})[\"']")
 
+# Nur ein Literal, das nach Pfad oder Modul aussieht, ist ein Stamm-Kandidat (sonst rettet jeder Dict-Schluessel
+# in einer Lader-Datei eine gleichnamige Datei); ein nacktes Literal zaehlt nur direkt als Argument des Lade-Aufrufs.
+LADE_PFAD = re.compile(r"[/\\]|\.py$")
+LADE_MODUL = re.compile(r"^[A-Za-z_]\w*(\.[A-Za-z_]\w*)+$")
+
 
 def _lade_staemme(text: str) -> set[str]:
     """Stamm-Kandidaten aus den String-Literalen eines Laders (letztes `/`-Teil, letztes Punktpfad-Teil)."""
     erg: set[str] = set()
-    for m in LADE_LITERAL.finditer(text):
-        lit = m.group(1)
+    literale = [m.group(1) for m in LADE_LITERAL.finditer(text)
+                if LADE_PFAD.search(m.group(1)) or LADE_MODUL.match(m.group(1))]
+    for a in LADE_AUFRUF.finditer(text):  # nacktes Literal direkt als Argument (Rest der Zeile)
+        ende = text.find("\n", a.end())
+        literale += [m.group(1) for m in LADE_LITERAL.finditer(text[a.end(): len(text) if ende < 0 else ende])]
+    for lit in literale:
         stamm = lit.rpartition("/")[2]
         erg.add(stamm[:-3] if stamm.endswith(".py") else stamm)
         if "/" not in lit:
