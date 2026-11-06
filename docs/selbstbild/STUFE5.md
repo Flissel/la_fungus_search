@@ -109,7 +109,11 @@ Das Gesamt-Review fand drei Dinge:
 - **Ursache:** Der Korrekturplan `docs/superpowers/plans/2026-11-06-selbstbild-fremdcode-tot.md` nennt sie, und `doku_pfade` ist `docs/**/*.md`. `tot_finden` stuft sie deshalb schon vor der Lader-Prüfung ab, und `gruende` nennt nur den ersten Retter.
 - **Lader:** Dass der Lader `LocalMemoryFallback` auch allein rettet, ist per `verweise` getrennt geprüft.
 - **Folge:** Arbeitsnotizen unter `docs/superpowers/` sind damit ein Rettungssignal. Sie würden auch bestätigte „ja“ aus dem Tor nehmen, sobald ein Plan sie nennt.
-- **Offen (User):** Soll `docs/superpowers/**` aus `doku_pfade` heraus?
+- **Gelöst (User-OK 06.11.):** Neue Regel `doku_verweis_ausnahmen: ["docs/superpowers/**"]` (la_fungus 597c5b9, Regel c1bce4b1). Pläne und Specs bleiben Doku-Seiten im Graphen und in der Suche, ihre Bezeichner retten aber keinen Code mehr. Neu vermessen an c1bce4b1:
+  - `sicher_tot` 805.
+  - `LocalMemoryFallback` ist jetzt `wahrscheinlich_tot` mit Grund `dynamisch_geladen`.
+  - Die 3 unerklärten „nein“ sind wieder `sicher_tot`, denn im Code ruft sie nichts auf. Ob „nein“ dort „wird benutzt“ oder „soll bleiben“ hieß, ist offen (User).
+  - Die 4 „ja“ sind unverändert `sicher_tot`.
 
 **Bekannte Lücken der Lader-Regel:** f-Strings (`f"plugins.{name}"`), `imp.load_source`, `runpy.run_module`, `importlib.util.find_spec`, `pkgutil.iter_modules`, Lader über Verzeichnis-Globs und ein nacktes Literal auf einer Folgezeile des Aufrufs. In diesen Fällen bleibt das alte Verhalten: Sie werden nicht gerettet.
 
