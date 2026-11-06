@@ -213,6 +213,25 @@ def _goldsatz_repo(pfad: Path) -> tuple[Path | None, str | None]:
     return repo, None
 
 
+def _eingetragen(pfad: Path, antworten: dict[str, tuple[str, bool]]) -> bool:
+    """Ist die geschriebene Datei gueltiges YAML, und hat jeder Eintrag jedes beantworteten Symbols genau das erwartete
+    `urteil` und `bleibt`?"""
+    try:
+        eintraege = _tot_eintraege(pfad)
+    except (OSError, ValueError, AttributeError, TypeError, yaml.YAMLError):
+        return False
+    gefunden: set[str] = set()
+    for e in eintraege:
+        symbol = e.get("symbol")
+        if not isinstance(symbol, str) or symbol not in antworten:
+            continue
+        urteil, bleibt = antworten[symbol]
+        if str(e.get("urteil")) != urteil or (e.get("bleibt") is True) != bleibt:
+            return False
+        gefunden.add(symbol)
+    return gefunden == set(antworten)
+
+
 def _uebernehmen_committen(pfad: Path, antworten: dict[str, tuple[str, bool]]) -> tuple[str | None, str | None]:
     """(sha7 oder `SCHON`, None) bei Erfolg, sonst (None, Grund). Geschrieben und committet wird nur `pfad`; scheitert
     der Commit, wird die Datei auf den committeten Stand zurueckgesetzt. Ist HEAD nach dem Commit nicht lesbar, gilt
@@ -230,6 +249,9 @@ def _uebernehmen_committen(pfad: Path, antworten: dict[str, tuple[str, bool]]) -
         return None, f"goldsatz_fehler:{type(e).__name__}" + ("" if zurueck else ", Datei nicht zurückgesetzt")
     if not diff:
         return SCHON, None
+    if not _eingetragen(pfad, antworten):  # R17-1: nie eine kaputte oder falsch eingetragene Datei committen
+        zurueck = git(ordner, "checkout", "HEAD", "--", name) is not None
+        return None, "yaml_kaputt" + ("" if zurueck else ", Datei nicht zurückgesetzt")
     if git(ordner, "add", "--", name) is None or git(ordner, "commit", "-q", "-m", COMMIT_TEXT, "--", name) is None:
         zurueck = git(ordner, "checkout", "HEAD", "--", name) is not None
         return None, "commit_fehlgeschlagen" + ("" if zurueck else ", Datei nicht zurückgesetzt")
@@ -262,8 +284,12 @@ def _link(gh: GitHub | None, repo: str, nummer: int) -> str:
 
 
 def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None, repo: str, *, senden: bool,
-                           noch_tot: frozenset[str], commit: str, stand: dict[str, Any]) -> RueckfrageBericht:
+                           noch_tot: frozenset[str], commit: str, stand: dict[str, Any],
+                           oeffentlich: bool = False) -> RueckfrageBericht:
     """Gleicht die `unklar`-Eintraege des Goldsatzes mit den Rueckfrage-Issues ab (siehe Moduldoku).
+
+    `oeffentlich`: die Konfiguration des Ziels (`Ziel.oeffentlich`). Code-Ausschnitte nur, wenn sie das nicht sagt UND
+    GitHub das Repo als privat meldet (D6: Konfiguration ODER GitHub sagt oeffentlich -> kein Ausschnitt).
 
     `noch_tot`: Symbole, die die gespeicherte Analyse noch als toten Code fuehrt (jede Stufe).
     `commit`: SHA des vermessenen Stands (nur fuer den Erledigt-Kommentar, 7 Zeichen).
@@ -444,7 +470,7 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
         try:
             for name, farbe, beschreibung in _LABELS:
                 gh.label_sicherstellen(repo, name, farbe, beschreibung)
-            privat = gh.ist_privat(repo)  # Code-Ausschnitte nur in private Ziele
+            privat = not oeffentlich and gh.ist_privat(repo)  # Code-Ausschnitte nur in private Ziele (D6)
         except GitHubFehler as f:
             b.fehler = f.art
             return b

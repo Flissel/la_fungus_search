@@ -33,27 +33,64 @@ class Schtasks:
         return self.antworten.get(argv[0], (0, ""))
 
 
-def _xml(wurzel: Path) -> str:
-    return auto.aufgabe_xml(PY, wurzel, REPO, heute=date(2026, 11, 6))
+def _xml(wurzel: Path, log: Path | None = None) -> str:
+    return auto.aufgabe_xml(PY, wurzel, REPO, log=log, heute=date(2026, 11, 6))
 
 
 def test_xml_hat_taeglich_0730_und_nachholen(tmp_path: Path) -> None:
     wurzel = tmp_path / "Mein Repo"
-    r = ET.fromstring(_xml(wurzel))
+    log = tmp_path / "Bericht Ordner" / "auto-aufgabe.log"
+    r = ET.fromstring(_xml(wurzel, log))
     assert r.findtext(".//t:StartWhenAvailable", namespaces=NS) == "true"
     assert (r.findtext(".//t:StartBoundary", namespaces=NS) or "").endswith("T07:30:00")
     assert r.findtext(".//t:DaysInterval", namespaces=NS) == "1"
     assert r.findtext(".//t:LogonType", namespaces=NS) == "InteractiveToken"
     assert r.findtext(".//t:MultipleInstancesPolicy", namespaces=NS) == "IgnoreNew"
     assert r.findtext(".//t:ExecutionTimeLimit", namespaces=NS) == "PT2H"
-    assert r.findtext(".//t:Exec/t:Command", namespaces=NS) == str(PY)
-    assert r.findtext(".//t:Exec/t:Arguments", namespaces=NS) == f'-m selbstbild auto "{wurzel}"'
     assert r.findtext(".//t:Exec/t:WorkingDirectory", namespaces=NS) == str(REPO)
 
 
-def test_xml_maskiert_sonderzeichen(tmp_path: Path) -> None:
-    r = ET.fromstring(auto.aufgabe_xml(PY, tmp_path / "a&b<c>", REPO))
-    assert "a&b<c>" in (r.findtext(".//t:Exec/t:Arguments", namespaces=NS) or "")
+def test_xml_startet_ohne_fenster_mit_log(tmp_path: Path) -> None:
+    """R14: wie `VibeMind Doku-Loop` ueber `conhost.exe --headless cmd /c`, Ausgabe ins Log im Bericht-Ordner."""
+    wurzel = tmp_path / "Mein Repo"
+    log = tmp_path / "Bericht Ordner" / "auto-aufgabe.log"
+    r = ET.fromstring(_xml(wurzel, log))
+    assert r.findtext(".//t:Exec/t:Command", namespaces=NS) == "conhost.exe"
+    args = r.findtext(".//t:Exec/t:Arguments", namespaces=NS) or ""
+    assert args.startswith("--headless cmd /c ")
+    assert f'""{PY}" -m selbstbild auto "{wurzel}"' in args
+    assert args.endswith(f' >> "{log}" 2>&1"')
+    assert args == f'--headless cmd /c ""{PY}" -m selbstbild auto "{wurzel}" >> "{log}" 2>&1"'
+
+
+def test_xml_log_vorgabe_im_bericht_ordner(tmp_path: Path) -> None:
+    from selbstbild.funde.bericht import bericht_ordner_standard
+    args = ET.fromstring(_xml(tmp_path)).findtext(".//t:Exec/t:Arguments", namespaces=NS) or ""
+    assert f'>> "{bericht_ordner_standard(tmp_path) / "auto-aufgabe.log"}" 2>&1"' in args
+
+
+def test_sonderzeichen_fuer_cmd_verweigert(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(ValueError):
+        auto.aufgabe_xml(PY, tmp_path / "a&b", REPO)
+    s = Schtasks()
+    assert auto.aufgabe(tmp_path / "a&b", "einrichten", trocken=False, schtasks=s, ordner=tmp_path / "b",
+                        probe=ok) == 1
+    assert s.aufrufe == [] and "nicht eingerichtet" in capsys.readouterr().out
+
+
+def test_einrichten_schreibt_log_in_den_ordner(tmp_path: Path) -> None:
+    s = Schtasks()
+    assert auto.aufgabe(tmp_path, "einrichten", trocken=False, schtasks=s, python=PY, arbeitsordner=REPO,
+                        ordner=tmp_path / "bericht", probe=ok) == 0
+    assert f'>> "{tmp_path / "bericht" / "auto-aufgabe.log"}" 2>&1"' in (s.xml_inhalt or "").replace("&gt;", ">") \
+        .replace("&amp;", "&")
+
+
+def test_pruefen_alte_aktion_ohne_conhost_weicht_ab(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    alt = _xml(tmp_path).replace("<Command>conhost.exe</Command>", f"<Command>{PY}</Command>")
+    s = Schtasks({"/Query": (0, alt)})
+    assert auto.aufgabe(tmp_path, "pruefen", trocken=False, schtasks=s, python=PY, arbeitsordner=REPO, probe=ok) == 1
+    assert "aktion weicht ab" in capsys.readouterr().out
 
 
 def test_einrichten_ruft_create_mit_xml(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

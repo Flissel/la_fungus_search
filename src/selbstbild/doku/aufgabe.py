@@ -154,15 +154,21 @@ def _cmd_sicher(wert: str, was: str) -> str:
     return wert
 
 
-def neue_argumente(python: str | Path, wurzel: str | Path) -> str:
-    """`--headless cmd /c ""<python>" -m selbstbild doku tick "<wurzel>" >> "<wurzel>\\logs\\doku-loop.log" 2>&1"`.
+def headless_argumente(python: str | Path, befehl: str, wurzel: str | Path, log: str | Path) -> str:
+    """Arguments fuer `conhost.exe`: `--headless cmd /c ""<python>" -m selbstbild <befehl> "<wurzel>" >> "<log>"
+    2>&1"` (kein Fenster, Ausgabe ans Log angehaengt). Auch `auto aufgabe` baut seine Aktion hiermit.
 
     cmd /c mit mehr als zwei Anfuehrungszeichen entfernt nur das erste und das letzte; uebrig bleibt
-    `"<python>" -m selbstbild doku tick "<wurzel>" >> "<log>" 2>&1` (getestet mit dem echten cmd)."""
+    `"<python>" -m selbstbild <befehl> "<wurzel>" >> "<log>" 2>&1` (getestet mit dem echten cmd)."""
     py = _cmd_sicher(str(python), "Python-Pfad")
     w = _cmd_sicher(str(PureWindowsPath(str(wurzel))), "Wurzel")
-    log = str(PureWindowsPath(w, *LOG_REL))
-    return f'--headless cmd /c ""{py}" -m selbstbild doku tick "{w}" >> "{log}" 2>&1"'
+    lg = _cmd_sicher(str(PureWindowsPath(str(log))), "Log-Pfad")
+    return f'--headless cmd /c ""{py}" -m selbstbild {befehl} "{w}" >> "{lg}" 2>&1"'
+
+
+def neue_argumente(python: str | Path, wurzel: str | Path) -> str:
+    """`--headless cmd /c ""<python>" -m selbstbild doku tick "<wurzel>" >> "<wurzel>\\logs\\doku-loop.log" 2>&1"`."""
+    return headless_argumente(python, "doku tick", wurzel, PureWindowsPath(str(wurzel), *LOG_REL))
 
 
 def neue_aktion(python: str | Path, wurzel: str | Path, working_directory: str | None = None) -> Aktion:

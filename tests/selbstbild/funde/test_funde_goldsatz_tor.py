@@ -163,6 +163,20 @@ def test_antworten_crlf_bleibt_erhalten(tmp_path: Path) -> None:
     assert p.read_bytes() == b"tot:\r\n- symbol: a\r\n  urteil: ja\r\n  bleibt: true\r\n"
 
 
+@pytest.mark.parametrize(("roh", "erwartet"), [
+    (b"tot:\n- symbol: a\n  urteil: unklar", b"tot:\n- symbol: a\n  urteil: ja\n  bleibt: true"),
+    (b"tot:\r\n- symbol: a\r\n  urteil: unklar", b"tot:\r\n- symbol: a\r\n  urteil: ja\r\n  bleibt: true"),
+])
+def test_antworten_bleibt_ohne_schluss_umbruch(tmp_path: Path, roh: bytes, erwartet: bytes) -> None:
+    """R17-1: steht `urteil:` als letzte Zeile ohne Umbruch, bekommt die eingefuegte `bleibt:`-Zeile eine eigene."""
+    p = tmp_path / "ende.yaml"
+    p.write_bytes(roh)
+    assert antworten_uebernehmen(p, {"a": ("ja", True)}) != ""
+    assert p.read_bytes() == erwartet
+    e = yaml.safe_load(p.read_text(encoding="utf-8"))["tot"][0]
+    assert e["urteil"] == "ja" and e["bleibt"] is True
+
+
 def test_antworten_uebernehmen_idempotent(tmp_path: Path) -> None:
     import os
 

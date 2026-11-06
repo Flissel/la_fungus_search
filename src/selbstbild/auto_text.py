@@ -105,7 +105,11 @@ def rueckfrage_zeilen(rb: RueckfrageBericht, gemeldet: dict[str, list[Any]],
                for nr in rb.doppelt_beantwortet if nr not in alt_doppelt]
     alt_wartet = set(gemeldet.get("wartet") or [])
     zeilen += [f"Antwort wartet: {w}" for w in rb.wartet if kurz_hash(w) not in alt_wartet]
-    neu = {"doppelt": sorted(set(rb.doppelt_beantwortet)), "wartet": sorted({kurz_hash(w) for w in rb.wartet})}
+    doppelt, wartet = set(rb.doppelt_beantwortet), {kurz_hash(w) for w in rb.wartet}
+    if rb.fehler:  # R17-5: abgebrochen (z. B. Bestand unlesbar): Bericht unvollstaendig, Gemeldetes nicht vergessen
+        doppelt |= alt_doppelt
+        wartet |= alt_wartet
+    neu = {"doppelt": sorted(doppelt), "wartet": sorted(wartet)}
     kontext = [f"Rückfragen: {n}" for n in rb.notizen] if trocken else []
     return zeilen, kontext, neu
 

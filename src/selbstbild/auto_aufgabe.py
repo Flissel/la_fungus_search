@@ -3,6 +3,9 @@
 `python -m selbstbild auto aufgabe <wurzel> [--pruefen | --zurueck] [--trocken]`. schtasks wird eingespeist
 (`schtasks`), damit Tests nie die echte Aufgabenplanung anfassen. Exit 0 = getan bzw. bereit, 1 = Fehler, fehlt oder
 Aktion weicht ab. Das Einrichten ist ein Live-Schalter und braucht das OK des Users.
+
+Die Aktion startet wie `VibeMind Doku-Loop` ueber `conhost.exe --headless cmd /c` (kein Fenster; stdout und stderr
+von `auto` haengen an `LOG_DATEI` im Bericht-Ordner, R14). Die Laufzeit begrenzt `auto` selbst (`FRIST_S`, R15).
 """
 from __future__ import annotations
 
@@ -18,11 +21,13 @@ from pathlib import Path
 from typing import Literal
 from xml.sax.saxutils import escape
 
-from .doku.aufgabe import STANDARD_PYTHON, import_pruefen
+from .doku.aufgabe import STANDARD_PYTHON, headless_argumente, import_pruefen
 from .funde.bericht import bericht_ordner_standard
 
 AUFGABE = "VibeMind Selbstbild-Funde"
-__all__ = ["AUFGABE", "aufgabe", "aufgabe_xml", "standard_schtasks"]
+LOG_DATEI = "auto-aufgabe.log"  # im Bericht-Ordner; stdout und stderr von `auto` (R14)
+KOMMANDO = "conhost.exe"  # wie `VibeMind Doku-Loop`: --headless, kein Fenster, Schliessen beendet nichts
+__all__ = ["AUFGABE", "LOG_DATEI", "aufgabe", "aufgabe_xml", "standard_schtasks"]
 _KEIN_FENSTER = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _NS = "http://schemas.microsoft.com/windows/2004/02/mit/task"
 _ARBEITSORDNER = Path(__file__).resolve().parents[2]  # Wurzel des selbstbild-Repos
@@ -31,10 +36,17 @@ MODUL = "selbstbild.auto"  # das muss das Python der Aufgabe ohne PYTHONPATH im 
 NICHT_GEFUNDEN = re.compile(r"nicht finden|nicht gefunden|not find|cannot find|does not exist|0x80070002",
                             re.IGNORECASE)
 FEHLER_START = 255  # schtasks selbst lief nicht (Rueckgabe von standard_schtasks)
+_PYTHON_IN_ARGS = re.compile(r'^--headless\s+cmd\s+/c\s+""([^"]+)"', re.IGNORECASE)
 
 
-def aufgabe_xml(python: Path, wurzel: Path, arbeitsordner: Path, *, heute: date | None = None) -> str:
-    """Task-Scheduler-XML: taeglich 07:30, verpassten Start nachholen, nur bei Anmeldung (InteractiveToken)."""
+def aufgabe_xml(python: Path, wurzel: Path, arbeitsordner: Path, *, log: Path | None = None,
+                heute: date | None = None) -> str:
+    """Task-Scheduler-XML: taeglich 07:30, verpassten Start nachholen, nur bei Anmeldung (InteractiveToken).
+
+    Aktion wie `VibeMind Doku-Loop` (R14): `conhost.exe --headless cmd /c ""<python>" -m selbstbild auto "<wurzel>"
+    >> "<log>" 2>&1"`; `log` ist sonst `LOG_DATEI` im Bericht-Ordner. ValueError bei Zeichen, die cmd umdeutet."""
+    log_pfad = Path(log) if log is not None else bericht_ordner_standard(Path(wurzel)) / LOG_DATEI
+    argumente = headless_argumente(python, "auto", wurzel, log_pfad)
     tag = (heute or date.today()).isoformat()
     return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="{_NS}">
@@ -60,8 +72,8 @@ def aufgabe_xml(python: Path, wurzel: Path, arbeitsordner: Path, *, heute: date 
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>{escape(str(python))}</Command>
-      <Arguments>{escape(f'-m selbstbild auto "{wurzel}"')}</Arguments>
+      <Command>{KOMMANDO}</Command>
+      <Arguments>{escape(argumente)}</Arguments>
       <WorkingDirectory>{escape(str(arbeitsordner))}</WorkingDirectory>
     </Exec>
   </Actions>
@@ -121,7 +133,12 @@ def aufgabe(wurzel: Path, modus: Literal["einrichten", "pruefen", "zurueck"], *,
     py = Path(python) if python is not None else Path(STANDARD_PYTHON)
     pruefer = probe if probe is not None else (lambda p, w: import_pruefen(p, w, MODUL))
     wd = Path(arbeitsordner) if arbeitsordner is not None else _ARBEITSORDNER
-    soll = aufgabe_xml(py, wurzel, wd)
+    ziel_ordner = Path(ordner) if ordner is not None else bericht_ordner_standard(wurzel)
+    try:
+        soll = aufgabe_xml(py, wurzel, wd, log=ziel_ordner / LOG_DATEI)
+    except ValueError as e:  # Zeichen, die cmd.exe umdeutet: die Aktion waere nicht sicher baubar
+        print(f"{AUFGABE}: nicht eingerichtet: {e}" if modus == "einrichten" else f"{AUFGABE}: fehler: {e}")
+        return 1
     if modus == "pruefen":
         befehl = ["/Query", "/TN", AUFGABE, "/XML"]
         if trocken:
@@ -140,7 +157,11 @@ def aufgabe(wurzel: Path, modus: Literal["einrichten", "pruefen", "zurueck"], *,
                 or os.path.normcase(ist[0]) != os.path.normcase(erwartet[0])):
             print(f"{AUFGABE}: aktion weicht ab (soll: {erwartet}, ist: {ist})")
             return 1
-        grund_py = pruefer(ist[0], Path(ist[2]) if ist[2] else wd)
+        treffer = _PYTHON_IN_ARGS.match(ist[1])  # Command ist conhost.exe; das Python steht in den Arguments
+        if treffer is None:
+            print(f"{AUFGABE}: aktion weicht ab (kein Python in den Arguments: {ist[1]})")
+            return 1
+        grund_py = pruefer(treffer.group(1), Path(ist[2]) if ist[2] else wd)
         if grund_py is not None:
             print(f"{AUFGABE}: python importiert selbstbild nicht ({grund_py})")
             return 1
@@ -154,7 +175,6 @@ def aufgabe(wurzel: Path, modus: Literal["einrichten", "pruefen", "zurueck"], *,
         rc, aus = schtasks(befehl)
         print(f"{AUFGABE}: " + ("entfernt" if rc == 0 else f"nicht entfernt ({aus.strip()[:200]})"))
         return 0 if rc == 0 else 1
-    ziel_ordner = Path(ordner) if ordner is not None else bericht_ordner_standard(wurzel)
     if not trocken:
         grund_py = pruefer(str(py), wd)
         if grund_py is not None:
@@ -165,7 +185,7 @@ def aufgabe(wurzel: Path, modus: Literal["einrichten", "pruefen", "zurueck"], *,
         print(f"trocken: Python {py} (Import-Probe entfaellt)")
         print(f"trocken: schtasks /Create /TN {AUFGABE} /XML {datei} /F\n{soll}")
         return 0
-    ziel_ordner.mkdir(parents=True, exist_ok=True)
+    ziel_ordner.mkdir(parents=True, exist_ok=True)  # auch fuer das Log: cmd legt keinen Ordner an
     fd, name = tempfile.mkstemp(dir=ziel_ordner, prefix="aufgabe-", suffix=".xml")
     datei = Path(name)
     try:

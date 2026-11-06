@@ -49,10 +49,11 @@ def gold(git_repo: Any) -> Any:
 
 
 def _lauf(fake: FakeGh, gold_pfad: Path, tmp_path: Path, *, senden: bool = True,
-          noch_tot: frozenset[str] = ALLE_TOT, stand: dict[str, Any] | None = None, wurzel: Path | None = None):
+          noch_tot: frozenset[str] = ALLE_TOT, stand: dict[str, Any] | None = None, wurzel: Path | None = None,
+          **kw: Any):
     gh = GitHub("Flissel", laufzeit=fake)
     return rueckfragen_abgleichen(wurzel or tmp_path / "code", gold_pfad, gh, REPO, senden=senden,
-                                  noch_tot=noch_tot, commit=COMMIT, stand={} if stand is None else stand)
+                                  noch_tot=noch_tot, commit=COMMIT, stand={} if stand is None else stand, **kw)
 
 
 def _rf(fake: FakeGh, sym: str, labels: tuple[str, ...] = (), *, state: str = "open") -> int:
@@ -146,6 +147,20 @@ def test_oeffentliches_ziel_ohne_ausschnitt(gold: Any, git_repo: Any, tmp_path: 
     fake = FakeGh()
     fake.privat = False
     b = _lauf(fake, g, tmp_path, wurzel=code.wurzel)
+    body = _rueckfragen(fake)[0]["body"]
+    assert b.neu and "```" not in body and "def f0" not in body
+
+
+def test_oeffentlich_konfiguriert_ohne_ausschnitt_auch_wenn_github_privat(gold: Any, git_repo: Any,
+                                                                         tmp_path: Path) -> None:
+    """R17-6 (D6): Konfiguration ODER GitHub sagt oeffentlich -> kein Ausschnitt."""
+    code = type(git_repo)(tmp_path / "vibemind", git_repo._env)
+    code.datei("pkg/a.py", "def f0():\n    return 1\n")
+    code.commit("code")
+    g = gold([(_sym(0), "unklar")])
+    fake = FakeGh()
+    assert fake.privat is True
+    b = _lauf(fake, g, tmp_path, wurzel=code.wurzel, oeffentlich=True)
     body = _rueckfragen(fake)[0]["body"]
     assert b.neu and "```" not in body and "def f0" not in body
 
@@ -445,3 +460,28 @@ def test_kopf_unlesbar_nach_commit_kein_fragezeichen(gold: Any, git_repo: Any, t
     b2 = _lauf(fake, g, tmp_path)
     assert b2.uebernommen == [n]
     assert _kommentare(fake, n) == ["Antwort übernommen: ja (Goldsatz-Commit schon übernommen)."]
+
+
+# ---------- Final-Fix-Welle (R17-1) ----------
+
+def test_yaml_kaputt_nach_uebernehmen_datei_zurueck_wartet(gold: Any, git_repo: Any, tmp_path: Path,
+                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    """Liefert das Eintragen eine Datei, deren Eintrag nicht das erwartete Urteil/bleibt hat (oder die gar kein
+    YAML mehr ist), wird nichts committet: Datei auf HEAD, Antwort wartet (`yaml_kaputt`)."""
+    import selbstbild.funde.rueckfrage as rf
+
+    g = gold([(_sym(0), "unklar")])
+    roh = g.read_bytes()
+    vorher = git_repo.git("rev-parse", "HEAD")
+    for kaputt in (b"tot: [unvollstaendig\n", roh.replace(b"urteil: unklar", b"urteil: nein")):
+        def falsch(pfad: Path, antworten: dict[str, tuple[str, bool]], inhalt: bytes = kaputt) -> str:
+            pfad.write_bytes(inhalt)
+            return "diff"
+        monkeypatch.setattr(rf, "antworten_uebernehmen", falsch)
+        fake = FakeGh()
+        n = _rf(fake, _sym(0), ("antwort:bleibt",))
+        b = _lauf(fake, g, tmp_path)
+        assert b.wartet == [f"#{n} f0: yaml_kaputt"] and b.uebernommen == [] and b.fehler is None
+        assert g.read_bytes() == roh and git_repo.git("rev-parse", "HEAD") == vorher
+        assert git_repo.git("status", "--porcelain") == ""
+        assert fake.issues[n]["state"] == "open" and _kommentare(fake, n) == []

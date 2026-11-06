@@ -22,6 +22,11 @@ Festlegungen dieses Moduls (Builder, Spec 5):
   zaehlen beim naechsten Lauf nicht als Aenderung.
 - `label_fehlt` bei den Rueckfragen sperrt das Ziel fuer beide Wege (`auto-stand.json` und `issues-*.json` wie
   `sync`), bis ein Mensch den Eintrag unter `sperren` loescht.
+- Gesamtfrist `FRIST_S` je Lauf (R15): jedes Kind bekommt die Restzeit als Timeout; Ablauf = Fehler
+  `<schritt>, TimeoutExpired`. So bleibt der Lauf unter dem stillen Abbruch der Aufgabenplanung (PT2H).
+- Ein Fehler oder Ueberspringen wird einmal gemeldet; haelt er laenger als `ERINNERN_AB_TAGEN` Tage an, nennt ihn
+  jeder Montag noch einmal (R16, `fehler_seit`, `fehler_erinnert_tag`).
+- `funde` mit Exit 3 (anderer Sendelauf): das Tor bleibt stehen, der naechste Lauf versucht es erneut (R17-3).
 """
 from __future__ import annotations
 
@@ -30,16 +35,17 @@ import hashlib
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from .analyse.lauf import gespeicherte_analyse
 from .auto_aufgabe import AUFGABE, aufgabe, aufgabe_xml, standard_schtasks
-from .auto_text import (ERSATZ_TEXT, MAX_TEXT, TEXT_KOPF, erinnerungen, funde_zeilen, nachricht, nummer,
-                        rueckfrage_zeilen, ziel_fehler)
+from .auto_text import (ERINNERN_AB_TAGEN, ERSATZ_TEXT, MAX_TEXT, TEXT_KOPF, erinnerungen, funde_zeilen, nachricht,
+                        nummer, rueckfrage_zeilen, ziel_fehler)
 from .doku.konfig import aus_regeln
 from .doku.schluessel import sieht_aus_wie_schluessel
 from .doku.schreibvorgang import kopf, kopf_pruefen
@@ -55,11 +61,12 @@ MIN_FREI_GB = 3.0
 STAND_DATEI = "auto-stand.json"
 SPERRE = "auto.lock"
 STAND_VERSION = 1
-KIND_TIMEOUT_S = 3600.0
+FRIST_S = 6000.0  # R15: Gesamtfrist je Lauf (100 min) unter ExecutionTimeLimit PT2H; jedes Kind bekommt die Restzeit
 TELEGRAM_TIMEOUT_S = 60.0
 MAX_AUSSTEHEND = 60
 ZURUECKGEHALTEN = "[Zeile zurückgehalten: Schlüssel-Verdacht]"
-__all__ = ["AUFGABE", "ERSATZ_TEXT", "MAX_TEXT", "MIN_FREI_GB", "SPERRE", "STAND_DATEI", "TEXT_KOPF", "Werkzeuge",
+__all__ = ["AUFGABE", "ERSATZ_TEXT", "FRIST_S", "MAX_TEXT", "MIN_FREI_GB", "SPERRE", "STAND_DATEI", "TEXT_KOPF",
+           "Werkzeuge",
            "antworten_signatur", "aufgabe", "aufgabe_xml", "frei_gb_standard", "kind_standard", "lauf",
            "letztes_json", "nachricht", "stand_laden", "standard_schtasks", "standard_werkzeuge",
            "telegram_standard"]
@@ -70,8 +77,9 @@ _KEIN_FENSTER = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 @dataclass
 class Werkzeuge:
-    """Alles, was der Lauf nach aussen tut; fuer Tests injizierbar."""
-    kind: Callable[[list[str], Path], int]
+    """Alles, was der Lauf nach aussen tut; fuer Tests injizierbar. `kind(argv, log, timeout_s)`: `timeout_s` ist die
+    Restzeit der Gesamtfrist; laeuft sie ab, wird das Kind beendet (`subprocess.TimeoutExpired`)."""
+    kind: Callable[[list[str], Path, float], int]
     frei_gb: Callable[[], float | None]
     telegram: Callable[[str], bool]
     gh_fabrik: Callable[[str], GitHub]
@@ -79,14 +87,16 @@ class Werkzeuge:
     ordner: Path
     goldsatz: Path | None = None  # Vorgabe: goldsatz_standard(<aussen>)
     stand_basis: Path | None = None  # Basis des Issue-Stands von `sync` (Vorgabe: stand_basis())
+    uhr: Callable[[], float] = time.monotonic  # Sekunden, fuer die Gesamtfrist (R15)
 
 
-def kind_standard(argv: list[str], log: Path) -> int:
-    """Kindprozess mit stdout und stderr in `log`, stdin leer, ohne Fenster; liefert den Exit-Code."""
+def kind_standard(argv: list[str], log: Path, timeout_s: float) -> int:
+    """Kindprozess mit stdout und stderr in `log`, stdin leer, ohne Fenster; liefert den Exit-Code. Nach `timeout_s`
+    beendet `subprocess.run` das Kind und wirft `TimeoutExpired` (der Lauf meldet `<schritt>, TimeoutExpired`)."""
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "wb") as f:
         lauf_ = subprocess.run(argv, stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                               creationflags=_KEIN_FENSTER, timeout=KIND_TIMEOUT_S, check=False)
+                               creationflags=_KEIN_FENSTER, timeout=timeout_s, check=False)
     return lauf_.returncode
 
 
@@ -161,15 +171,16 @@ def _hash_datei(pfad: Path) -> str | None:
 
 
 def antworten_signatur(bestand: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Je Rueckfrage (Marke) mit mindestens einem Antwort-Label: offen ja/nein und die Antwort-Labels."""
+    """Je OFFENE Rueckfrage (Marke) mit mindestens einem Antwort-Label die Antwort-Labels (R17-2). Geschlossene zaehlen
+    nicht: sonst hielte ein laengst beantwortetes Issue das Tor offen."""
     sig: dict[str, dict[str, Any]] = {}
     for issue in bestand:
         nr = nummer(issue)
-        if nr is None or not _MARKE.search(_body(issue)):
+        if nr is None or issue.get("state") != "open" or not _MARKE.search(_body(issue)):
             continue
         gesetzt = sorted(x for x in _labels(issue) if x in ANTWORTEN)
         if gesetzt:
-            sig[str(nr)] = {"offen": issue.get("state") == "open", "labels": gesetzt}
+            sig[str(nr)] = {"offen": True, "labels": gesetzt}
     return sig
 
 
@@ -181,8 +192,7 @@ def _signatur_nach_lauf(sig: dict[str, dict[str, Any]] | None,
         return None
     neu = {k: dict(v) for k, v in sig.items()}
     for nr in [*rb.uebernommen, *rb.erledigt]:
-        if str(nr) in neu:
-            neu[str(nr)]["offen"] = False
+        neu.pop(str(nr), None)  # jetzt geschlossen: zaehlt nicht mehr (R17-2)
     return neu
 
 
@@ -192,7 +202,7 @@ def _leerer_stand() -> dict[str, Any]:
     return {"version": STAND_VERSION, "kopf": None, "goldsatz_hash": None, "antworten": None,
             "letzte_nachricht_tag": None, "letzter_fehler": None, "ausstehend": [], "letzter_lauf": None,
             "ergebnis": None, "rueckfrage": {}, "tor": None, "sperren": {}, "gemeldet": {"doppelt": [], "wartet": []},
-            "erinnert_tag": None}
+            "erinnert_tag": None, "fehler_seit": None, "fehler_erinnert_tag": None}
 
 
 def stand_laden(pfad: Path) -> tuple[dict[str, Any], str | None]:
@@ -222,7 +232,7 @@ def stand_laden(pfad: Path) -> tuple[dict[str, Any], str | None]:
         return lambda v: isinstance(v, list) and all(isinstance(x, art) and not isinstance(x, bool) for x in v)
 
     for k in ("kopf", "goldsatz_hash", "letzte_nachricht_tag", "letzter_fehler", "letzter_lauf", "ergebnis", "tor",
-              "erinnert_tag"):
+              "erinnert_tag", "fehler_seit", "fehler_erinnert_tag"):
         nehmen(k, lambda v: isinstance(v, str))
     nehmen("antworten", lambda v: isinstance(v, dict))
     nehmen("ausstehend", ist_liste_von(str))
@@ -273,6 +283,7 @@ class _Lauf:
         self.ergebnis = "ok"
         self.geschlossen: set[int] = set()  # in diesem Lauf geschlossene Rueckfragen (keine Erinnerung)
         self.start_fehler: str | None = None
+        self.frist = 0.0  # Ende der Gesamtfrist (`w.uhr`), gesetzt beim Start des Ablaufs
         self.stand = _leerer_stand()
         try:
             zeit = w.jetzt()
@@ -303,9 +314,25 @@ class _Lauf:
     def _melden(self, schluessel: str, zeile: str, art: str) -> None:
         if schluessel != self.stand["letzter_fehler"]:  # derselbe Fehler wird nicht noch einmal gemeldet
             self.zeilen.append(zeile)
+            self.stand["fehler_seit"] = self.heute.isoformat()
+        else:
+            self._dauer_melden(zeile)
         self.stand["letzter_fehler"] = schluessel
         self.ergebnis = f"{art}:{schluessel}"
         self.abschliessen()
+
+    def _dauer_melden(self, zeile: str) -> None:
+        """R16: montags (einmal je Montag) erneut nennen, was seit mehr als `ERINNERN_AB_TAGEN` Tagen anhaelt."""
+        try:
+            seit = date.fromisoformat(str(self.stand["fehler_seit"]))
+        except ValueError:  # fehlt (alter Stand) oder kaputt: ab heute zaehlen
+            self.stand["fehler_seit"] = self.heute.isoformat()
+            return
+        tage = (self.heute - seit).days
+        tag = self.heute.isoformat()
+        if self.zeit.weekday() == 0 and tage > ERINNERN_AB_TAGEN and self.stand["fehler_erinnert_tag"] != tag:
+            self.zeilen.append(f"{zeile} (hält seit {tage} Tagen an)")
+            self.stand["fehler_erinnert_tag"] = tag
 
     def abschliessen(self) -> None:
         neu = self.zeilen + (self.kontext if self.zeilen else [])
@@ -371,6 +398,7 @@ class _Lauf:
             return 1
 
     def _ablauf(self) -> int:
+        self.frist = float(self.w.uhr()) + FRIST_S  # R15: Gesamtfrist, die Kinder teilen sich die Restzeit
         self.schritt = "konfig"
         zweig = aus_regeln(self.wurzel).zweig
         aussen = _aussen_name(self.wurzel)
@@ -395,7 +423,7 @@ class _Lauf:
         montag = self.zeit.weekday() == 0
         if (kopf_jetzt is not None and kopf_jetzt == self.stand["kopf"] and sig is not None
                 and sig == self.stand["antworten"] and _hash_datei(gold) == self.stand["goldsatz_hash"]):
-            self.stand["letzter_fehler"] = None
+            self.stand.update(letzter_fehler=None, fehler_seit=None)
             self.ergebnis = "unveraendert"
             if montag:
                 self._erinnern(bestand)
@@ -411,6 +439,7 @@ class _Lauf:
 
         self.schritt = "rueckfragen"
         sig_nachher = self._rueckfragen(ziel, gh, gold, sig)
+        gold_hash = _hash_datei(gold)  # R17-4: direkt nach den Rueckfragen (eigener Commit ja, Aenderungen danach nein)
 
         self.schritt = "funde"
         rc = self._kind("funde", [] if self.trocken else ["--senden"])
@@ -429,8 +458,9 @@ class _Lauf:
         elif daten is None:
             raise _Abbruch("funde", "json_fehlt")
 
-        self.stand.update(kopf=kopf_jetzt, goldsatz_hash=_hash_datei(gold), antworten=sig_nachher,
-                          letzter_fehler=None)
+        if rc != 3:  # R17-3: bei Exit 3 bleibt das Tor stehen (alter kopf), der naechste Lauf versucht es erneut
+            self.stand.update(kopf=kopf_jetzt, goldsatz_hash=gold_hash, antworten=sig_nachher)
+        self.stand.update(letzter_fehler=None, fehler_seit=None)
         if montag:
             self._erinnern(bestand)
         self.ergebnis = "ok"
@@ -438,8 +468,12 @@ class _Lauf:
         return 0
 
     def _kind(self, schritt: str, extra: list[str]) -> int:
+        """Ein Kind mit der Restzeit der Gesamtfrist; ist sie schon aufgebraucht, startet es nicht (R15)."""
+        rest = self.frist - float(self.w.uhr())
+        if rest <= 0:
+            raise _Abbruch(schritt, "TimeoutExpired")
         argv = [sys.executable, "-m", "selbstbild", schritt, str(self.wurzel), *extra]
-        return int(self.w.kind(argv, Path(self.w.ordner) / f"auto-{schritt}.log"))
+        return int(self.w.kind(argv, Path(self.w.ordner) / f"auto-{schritt}.log", rest))
 
     def _rueckfrage_ziel(self, aussen: str) -> Ziel | None:
         datei = self.wurzel / REGELDATEI
@@ -498,7 +532,7 @@ class _Lauf:
             return uebersprungen
         teil = self.stand["rueckfrage"] if not self.trocken else dict(self.stand["rueckfrage"])
         rb = rueckfragen_abgleichen(self.wurzel, gold, gh, repo, senden=not self.trocken, noch_tot=noch_tot,
-                                    commit=commit, stand=teil)
+                                    commit=commit, stand=teil, oeffentlich=ziel.oeffentlich)
         self.ergebnis = "unterbrochen:nach_rueckfragen"  # bleibt nur stehen, wenn der Prozess hart abbricht
         self.schreiben()  # sofort sichern: ein spaeterer Absturz wiederholt keine Kommentare
         self.geschlossen |= {*rb.uebernommen, *rb.erledigt}

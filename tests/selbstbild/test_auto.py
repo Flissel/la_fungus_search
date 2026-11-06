@@ -78,6 +78,9 @@ class Umg:
         self.gh = FakeGh()
         self.konten: list[str] = []
         self.rueckfragen: list[dict[str, Any]] = []
+        self.mono = 1000.0  # gefaelschte monotone Uhr (Sekunden)
+        self.dauer: dict[str, float] = {}  # Laufzeit je Kind; laenger als die Restzeit -> TimeoutExpired
+        self.timeouts: list[float] = []
         monkeypatch.setattr(auto, "gespeicherte_analyse", self._keine_analyse)
 
     @staticmethod
@@ -92,9 +95,10 @@ class Umg:
     def rueckfrage_fake(self, monkeypatch: pytest.MonkeyPatch, bericht: RueckfrageBericht | None = None,
                         stand_setzen: dict[str, Any] | None = None) -> None:
         def fake(wurzel: Path, goldsatz_pfad: Path, gh: Any, repo: str, *, senden: bool,
-                 noch_tot: frozenset[str], commit: str, stand: dict[str, Any]) -> RueckfrageBericht:
+                 noch_tot: frozenset[str], commit: str, stand: dict[str, Any],
+                 oeffentlich: bool = False) -> RueckfrageBericht:
             self.rueckfragen.append({"senden": senden, "noch_tot": noch_tot, "commit": commit, "repo": repo,
-                                     "gold": goldsatz_pfad, "gh": gh})
+                                     "gold": goldsatz_pfad, "gh": gh, "oeffentlich": oeffentlich})
             if stand_setzen and senden:
                 stand.update(stand_setzen)
             return bericht if bericht is not None else RueckfrageBericht()
@@ -102,9 +106,17 @@ class Umg:
 
     # ---------- Werkzeuge ----------
 
-    def _kind(self, argv: list[str], log: Path) -> int:
+    def _kind(self, argv: list[str], log: Path, timeout_s: float) -> int:
+        import subprocess
+
         self.kinder.append(list(argv))
+        self.timeouts.append(timeout_s)
         schritt = argv[3]
+        dauer = self.dauer.get(schritt, 0.0)
+        if dauer > timeout_s:  # wie subprocess.run(timeout=...): Kind beendet, TimeoutExpired
+            self.mono += timeout_s
+            raise subprocess.TimeoutExpired(argv, timeout_s)
+        self.mono += dauer
         if schritt in self.beim_kind:
             self.beim_kind[schritt](argv, log)
         log.parent.mkdir(parents=True, exist_ok=True)
@@ -126,7 +138,7 @@ class Umg:
     def werkzeuge(self) -> auto.Werkzeuge:
         return auto.Werkzeuge(kind=self._kind, frei_gb=lambda: self.frei, telegram=self._telegram,
                               gh_fabrik=self._gh_fabrik, jetzt=lambda: self.uhr, ordner=self.ordner,
-                              goldsatz=self.gold, stand_basis=self.tmp / "issues-basis")
+                              goldsatz=self.gold, stand_basis=self.tmp / "issues-basis", uhr=lambda: self.mono)
 
     def lauf(self, *, trocken: bool = False) -> int:
         return auto.lauf(self.wurzel, trocken=trocken, werkzeuge=self.werkzeuge())
@@ -159,6 +171,7 @@ def test_konstanten() -> None:
     assert auto.AUFGABE == "VibeMind Selbstbild-Funde"
     assert auto.STAND_DATEI == "auto-stand.json"
     assert auto.SPERRE == "auto.lock"
+    assert auto.FRIST_S == 6000 and auto.FRIST_S < 7200  # R15: unter ExecutionTimeLimit PT2H und der Sperr-Grenze
 
 
 def test_ohne_aenderung_keine_nachricht_kein_kindprozess(u: Umg) -> None:
@@ -440,6 +453,7 @@ def test_rueckfragen_mit_noch_tot_aus_jeder_stufe_und_stand_sofort_gesichert(
     assert u.lauf() == 1
     r = u.rueckfragen[0]
     assert r["senden"] is True and r["repo"] == ZIEL and r["gold"] == u.gold and r["commit"] == "b" * 40
+    assert r["oeffentlich"] is False  # R17-6: die Konfiguration des Ziels (oeffentlich: false) reicht durch
     assert r["noch_tot"] == frozenset({SYMBOL, "symbol:aussen:app/b.py#g"})
     assert u.konten == ["tester"]
     assert gesichert and gesichert[0]["rueckfrage"] == {"kommentiert": [4]}
@@ -492,7 +506,8 @@ def test_antwort_uebernommen_mit_commit_und_tor_aendert_sich_nicht_durch_eigenes
     u.analyse(monkeypatch)
 
     def fake(wurzel: Path, goldsatz_pfad: Path, gh: Any, repo: str, *, senden: bool,
-             noch_tot: frozenset[str], commit: str, stand: dict[str, Any]) -> RueckfrageBericht:
+             noch_tot: frozenset[str], commit: str, stand: dict[str, Any],
+             oeffentlich: bool = False) -> RueckfrageBericht:
         u.rueckfragen.append({})
         u.gold.write_text("tot: [] # neu\n", encoding="utf-8")  # wie der Goldsatz-Commit
         u.gh.bestand[0]["state"] = "closed"
@@ -704,7 +719,7 @@ def test_stand_hat_alle_schluessel(u: Umg) -> None:
     assert u.lauf() == 0
     s = u.stand()
     for k in ("kopf", "goldsatz_hash", "antworten", "letzte_nachricht_tag", "letzter_fehler", "ausstehend",
-              "letzter_lauf", "ergebnis", "rueckfrage"):
+              "letzter_lauf", "ergebnis", "rueckfrage", "fehler_seit", "fehler_erinnert_tag"):
         assert k in s
     assert s["ergebnis"] == "ok"
 
@@ -734,3 +749,140 @@ def test_frei_gb_standard_liefert_zahl_oder_none() -> None:
 
 def test_telegram_standard_ohne_skript_false(tmp_path: Path) -> None:
     assert auto.telegram_standard(tmp_path, "hallo") is False
+
+
+# ---------- Final-Fix-Welle (R15, R16, R17) ----------
+
+def test_gesamtfrist_restzeit_je_kind(u: Umg) -> None:
+    u.dauer = {"vermessen": 2000.0, "analysieren": 3000.0}
+    assert u.lauf() == 0
+    assert u.timeouts == [auto.FRIST_S, auto.FRIST_S - 2000.0, auto.FRIST_S - 5000.0]
+
+
+def test_gesamtfrist_ueberschritten_bricht_kind_ab(u: Umg) -> None:
+    u.dauer = {"vermessen": 2500.0, "analysieren": 4000.0}
+    assert u.lauf() == 1
+    assert u.schritte() == ["vermessen", "analysieren"]
+    assert u.timeouts == [auto.FRIST_S, auto.FRIST_S - 2500.0]
+    assert len(u.texte) == 1 and "Selbstbild-Lauf fehlgeschlagen: analysieren, TimeoutExpired" in u.texte[0]
+    assert u.stand()["kopf"] is None
+
+
+def test_gesamtfrist_aufgebraucht_startet_kein_kind(u: Umg) -> None:
+    u.dauer = {"vermessen": float(auto.FRIST_S)}
+    assert u.lauf() == 1
+    assert u.schritte() == ["vermessen"]
+    assert "Selbstbild-Lauf fehlgeschlagen: analysieren, TimeoutExpired" in u.texte[0]
+
+
+def test_kind_standard_gibt_restzeit_als_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    gesehen: dict[str, Any] = {}
+
+    def run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:
+        gesehen.update(kw)
+        return subprocess.CompletedProcess(argv, 0)
+    monkeypatch.setattr(auto.subprocess, "run", run)
+    assert auto.kind_standard(["x"], tmp_path / "k.log", 123.0) == 0
+    assert gesehen["timeout"] == 123.0 and gesehen["stdin"] == subprocess.DEVNULL
+
+
+def test_dauerhaftes_ueberspringen_montags_erneut_genannt(u: Umg) -> None:
+    """R16: falscher Zweig an Tag 1, an den Tagen danach still; der Montag nach mehr als 7 Tagen nennt es einmal."""
+    u.repo.git("checkout", "-q", "-b", "anderer")
+    assert u.lauf() == 0  # Donnerstag 05.11.
+    assert len(u.texte) == 1 and "falscher_zweig" in u.texte[0]
+    for tag in range(1, 11):  # 06.11. bis 15.11., darunter Montag 09.11. (erst seit 4 Tagen)
+        u.uhr = TAG1 + timedelta(days=tag)
+        assert u.lauf() == 0
+    assert len(u.texte) == 1
+    u.uhr = TAG1 + timedelta(days=11)  # Montag 16.11.: seit 11 Tagen
+    assert u.lauf() == 0
+    assert len(u.texte) == 2
+    assert "übersprungen: Zweig nicht messbar (falscher_zweig)" in u.texte[1] and "11 Tagen" in u.texte[1]
+    u.uhr = TAG1 + timedelta(days=11, hours=3)  # zweiter Lauf am selben Montag
+    assert u.lauf() == 0
+    u.uhr = TAG1 + timedelta(days=12)
+    assert u.lauf() == 0
+    assert len(u.texte) == 2 and u.stand()["ausstehend"] == []
+    assert u.stand()["fehler_seit"] == TAG1.date().isoformat()
+    u.repo.git("checkout", "-q", "main")
+    u.uhr = TAG1 + timedelta(days=13)
+    assert u.lauf() == 0
+    assert u.stand()["letzter_fehler"] is None and u.stand()["fehler_seit"] is None
+
+
+def test_geschlossene_beantwortete_rueckfrage_haelt_tor_nicht_offen(u: Umg) -> None:
+    """R17-2: nur offene Rueckfragen mit Antwort-Label zaehlen fuer das Tor."""
+    u.gh.bestand = [{"number": 3, "state": "closed", "body": marke(SYMBOL), "created_at": "2026-11-01T00:00:00Z",
+                     "labels": [{"name": "selbstbild"}, {"name": "antwort:weg"}]}]
+    assert auto.antworten_signatur(u.gh.bestand) == {}
+    assert u.lauf() == 0
+    u.kinder.clear()
+    u.gh.bestand[0]["labels"].append({"name": "antwort:benutzt"})
+    u.uhr = TAG1 + timedelta(days=1)
+    assert u.lauf() == 0
+    assert u.kinder == []
+    offen = [{**u.gh.bestand[0], "state": "open"}]
+    assert auto.antworten_signatur(offen) == {"3": {"offen": True, "labels": ["antwort:benutzt", "antwort:weg"]}}
+
+
+def test_funde_exit_3_behaelt_alten_kopf(u: Umg) -> None:
+    """R17-3: ein anderer Sendelauf hielt die Sperre: der naechste Lauf versucht es erneut."""
+    u.rc["funde"] = 3
+    u.funde = None
+    assert u.lauf() == 0
+    assert u.stand()["kopf"] is None
+    u.rc.clear()
+    u.funde = _funde_json()
+    u.kinder.clear()
+    u.uhr = TAG1 + timedelta(days=1)
+    assert u.lauf() == 0
+    assert u.schritte() == ["vermessen", "analysieren", "funde"]
+    assert u.stand()["kopf"] == u.repo.git("rev-parse", "HEAD")
+
+
+def test_goldsatz_hash_direkt_nach_rueckfragen(u: Umg) -> None:
+    """R17-4: eine Goldsatz-Aenderung waehrend `funde` gilt beim naechsten Lauf als Aenderung."""
+    import hashlib
+
+    u.gold.parent.mkdir(parents=True)
+    u.gold.write_bytes(b"tot: []\n")
+
+    def aendern(argv: list[str], log: Path) -> None:
+        u.gold.write_bytes(b"tot: [] # waehrend funde\n")
+    u.beim_kind["funde"] = aendern
+    assert u.lauf() == 0
+    assert u.stand()["goldsatz_hash"] == hashlib.sha256(b"tot: []\n").hexdigest()
+    u.beim_kind.clear()
+    u.kinder.clear()
+    u.uhr = TAG1 + timedelta(days=1)
+    assert u.lauf() == 0
+    assert u.schritte() == ["vermessen", "analysieren", "funde"]
+
+
+def test_rueckfragen_fehler_vor_bestand_behaelt_gemeldet(u: Umg, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R17-5: ein Lauf mit unlesbarem Bestand setzt `gemeldet` nicht zurueck; der naechste gute meldet nicht neu."""
+    u.gold.parent.mkdir(parents=True)
+    u.gold.write_text("tot: []\n", encoding="utf-8")
+    u.analyse(monkeypatch)
+    gut = RueckfrageBericht(doppelt_beantwortet=[4], wartet=["#5 f: goldsatz_unsauber"],
+                            links={4: f"https://github.com/{ZIEL}/issues/4"})
+    berichte = [gut, RueckfrageBericht(fehler="http_502"), gut]
+
+    def fake(*_: Any, **__: Any) -> RueckfrageBericht:
+        return berichte.pop(0)
+    monkeypatch.setattr(auto, "rueckfragen_abgleichen", fake)
+    assert u.lauf() == 0
+    assert len(u.texte) == 1 and "#4" in u.texte[0] and "Antwort wartet" in u.texte[0]
+    gemeldet = u.stand()["gemeldet"]
+    u.neuer_commit()
+    u.uhr = TAG1 + timedelta(days=1)
+    assert u.lauf() == 1
+    assert len(u.texte) == 2 and "Selbstbild-Lauf fehlgeschlagen: rueckfragen, http_502" in u.texte[1]
+    assert u.stand()["gemeldet"] == gemeldet
+    u.neuer_commit(2)
+    u.uhr = TAG1 + timedelta(days=2)
+    assert u.lauf() == 0
+    assert len(u.texte) == 2 and u.stand()["ausstehend"] == []

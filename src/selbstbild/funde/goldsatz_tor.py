@@ -160,12 +160,16 @@ def antworten_uebernehmen(goldsatz_pfad: Path, antworten: dict[str, tuple[str, b
                 raise ValueError(f"Eintrag ohne urteil-Zeile: {symbol!r}")
             arbeit[urteilszeilen[n]] = (urteil, bleibt)
     ersatz: dict[int, list[str]] = {}  # Zeilenindex -> Ersatzzeilen (leer = Zeile entfernen)
+    umbruch = next((_ende(z) for z in zeilen if _ende(z)), "\n")  # Zeilenende der Datei (fuer die letzte Zeile)
     for i, (urteil, bleibt) in arbeit.items():
         ersatz[i] = [_urteil_setzen(zeilen[i], urteil)]
         einzug = zeilen[i][: len(zeilen[i]) - len(zeilen[i].lstrip())]
         j = _bleibt_zeile(zeilen, i)
         if bleibt and j is None:
-            ersatz[i].append(f"{einzug}bleibt: true{_ende(zeilen[i])}")
+            if not _ende(zeilen[i]):  # R17-1: `urteil:` ist die letzte Zeile ohne Umbruch: bleibt bekommt eine eigene
+                ersatz[i] = [ersatz[i][0] + umbruch, f"{einzug}bleibt: true"]
+            else:
+                ersatz[i].append(f"{einzug}bleibt: true{_ende(zeilen[i])}")
         elif bleibt and j is not None and not _BLEIBT_TRUE.match(zeilen[j].rstrip("\r\n")):
             ersatz[j] = [f"{einzug}bleibt: true{_ende(zeilen[j])}"]
         elif not bleibt and j is not None:
