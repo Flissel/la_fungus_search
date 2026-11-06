@@ -25,7 +25,7 @@ from selbstbild.funde.sync import (
     ziele_aus_regeln,
 )
 from selbstbild.funde.text import BEGIN, END
-from selbstbild.funde.typen import Fund, fund_schluessel
+from selbstbild.funde.typen import FremdAusgelassen, Fund, fund_schluessel
 from selbstbild.hooks import regeln_lesen
 from selbstbild.regeln import regeln_laden
 
@@ -160,10 +160,12 @@ def _stand(tmp_path: Path) -> IssueStand:
 
 def _lauf(fake: FakeGh | None, funde: list[Fund], tmp_path: Path, *, heute: date = TAG1, senden: bool = True,
           ziel: Ziel | None = None, unlesbar: frozenset[str] = frozenset(), commit: str = COMMIT,
-          geprueft: frozenset[str] = GEPRUEFT, pause_s: float = 0.0, pause: Any = None):
+          geprueft: frozenset[str] = GEPRUEFT, pause_s: float = 0.0, pause: Any = None,
+          fremd: FremdAusgelassen | None = None):
     gh = GitHub("Flissel", laufzeit=fake) if fake is not None else None
     return abgleichen(funde, ziel or _ziel(), gh, _stand(tmp_path), heute=heute, senden=senden, commit=commit,
-                      geprueft=geprueft, unlesbar=unlesbar, schreib_abstand_s=pause_s, pause=pause or _keine_pause)
+                      geprueft=geprueft, unlesbar=unlesbar, fremd_ausgelassen=fremd, schreib_abstand_s=pause_s,
+                      pause=pause or _keine_pause)
 
 
 def _keine_pause(s: float) -> None:
@@ -269,6 +271,36 @@ def test_fund_weg_schliesst(tmp_path: Path) -> None:
     assert (einzel["number"], "Fund im Code verschwunden (Commit `abc1234`)") in fake.kommentare
     assert (sammel["number"], "Sammlung leer: alle Funde im Code verschwunden (Commit `abc1234`)") in fake.kommentare
     assert {a.art for a in b.aktionen} == {"schliessen", "sammel_schliessen"}
+
+
+def test_fund_als_fremdcode_ausgenommen_schliesst_mit_eigenem_text(tmp_path: Path) -> None:
+    fake = FakeGh()
+    dop = [_fund(i, schwere="niedrig", art="doppelung") for i in range(2)]
+    _lauf(fake, dop, tmp_path)
+    (sammel,) = _sammel(fake)
+    assert sammel["state"] == "open"
+    fremd = FremdAusgelassen(frozenset(fund_schluessel(f) for f in dop), frozenset({("doppelung", "vibemind")}))
+    # Trockenlauf plant das Schliessen (Bedingung unveraendert), schreibt nichts
+    b0 = _lauf(fake, [], tmp_path, senden=False, fremd=fremd)
+    assert [a.art for a in b0.aktionen] == ["sammel_schliessen"] and sammel["state"] == "open"
+    _lauf(fake, [], tmp_path, fremd=fremd)
+    assert sammel["state"] == "closed"
+    assert (sammel["number"], "Sammlung leer: Funde als Fremdcode ausgenommen "
+            "(Regel fremdcode in selbstbild.yaml, Commit `abc1234`)") in fake.kommentare
+    assert not any("verschwunden" in t for n, t in fake.kommentare if n == sammel["number"])
+
+
+def test_einzel_fund_als_fremdcode_ausgenommen(tmp_path: Path) -> None:
+    fake = FakeGh()
+    f, g = _fund(1), _fund(2)
+    _lauf(fake, [f, g], tmp_path)
+    ei = {i["body"].split(" -->")[0]: i for i in _einzel(fake)}
+    fremd = FremdAusgelassen(frozenset({fund_schluessel(f)}), frozenset())
+    _lauf(fake, [], tmp_path, fremd=fremd)
+    nr_f = next(i["number"] for k, i in ei.items() if fund_schluessel(f).split(":")[1] in k)
+    nr_g = next(i["number"] for k, i in ei.items() if fund_schluessel(g).split(":")[1] in k)
+    assert (nr_f, "Fund als Fremdcode ausgenommen (Regel fremdcode in selbstbild.yaml, Commit `abc1234`)")         in fake.kommentare
+    assert (nr_g, "Fund im Code verschwunden (Commit `abc1234`)") in fake.kommentare
 
 
 def test_fehler_mitten_drin_kein_doppelt(tmp_path: Path) -> None:

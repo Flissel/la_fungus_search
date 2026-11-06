@@ -30,7 +30,7 @@ from ..regeln import REGELDATEI, regeln_laden
 from ..speicher import pfad_kennung
 from ..vermessen import stand_finden
 from .goldsatz_tor import ToterCodeTor
-from .typen import Fund, Schwere
+from .typen import FremdAusgelassen, Fund, Schwere, fund_schluessel
 
 # Ordnernamen, deren Inhalt "Tests, Beispiele, Vendor" ist (nicht produktiv), plus `fixtures`.
 # Zusaetzlich zaehlen Dateinamen `test_*.py`, `*_test.py`, `*.spec.ts`, `*.test.ts` (siehe `ist_nicht_produktiv`).
@@ -237,16 +237,16 @@ def _doppel_eintrag(d: Doppelung, funde: dict[str, Fund]) -> None:
         belege=tuple(pfade), anker=anker)
 
 
-def _fremd_anker(a: Analyse, fremd: Callable[[str], bool] | None) -> int:
-    """Zahl der verschiedenen Doppelungen, die `_doppel_funde` wegen Fremdcode auslaesst."""
-    anker: set[tuple[str, ...]] = set()
+def _fremd_funde(a: Analyse, fremd: Callable[[str], bool] | None) -> list[Fund]:
+    """Die Funde, die `_doppel_funde` wegen Fremdcode auslaesst (je Anker einer)."""
+    funde: dict[str, Fund] = {}
     for d in a.doppelungen:
         try:
             if _nur_fremd(d, fremd):
-                anker.add(tuple(sorted({_posix(m) for m in d.mitglieder})))
+                _doppel_eintrag(d, funde)
         except _FEHLERHAFT:
             continue
-    return len(anker)
+    return list(funde.values())
 
 
 def _tot_funde(a: Analyse) -> tuple[list[Fund], int]:
@@ -293,8 +293,12 @@ def geprueft_repos(wurzel: Path, *, doku_konfig: Konfig) -> frozenset[str]:
 
 
 def funde_sammeln(wurzel: Path, *, doku_konfig: Konfig, stand_unter: Path | None = None,
-                  tor: ToterCodeTor) -> tuple[list[Fund], list[str]]:
-    """Funde (nach Schwere, Art, Repo, Anker sortiert) und Hinweise. Schreibt nichts."""
+                  tor: ToterCodeTor,
+                  ausgelassen: list[FremdAusgelassen] | None = None) -> tuple[list[Fund], list[str]]:
+    """Funde (nach Schwere, Art, Repo, Anker sortiert) und Hinweise. Schreibt nichts.
+
+    `ausgelassen`: optionaler Sammler; bekommt (nur bei Fremdcode-Auslassungen) ein `FremdAusgelassen` angehaengt,
+    damit `abgleichen` Schliess-Kommentare ehrlich formulieren kann (F1)."""
     wurzel = Path(wurzel)
     aussen = _aussen_name(wurzel)
     notizen: list[str] = []
@@ -310,7 +314,11 @@ def funde_sammeln(wurzel: Path, *, doku_konfig: Konfig, stand_unter: Path | None
         fremd = (lambda graph_id: ist_fremd_id(pruefer, graph_id)) if fremdcode else None
         neu, kaputt = _doppel_funde(analyse, fremd)
         funde += neu
-        weg = _fremd_anker(analyse, fremd)
+        weg_funde = _fremd_funde(analyse, fremd)
+        weg = len(weg_funde)
+        if weg and ausgelassen is not None:
+            ausgelassen.append(FremdAusgelassen(frozenset(fund_schluessel(f) for f in weg_funde),
+                                                frozenset((f.art, f.code_repo) for f in weg_funde)))
         if weg:
             notizen.append(f"fremdcode: {weg} Doppelungen nur in Fremdcode ausgelassen")
         if kaputt:

@@ -18,7 +18,7 @@ from selbstbild.doku.konfig import aus_regeln
 from selbstbild.doku.pruefliste import pruefliste_pfad
 from selbstbild.funde.goldsatz_tor import ToterCodeTor
 from selbstbild.funde.sammeln import NICHT_PRODUKTIV, abweichend_ist_werkzeug, funde_sammeln, ist_nicht_produktiv
-from selbstbild.funde.typen import fund_schluessel
+from selbstbild.funde.typen import FremdAusgelassen, fund_schluessel
 from selbstbild.speicher import pfad_kennung
 
 OFFEN = ToterCodeTor(True, 30, 28, "offen: 28 von 30 bestätigt")
@@ -340,6 +340,18 @@ def test_doppelung_nur_fremd_entfaellt(umgebung) -> None:
     assert funde == []
     assert "fremdcode: 1 Doppelungen nur in Fremdcode ausgelassen" in notizen
     assert not any(n.startswith("quelle-unlesbar:") and "fremdcode" in n for n in notizen)
+
+
+def test_fremd_ausgelassen_meldet_schluessel_und_paare(umgebung) -> None:
+    wurzel, heim = umgebung
+    _mit_fremdcode(wurzel, heim, [_dop("datei:aussen/vibemind-os:openclaw/a.py",
+                                       "datei:aussen/vibemind-os:openclaw/b.py")])
+    aus: list[FremdAusgelassen] = []
+    funde, _ = funde_sammeln(wurzel, doku_konfig=aus_regeln(wurzel), tor=ZU, ausgelassen=aus)
+    assert funde == [] and len(aus) == 1
+    (paar,) = aus[0].paare
+    assert paar == ("doppelung", "aussen/vibemind-os")
+    assert len(aus[0].schluessel) == 1 and next(iter(aus[0].schluessel)).startswith("doppelung:")
 
 
 def test_doppelung_gemischt_bleibt(umgebung) -> None:

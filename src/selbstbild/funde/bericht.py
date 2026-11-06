@@ -53,7 +53,7 @@ from .sync import (
     ziele_aus_regeln,
 )
 from .text import _art_name, _zelle
-from .typen import ARTEN, Fund
+from .typen import ARTEN, FremdAusgelassen, Fund
 
 BERICHT_NAME = "funde-bericht.md"
 GIT_TIMEOUT_S = 30
@@ -273,6 +273,7 @@ class ZielErgebnis:
 def _abgleich_je_ziel(ziel: Ziel, fs: list[Fund], *, senden: bool, offline: bool, commit: str | None,
                       stand: IssueStand, heute: date, geprueft: frozenset[str], unlesbar: frozenset[str],
                       gh_fabrik: Callable[[str], GitHub], schliess_commit: str | None = None,
+                      fremd_ausgelassen: FremdAusgelassen | None = None,
                       pause: Callable[[float], None] | None = None,
                       schreib_abstand_s: float = SCHREIB_ABSTAND_S) -> ZielErgebnis:
     """`commit` (HEAD) entscheidet, ob abgeglichen wird; `schliess_commit` (der vermessene Commit, sonst HEAD)
@@ -295,6 +296,7 @@ def _abgleich_je_ziel(ziel: Ziel, fs: list[Fund], *, senden: bool, offline: bool
             gh = gh_fabrik(ziel.konto)
         erg.bericht = abgleichen(fs, ziel, gh, stand, heute=heute, senden=senden, commit=schliess_commit or commit,
                                  geprueft=geprueft, unlesbar=unlesbar, bericht=teil,
+                                 fremd_ausgelassen=fremd_ausgelassen,
                                  pause=pause if pause is not None else time.sleep,
                                  schreib_abstand_s=schreib_abstand_s)
     except GitHubFehler as e:
@@ -465,7 +467,9 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
     commit = commit_holen(wurzel)
     aussen = _aussen_name(wurzel)
     tor, notizen = tor_laden(Path(goldsatz) if goldsatz is not None else goldsatz_standard(aussen))
-    funde, n_sammeln = funde_sammeln(wurzel, doku_konfig=k, stand_unter=stand_unter, tor=tor)
+    ausgelassen: list[FremdAusgelassen] = []
+    funde, n_sammeln = funde_sammeln(wurzel, doku_konfig=k, stand_unter=stand_unter, tor=tor, ausgelassen=ausgelassen)
+    fremd_aus = ausgelassen[0] if ausgelassen else None
     notizen += n_sammeln
     inv = inventar(wurzel, stand_unter=stand_unter)
     funde.append(inventar_fund(inv))
@@ -497,6 +501,7 @@ def befehl(wurzel: Path, *, senden: bool = False, offline: bool = False, nur: Se
     ergebnisse = [
         _abgleich_je_ziel(z, fs, senden=senden, offline=offline, commit=commit, stand=stand, heute=tag,
                           geprueft=geprueft, unlesbar=unlesbar, gh_fabrik=fabrik, schliess_commit=analyse,
+                          fremd_ausgelassen=fremd_aus,
                           pause=schreib_pause, schreib_abstand_s=schreib_abstand_s)
         for z, fs in gruppen]
 

@@ -47,7 +47,7 @@ from ..speicher import stand_basis
 from .github import GitHub, GitHubFehler
 from .sammeln import UNLESBAR_PRAEFIX
 from .text import BEGIN, END, block_ersetzen, einzel_text, pruefen, sammel_text
-from .typen import ARTEN, Fund, fund_schluessel
+from .typen import ARTEN, FremdAusgelassen, Fund, fund_schluessel
 
 STAND_VERSION = 1
 # Fix-Runde 1 (Minor 4): Leerraum um die Teile der Marken wird toleriert
@@ -379,6 +379,7 @@ class _Schreiber:
 def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: IssueStand, *, heute: date,
                senden: bool, commit: str, geprueft: frozenset[str],
                unlesbar: frozenset[str] = frozenset(), bericht: Bericht | None = None,
+               fremd_ausgelassen: FremdAusgelassen | None = None,
                pause: Callable[[float], None] = time.sleep, schreib_abstand_s: float = SCHREIB_ABSTAND_S) -> Bericht:
     """Gleicht die Funde fuer ein Ziel mit dem GitHub-Bestand ab (siehe Moduldoku).
 
@@ -386,6 +387,10 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
     `geprueft`: Code-Repos, die dieser Lauf wirklich geprueft hat (`sammeln.geprueft_repos`). Nur deren Issues
     werden geschlossen; ein Issue ohne Repo-Marke oder fuer ein anderes Code-Repo bleibt offen (Fix-Runde 1 I1).
     `unlesbar`: Arten, deren Quelle in diesem Lauf unlesbar war (`unlesbare_arten(notizen)`).
+    `fremd_ausgelassen`: Doppelungs-Funde, die eine `fremdcode:`-Regel ausnimmt (`sammeln.funde_sammeln(ausgelassen=)`).
+    Nur der Text des Schliess-Kommentars aendert sich (F1), nie die Schliessbedingung: Sammel-Issues ueber das
+    (art, code_repo)-Paar (ihr Block nennt keine Schluessel, ein Paar mit teils verschwundenen, teils ausgenommenen
+    Funden ist daher nicht unterscheidbar), Einzel-Issues ueber den Fund-Schluessel.
     `bericht`: optional ein leerer `Bericht` des Aufrufers, der hier gefuellt wird -- wirft der Abgleich mittendrin,
     sieht der Aufrufer darin die bis dahin ausgefuehrten Aktionen (Task 6 Fix-Runde 1).
     `pause`/`schreib_abstand_s`: Mindestabstand zwischen erfolgreichen Schreibaufrufen (Vorgabe `time.sleep`, 1 s;
@@ -397,6 +402,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
     if not _COMMIT.fullmatch(commit or ""):
         raise ValueError("commit muss ein Git-SHA sein")
     sha7 = commit[:7].lower()
+    fremd = fremd_ausgelassen if fremd_ausgelassen is not None else FremdAusgelassen()
     repo = ziel.repo
     b = bericht if bericht is not None else Bericht(ziel=repo, senden=senden)
     if stand.unlesbar:
@@ -610,8 +616,13 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
             if offen and code_repo not in geprueft:
                 nicht_geprueft.add(code_repo)
                 continue
-            grund = ("Sammlung leer: verbleibende Funde als Einzel-Issues geführt" if (art, code_repo) in mit_funden
-                     else f"Sammlung leer: alle Funde im Code verschwunden (Commit `{sha7}`)")
+            if (art, code_repo) in mit_funden:
+                grund = "Sammlung leer: verbleibende Funde als Einzel-Issues geführt"
+            elif (art, code_repo) in fremd.paare:
+                grund = (f"Sammlung leer: Funde als Fremdcode ausgenommen "
+                         f"(Regel fremdcode in selbstbild.yaml, Commit `{sha7}`)")
+            else:
+                grund = f"Sammlung leer: alle Funde im Code verschwunden (Commit `{sha7}`)"
             for i in offen:
                 n = int(i["number"])
                 status, _ = schreiben("sammel_schliessen", sk, str(i.get("title") or sk), n,
@@ -655,6 +666,7 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
 
     # 5. Einzel-Issues, deren Fund verschwunden ist
     kommentar = f"Fund im Code verschwunden (Commit `{sha7}`)"
+    kommentar_fremd = f"Fund als Fremdcode ausgenommen (Regel fremdcode in selbstbild.yaml, Commit `{sha7}`)"
     nicht_zuordenbar = 0
     for k in sorted(einzel):
         art = k.partition(":")[0]
@@ -674,7 +686,8 @@ def abgleichen(funde: Sequence[Fund], ziel: Ziel, gh: GitHub | None, stand: Issu
                 continue
             n = int(i["number"])
             status, _ = schreiben("schliessen", k, str(i.get("title") or k), n,
-                                  lambda g, n=n: g.schliessen(repo, n, kommentar))
+                                  lambda g, n=n, c=(kommentar_fremd if k in fremd.schluessel else kommentar):
+                                  g.schliessen(repo, n, c))
             if status == "ausgefuehrt":
                 i["state"] = "closed"
     if nicht_zuordenbar:
