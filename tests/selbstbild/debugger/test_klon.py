@@ -7,8 +7,9 @@ import shutil
 import subprocess
 import sys
 import time
+import types
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, cast
 
 import pytest
 
@@ -441,6 +442,84 @@ def test_git_in_datei_timeout_trotz_enkel(
     dauer = time.monotonic() - beginn
     assert ei.value.code == modul.TIMEOUT_CODE and dauer < 15, dauer
     enkel.tot_pruefen()
+
+
+def test_git_in_datei_groesse_trotz_enkel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ohne_praefix: None, enkel: Any
+) -> None:
+    """Die Größengrenze beendet den Lauf sofort, auch wenn ein Enkel die Pipe offen hält."""
+    from selbstbild.debugger import klon as modul
+
+    monkeypatch.setattr(modul, "GIT_TIMEOUT_S", 60)  # nur die Grenze darf hier greifen
+    modul.git_praefix_setzen(enkel.praefix(60, ausgabe=5000))
+    beginn = time.monotonic()
+    with pytest.raises(GitFehler) as ei, (tmp_path / "aus").open("wb") as aus:
+        modul.git_in_datei(tmp_path, "bundle", ziel=aus, grenze=1000)
+    dauer = time.monotonic() - beginn
+    assert ei.value.code == modul.GROESSE_CODE and dauer < 15, dauer
+    assert (tmp_path / "aus").stat().st_size <= 1000
+    enkel.tot_pruefen()
+
+
+# Gibt 3 MB in 64-KB-Stücken aus, ignoriert eine geschlossene Pipe und endet immer mit 0.
+_VIEL_AUSGABE = (
+    "import os, sys\n"
+    "try:\n"
+    "    for _ in range(48):\n"
+    "        sys.stdout.buffer.write(b'x' * 65536)\n"
+    "        sys.stdout.buffer.flush()\n"
+    "except OSError:\n"
+    "    pass\n"
+    "os._exit(0)\n"
+)
+
+
+class _KaputtesZiel(io.BytesIO):
+    """Ziel, dessen `write` ab dem n-ten Aufruf scheitert (wie eine volle Platte)."""
+
+    def __init__(self, ab: int) -> None:
+        super().__init__()
+        self.ab, self.n = ab, 0
+
+    def write(self, daten: Any) -> int:
+        self.n += 1
+        if self.n >= self.ab:
+            raise OSError(28, "No space left on device")
+        return super().write(daten)
+
+
+@pytest.mark.parametrize("ab", [1, 2])
+def test_git_in_datei_schreibfehler_ist_kein_erfolg(ohne_praefix: None, tmp_path: Path, ab: int) -> None:
+    """Fix-Runde 3: ein Schreibfehler im Leser ergibt GitFehler, auch wenn der Prozess mit 0 endet."""
+    from selbstbild.debugger import klon as modul
+
+    modul.git_praefix_setzen([sys.executable, "-c", _VIEL_AUSGABE])
+    ziel = _KaputtesZiel(ab)
+    with pytest.raises(GitFehler) as ei:
+        modul.git_in_datei(tmp_path, "bundle", ziel=ziel, grenze=50_000_000)
+    assert ei.value.code == modul.LESE_CODE
+    assert ziel.n >= ab
+
+
+def test_gruppe_toeten_faellt_auf_kill_zurueck(monkeypatch: pytest.MonkeyPatch) -> None:
+    from selbstbild.debugger import klon as modul
+
+    class P:
+        pid = 4242
+        getoetet = 0
+
+        def kill(self) -> None:
+            P.getoetet += 1
+            raise OSError("schon weg")
+
+    def verboten(pid: int, sig: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    # nur das Modul sieht POSIX; das echte os bleibt für pytest unverändert
+    monkeypatch.setattr(modul, "os", types.SimpleNamespace(name="posix", killpg=verboten))
+    monkeypatch.setattr(modul, "signal", types.SimpleNamespace(SIGKILL=9))
+    modul.gruppe_toeten(cast(Any, P()))  # wirft nicht
+    assert P.getoetet == 1
 
 
 def test_git_praefix_echter_umweg(umgebung: Umgebung, ohne_praefix: None) -> None:

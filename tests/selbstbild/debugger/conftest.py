@@ -12,11 +12,14 @@ from typing import Iterator
 import pytest
 
 # Kind: startet einen Enkel, der das stdout des Kindes erbt und lange schläft, schreibt dessen
-# pid nach argv[1] und schläft dann selbst argv[2] Sekunden (0 = sofort beenden).
+# pid nach argv[1], gibt argv[3] Bytes auf stdout aus und schläft dann argv[2] Sekunden
+# (0 = sofort beenden).
 _ENKEL = (
     "import subprocess, sys, time\n"
     "enkel = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], stdout=sys.stdout)\n"
     "open(sys.argv[1], 'w').write(str(enkel.pid))\n"
+    "sys.stdout.buffer.write(b'x' * int(sys.argv[3]))\n"
+    "sys.stdout.buffer.flush()\n"
     "time.sleep(float(sys.argv[2]))\n"
 )
 
@@ -25,9 +28,9 @@ _ENKEL = (
 class Enkel:
     pid_datei: Path
 
-    def praefix(self, kind_schlaeft_s: float) -> list[str]:
+    def praefix(self, kind_schlaeft_s: float, ausgabe: int = 0) -> list[str]:
         """argv-Präfix; alles, was der Läufer danach anhängt, ignoriert das Kind."""
-        return [sys.executable, "-c", _ENKEL, str(self.pid_datei), str(kind_schlaeft_s)]
+        return [sys.executable, "-c", _ENKEL, str(self.pid_datei), str(kind_schlaeft_s), str(ausgabe)]
 
     def pid(self) -> int | None:
         for _ in range(50):

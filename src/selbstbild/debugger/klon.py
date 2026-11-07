@@ -23,6 +23,7 @@ MAX_KURZ = 30
 GIT_TIMEOUT_S = 300
 TIMEOUT_CODE = -1
 GROESSE_CODE = -2
+LESE_CODE = -3
 MAX_PUSH_INHALT = 5_000_000
 _BLOCK = 1 << 20
 _NACH_KILL_S = 5.0
@@ -41,7 +42,8 @@ class GitFehler(Exception):
     """Ein Git-Aufruf ist gescheitert; nennt nur Unterbefehl und Code."""
 
     def __init__(self, unterbefehl: str, code: int) -> None:
-        zusatz = {TIMEOUT_CODE: " (Zeitueberschreitung)", GROESSE_CODE: " (Ausgabe zu gross)"}.get(
+        zusatz = {TIMEOUT_CODE: " (Zeitueberschreitung)", GROESSE_CODE: " (Ausgabe zu gross)",
+                  LESE_CODE: " (Ausgabe nicht vollstaendig gelesen)"}.get(
             code, f" (Code {code})")
         super().__init__(f"git {unterbefehl} fehlgeschlagen{zusatz}")
         self.unterbefehl = unterbefehl
@@ -91,8 +93,11 @@ def gruppe_toeten(proc: subprocess.Popen[bytes]) -> None:
         return
     try:
         os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    except OSError:  # Gruppe schon weg oder nicht erlaubt: wenigstens den Prozess selbst
+        try:
+            proc.kill()
+        except OSError:
+            pass
 
 
 def _begrenzt(
@@ -103,7 +108,8 @@ def _begrenzt(
 
     stdout liest ein Thread; der Waechter wartet hoechstens `GIT_TIMEOUT_S`, auch wenn ein Enkel
     (Hook, Filter, pytest des Helfers) die Pipe offen haelt. Bei Zeit- oder Groessenueberschreitung
-    wird die ganze Gruppe beendet und `GitFehler(unter, TIMEOUT_CODE | GROESSE_CODE)` geworfen.
+    wird die ganze Gruppe beendet und `GitFehler(unter, TIMEOUT_CODE | GROESSE_CODE)` geworfen;
+    scheitert Lesen oder Schreiben nach `ziel`, ebenso mit `LESE_CODE` (fail-closed, nie Erfolg).
     stdout geht nach `ziel` oder kommt als Bytes zurueck; stderr wird verworfen. Rueckgabe: Code, Bytes.
     """
     frist = GIT_TIMEOUT_S
@@ -113,7 +119,7 @@ def _begrenzt(
         stderr=subprocess.DEVNULL, env=_env(), start_new_session=os.name != "nt",
     )
     teile: list[bytes] = []
-    halt, zu_gross = threading.Event(), threading.Event()
+    halt, zu_gross, kaputt = threading.Event(), threading.Event(), threading.Event()
 
     def lesen() -> None:
         aus, gesamt = proc.stdout, 0
@@ -130,7 +136,8 @@ def _begrenzt(
                     ziel.write(block)
                 else:
                     teile.append(block)
-        except (OSError, ValueError):
+        except (OSError, ValueError):  # Lese- oder Schreibfehler (Platte voll, ziel zu): nie Erfolg
+            kaputt.set()
             return
         finally:  # der Thread besitzt die Pipe; er kann den Aufruf überleben (Windows-Enkel)
             if aus is not None:
@@ -156,7 +163,7 @@ def _begrenzt(
         threading.Thread(target=schreiben, daemon=True).start()
     leser.join(frist)
     code: int | None = None
-    if not leser.is_alive() and not zu_gross.is_set():
+    if not leser.is_alive() and not zu_gross.is_set() and not kaputt.is_set():
         try:
             code = proc.wait(timeout=max(0.0, ende - time.monotonic()))
         except subprocess.TimeoutExpired:
@@ -169,7 +176,8 @@ def _begrenzt(
             proc.wait(timeout=_NACH_KILL_S)
         except subprocess.TimeoutExpired:
             pass
-        raise GitFehler(unter, GROESSE_CODE if zu_gross.is_set() else TIMEOUT_CODE)
+        art = GROESSE_CODE if zu_gross.is_set() else LESE_CODE if kaputt.is_set() else TIMEOUT_CODE
+        raise GitFehler(unter, art)
     return code, b"".join(teile)
 
 
