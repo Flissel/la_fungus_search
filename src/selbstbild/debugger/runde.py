@@ -30,10 +30,14 @@ from selbstbild.debugger.klon import (
 )
 from selbstbild.debugger.konfig import DebuggerKonfig
 from selbstbild.debugger.stand import DebuggerStand, FundStand
-from selbstbild.funde.github import GitHub
+from selbstbild.funde.github import GitHub, GitHubFehler
 from selbstbild.funde.text import pruefen
 
 PRAEFIX = "🤖 Debugger-Claw: "
+KEINE_BEGRUENDUNG = "(keine Begründung vom Helfer)"
+MAX_PR_TITEL = 256
+MAX_SEITEN = 10
+SEITE = 100
 RUECKFRAGE_LABEL = "selbstbild:rueckfrage"
 MAX_DIFF = 60_000
 MAX_VERSUCHE = 3
@@ -129,20 +133,34 @@ def push_standard(
         raise GitFehler("push", erg.returncode)
 
 
-def _betreffzeilen(wt: Path, gegen: str) -> list[str]:
-    """Betreffzeilen von `<gegen>..HEAD`, älteste zuerst (ohne Shell, mit Timeout, ohne stderr)."""
+def _git_text(wt: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """`git -C <wt> ...` als UTF-8-Text (ohne Shell, mit Timeout, ohne Prompt, nie stderr im Fehler)."""
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         erg = subprocess.run(
-            ["git", "-C", str(wt), "log", "--format=%s", f"{gegen}..HEAD"], check=False, capture_output=True,
+            ["git", "-C", str(wt), *args], check=False, capture_output=True,
             encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=env, timeout=GIT_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
-        raise GitFehler("log", TIMEOUT_CODE) from None
-    if erg.returncode != 0:
-        raise GitFehler("log", erg.returncode)
-    return [z for z in reversed(erg.stdout.splitlines()) if z.strip()]
+        raise GitFehler(args[0], TIMEOUT_CODE) from None
+    if check and erg.returncode != 0:
+        raise GitFehler(args[0], erg.returncode)
+    return erg
+
+
+def _betreffzeilen(wt: Path, gegen: str) -> list[str]:
+    """Betreffzeilen von `<gegen>..HEAD`, älteste zuerst."""
+    aus = _git_text(wt, "log", "--format=%s", f"{gegen}..HEAD").stdout
+    return [z for z in reversed(aus.splitlines()) if z.strip()]
+
+
+def _push_inhalt(wt: Path, branch: str, basis: str) -> str:
+    """Volles `git log -p` (Nachrichten und Diffs) dessen, was ein Push nach `branch` hochlädt (R21)."""
+    remote = f"refs/remotes/origin/{branch}"
+    da = _git_text(wt, "rev-parse", "--verify", "-q", remote, check=False).returncode == 0
+    gegen = f"origin/{branch}" if da else f"origin/{basis}"
+    return _git_text(wt, "log", "-p", "--no-color", "--no-ext-diff", "--no-textconv", f"{gegen}..HEAD").stdout
 
 
 # ---------- Runde ----------
@@ -158,6 +176,25 @@ def _liste(daten: Any) -> list[dict[str, Any]]:
 def _autor(roh: dict[str, Any]) -> str:
     user = roh.get("user")
     return str(user.get("login", "")) if isinstance(user, dict) else ""
+
+
+def _begruendung(text: str) -> str:
+    return text.strip() or KEINE_BEGRUENDUNG
+
+
+def _kappen(titel: str) -> str:
+    return titel if len(titel) <= MAX_PR_TITEL else titel[: MAX_PR_TITEL - 1] + "…"
+
+
+def _seiten(gh: GitHub, pfad: str) -> list[dict[str, Any]]:
+    """Liest `pfad` seitenweise (100 je Seite) bis zur ersten kurzen Seite, höchstens 10 Seiten."""
+    alle: list[dict[str, Any]] = []
+    for seite in range(1, MAX_SEITEN + 1):
+        teil = gh._api("GET", f"{pfad}?per_page={SEITE}&page={seite}")
+        alle += _liste(teil)
+        if not isinstance(teil, list) or len(teil) < SEITE:
+            break
+    return alle
 
 
 class _Lauf:
@@ -216,12 +253,16 @@ class _Lauf:
             fund.versuche[str(i)] = fund.versuche.get(str(i), 0) + 1
         aufgegeben = [i for i in self.ids if fund.versuche[str(i)] >= MAX_VERSUCHE]
         if aufgegeben:
-            self.melden(f"{PRAEFIX}Aufgegeben nach {MAX_VERSUCHE} Versuchen ({art}).")
             self.stand.verarbeitet_hinzu(aufgegeben)
             for i in aufgegeben:
                 fund.versuche.pop(str(i), None)
+            text = f"{PRAEFIX}Aufgegeben nach {MAX_VERSUCHE} Versuchen ({art})."
         else:
-            self.melden(f"{PRAEFIX}Runde fehlgeschlagen ({art}), ich versuche es erneut.")
+            text = f"{PRAEFIX}Runde fehlgeschlagen ({art}), ich versuche es erneut."
+        try:  # Stand ist schon fortgeschrieben; die Meldung ist nur ein Hinweis
+            self.melden(text)
+        except GitHubFehler:
+            pass
         return f"fehler:{art}"
 
     # --- Material ---
@@ -236,24 +277,29 @@ class _Lauf:
         ort = f"{k.pfad}:{k.zeile}" if k.zeile is not None else k.pfad
         return f"[{ort}] {k.text}"
 
+    def _kommentar(self, c: dict[str, Any], ort: str = "") -> str:
+        """Kommentar fürs Material; nur Auslöser und Helfer-Konto, alle anderen als Platzhalter (R22)."""
+        autor = _autor(c)
+        if autor not in (self.konfig.ausloeser, self.konfig.helfer_konto):
+            return f"[Kommentar von {autor or '?'} ausgelassen]"
+        return f"--- {autor} ({c.get('created_at', '')}){ort}\n{c.get('body') or ''}"
+
     def material(self, titel: str, text: str, fund: FundStand) -> str:
         lesen = self.w.gh_lesen
         basis = f"/repos/{self.konfig.issue_repo}/issues/{self.n}"
         teile = [f"Issue #{self.n}: {titel}", text, "", "Kommentare des Issues:"]
-        for c in _liste(lesen._api("GET", f"{basis}/comments?per_page=100")):
-            teile.append(f"--- {_autor(c)} ({c.get('created_at', '')})\n{c.get('body') or ''}")
+        teile += [self._kommentar(c) for c in _seiten(lesen, f"{basis}/comments")]
         if fund.pr is not None:
             pr = f"/repos/{fund.repo}/pulls/{fund.pr}"
             diff = "\n".join(
-                f"### {d.get('filename', '')}\n{d.get('patch') or ''}"
-                for d in _liste(lesen._api("GET", f"{pr}/files?per_page=100"))
+                f"### {d.get('filename', '')}\n{d.get('patch') or ''}" for d in _seiten(lesen, f"{pr}/files")
             )
             if len(diff) > MAX_DIFF:
                 diff = diff[:MAX_DIFF] + "\n[… Diff gekürzt]"
             teile += ["", f"Diff des PR {fund.repo}#{fund.pr}:", diff, "", "Review-Kommentare des PR:"]
-            for c in _liste(lesen._api("GET", f"{pr}/comments?per_page=100")):
-                ort = f"{c.get('path', '')}:{c.get('line') or c.get('original_line') or ''}"
-                teile.append(f"--- {_autor(c)} ({c.get('created_at', '')}) [{ort}]\n{c.get('body') or ''}")
+            for c in _seiten(lesen, f"{pr}/comments"):
+                ort = f" [{c.get('path', '')}:{c.get('line') or c.get('original_line') or ''}]"
+                teile.append(self._kommentar(c, ort))
         return "\n".join(teile)
 
     # --- Ablauf ---
@@ -300,6 +346,8 @@ class _Lauf:
                 erg = self.w.helfer(wt, prompt, fund.sitzung, self.konfig.frist_s)
             except HelferFehler as e:
                 fehler = f"helfer_{e.art}"
+                if e.art != "frist":  # evtl. verbrauchte/kaputte Sitzung: nächster Versuch beginnt neu
+                    fund.sitzung = None
             except OSError:
                 fehler = "helfer_start"
         finally:
@@ -309,17 +357,21 @@ class _Lauf:
         if erg is None:
             return self.fehlschlag(fund, fehler or "helfer_unbekannt")
         fund.sitzung = erg.sitzung
-        return self.aktion(erg, fund, wt, titel, nur_einordnen=nur_einordnen, rueckfrage=rueckfrage)
+        try:
+            return self.aktion(erg, fund, wt, titel, nur_einordnen=nur_einordnen, rueckfrage=rueckfrage)
+        except GitHubFehler:  # zählt als Versuch, sonst wiederholte jeder Durchgang die volle Runde
+            return self.fehlschlag(fund, "github")
 
     def aktion(self, erg: HelferErgebnis, fund: FundStand, wt: Path, titel: str, *,
                nur_einordnen: bool, rueckfrage: bool) -> str:
         issue_repo = self.konfig.issue_repo
+        grund = _begruendung(erg.text)
         if erg.aktion == "fix" and nur_einordnen:
-            self.antworten(fund, NUR_EINORDNEN_TEXT + (f"\n\n{erg.text}" if erg.text else ""))
+            self.antworten(fund, f"{NUR_EINORDNEN_TEXT}\n\n{grund}")
         elif erg.aktion == "fix":
-            return self.fix(erg, fund, wt, titel)
+            return self.fix(grund, fund, wt, titel)
         elif erg.aktion == "absichtlich":
-            kommentar = PRAEFIX + erg.text
+            kommentar = PRAEFIX + grund
             muster = pruefen(kommentar)
             if muster is not None:
                 self.halten(muster)
@@ -328,27 +380,29 @@ class _Lauf:
         elif erg.aktion == "rueckfrage" and rueckfrage and erg.antwort:
             self.w.gh_lab.labels_setzen(issue_repo, self.n, [f"antwort:{erg.antwort}"])
         else:
-            self.antworten(fund, PRAEFIX + erg.text)
+            self.antworten(fund, PRAEFIX + grund)
         return self.fertig(fund)
 
-    def fix(self, erg: HelferErgebnis, fund: FundStand, wt: Path, titel: str) -> str:
+    def fix(self, grund: str, fund: FundStand, wt: Path, titel: str) -> str:
         """Push und PR; ohne neue Commits (und mit PR oder ohne Commits vor der Basis) nur Antwort."""
         basis = self.konfig.basis
         try:
             neu = voraus(wt, fund.branch, basis=basis)
             betreffe = _betreffzeilen(wt, f"origin/{basis}")
+            inhalt = _push_inhalt(wt, fund.branch, basis) if neu > 0 else ""
         except GitFehler:
             return self.fehlschlag(fund, "git")
         if neu == 0 and (fund.pr is not None or not betreffe):
-            self.antworten(fund, PRAEFIX + erg.text)
+            self.antworten(fund, PRAEFIX + grund)
             return self.fertig(fund)
         liste = "\n".join(f"- {b}" for b in betreffe)
         if fund.repo == self.konfig.issue_repo:
             koerper = f"Fixes #{self.n}\n\n{liste}"
-        else:  # öffentlich: nur Betreffzeilen und Bezug, kein Gespräch
+            pr_titel = _kappen(PRAEFIX + titel.removeprefix(TITEL_PRAEFIX))
+        else:  # öffentlich (R19): nur Betreffzeilen und Bezug, kein Gespräch, Titel aus ältestem Commit
             koerper = f"{liste}\n\nBezug: {self.konfig.issue_repo}#{self.n}"
-        pr_titel = PRAEFIX + titel.removeprefix(TITEL_PRAEFIX)
-        for t in (pr_titel, koerper, erg.text):
+            pr_titel = _kappen(PRAEFIX + betreffe[0])
+        for t in (pr_titel, koerper, grund, inhalt):  # R21: auch volle Nachrichten und Diffs vor dem Push
             if (muster := pruefen(t)) is not None:
                 self.halten(muster)
                 return self.fertig(fund)
@@ -362,7 +416,7 @@ class _Lauf:
             fund.pr = self._pr_finden_oder_anlegen(fund, pr_titel, koerper)
         fund.zustand = "pr"
         zusatz = f"PR: {fund.repo}#{fund.pr}" if neuer_pr else f"Neuer Stand im PR {fund.repo}#{fund.pr}."
-        self.antworten(fund, f"{PRAEFIX}{erg.text}\n\n{zusatz}")
+        self.antworten(fund, f"{PRAEFIX}{grund}\n\n{zusatz}")
         return self.fertig(fund)
 
     def _pr_finden_oder_anlegen(self, fund: FundStand, titel: str, koerper: str) -> int:
