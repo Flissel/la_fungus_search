@@ -56,6 +56,10 @@ _TITEL_KLAMMER = re.compile(r"\(([^()]+)\)\s*$")
 _TITEL_STRICH = re.compile(r"\s–\s(\S+)\s*$")
 
 
+def _nichts() -> None:
+    """Standard für `Werkzeuge.holen`: nichts holen (Tests, PC)."""
+
+
 @dataclass
 class Werkzeuge:
     """Alles, was eine Runde von außen braucht (für Tests austauschbar)."""
@@ -66,6 +70,7 @@ class Werkzeuge:
     frei_gb: Callable[[], float | None]
     uhr: Callable[[], datetime]
     push: Callable[[Path, str], None]
+    holen: Callable[[], None] = _nichts  # R27: Spiegel von GitHub holen, vor `nachziehen`
 
 
 # ---------- Ziel-Repo (Ruling R1) ----------

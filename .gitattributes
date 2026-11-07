@@ -1,0 +1,2 @@
+# Shell-Skripte des Debugger-Containers laufen unter Linux: immer LF (auch bei core.autocrlf=true)
+deploy/debugger/*.sh text eol=lf

@@ -1,4 +1,4 @@
-"""CLI: `python -m selbstbild doku|vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|pruefen|suche-messen|funde|auto <wurzel> ...`."""
+"""CLI: `python -m selbstbild doku|vermessen|export|status|analysieren|goldsatz|vergleichen|index|suchen|pruefen|suche-messen|funde|auto|debugger <wurzel> ...`."""
 from __future__ import annotations
 
 import argparse
@@ -367,6 +367,10 @@ def main(argv: list[str] | None = None, *, funde_optionen: Mapping[str, Any] | N
     ohne_v = [a for a in roh if a not in ("-v", "--ausfuehrlich")]
     if ohne_v[:1] == ["doku"]:  # Doku-Loop: der Rest geht unveraendert an dessen eigenes argparse
         return _doku(roh[roh.index("doku") + 1:])
+    if ohne_v[:1] == ["debugger"]:  # Debugger-Claw: Parser und Ablauf in debugger/wachter.py (lazy wie auto)
+        from selbstbild.debugger.wachter import main as debugger_main
+
+        return debugger_main(roh[roh.index("debugger") + 1:])
     if ohne_v[:1] == ["auto"] and ohne_v[1:2] and ohne_v[1] in AUTO_UNTERBEFEHLE:
         return _auto_unterbefehl(ohne_v[1:])
     p = argparse.ArgumentParser(prog="selbstbild", description="Vermisst ein Git-Repo als Graph.")

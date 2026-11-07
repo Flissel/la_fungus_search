@@ -1,0 +1,42 @@
+# Debugger-Claw auf der VM (rootless Docker). Werte aus `.env` neben dieser Datei (siehe README.md):
+#   DEBUGGER_HEIM       Ordner mit secrets/lab_token und konfig/selbstbild.yaml, z. B. /home/<nutzer>/debugger-claw
+#   DEBUGGER_GIT_EMAIL  Commit-Adresse von Vibemind-LAB (noreply-Adresse des Kontos)
+services:
+  debugger:
+    build:
+      context: ../..
+      dockerfile: deploy/debugger/Dockerfile
+    image: debugger-claw:lokal
+    init: true
+    restart: unless-stopped
+    mem_limit: 3g
+    pids_limit: 512
+    environment:
+      DEBUGGER_TOKEN_DATEI: /run/secrets/lab_token
+      DEBUGGER_PRAEFIX: "setpriv --reuid=1000 --regid=1000 --init-groups -- env HOME=/home/claw"
+      DEBUGGER_CLAW_UID: "1000"
+      CLAUDE_CONFIG_DIR: /home/claw/.claude
+      GIT_AUTHOR_NAME: Vibemind-LAB
+      GIT_COMMITTER_NAME: Vibemind-LAB
+      GIT_AUTHOR_EMAIL: ${DEBUGGER_GIT_EMAIL:?DEBUGGER_GIT_EMAIL in .env setzen}
+      GIT_COMMITTER_EMAIL: ${DEBUGGER_GIT_EMAIL:?DEBUGGER_GIT_EMAIL in .env setzen}
+    secrets:
+      - lab_token
+    volumes:
+      - klon:/data/klon
+      - stand:/data/stand
+      - spiegel:/data/spiegel
+      - claude:/home/claw/.claude
+      - ${DEBUGGER_HEIM:?DEBUGGER_HEIM in .env setzen}/konfig:/data/konfig:ro
+    command: ["python", "-m", "selbstbild", "debugger", "schleife", "/data/konfig",
+              "--klon", "/data/klon", "--ordner", "/data/stand", "--spiegel", "/data/spiegel"]
+
+secrets:
+  lab_token:
+    file: ${DEBUGGER_HEIM:?DEBUGGER_HEIM in .env setzen}/secrets/lab_token
+
+volumes:
+  klon:
+  stand:
+  spiegel:
+  claude:
