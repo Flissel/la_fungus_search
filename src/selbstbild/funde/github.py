@@ -77,6 +77,16 @@ def _label(name: str) -> str:
     return name
 
 
+_BRANCH = re.compile(r"debugger/[A-Za-z0-9][A-Za-z0-9._/-]*")
+
+
+def _debugger_branch(name: str) -> str:
+    """Nur Branches `debugger/...` (kein `..`, keine Sonderzeichen); sonst `ValueError`."""
+    if not isinstance(name, str) or not _BRANCH.fullmatch(name) or ".." in name or name.endswith("/"):
+        raise ValueError("Branch muss debugger/... heißen")
+    return name
+
+
 def _nummer(nummer: int) -> int:
     if isinstance(nummer, bool) or not isinstance(nummer, int) or nummer <= 0:
         raise GitHubFehler("nummer_ungueltig")
@@ -252,3 +262,81 @@ class GitHub:
         r, n = _repo(repo), _nummer(nummer)
         self.kommentieren(r, n, kommentar)
         self._api("PATCH", f"/repos/{r}/issues/{n}", {"state": "closed", "state_reason": grund})
+
+    # ---------- Debugger-Waechter (Lesen und Schreiben) ----------
+
+    def _seiten(self, pfad: str) -> list[dict[str, Any]]:
+        """Blaettert `pfad` (ohne Query) mit `per_page=100`, bis eine Seite weniger als 100 Eintraege hat."""
+        alle: list[dict[str, Any]] = []
+        for seite in range(1, MAX_SEITEN + 1):
+            teil = self._api("GET", pfad.format(seite=seite))
+            if not isinstance(teil, list):
+                raise GitHubFehler("antwort_unlesbar")
+            alle += [x for x in teil if isinstance(x, dict)]
+            if len(teil) < SEITE:
+                return alle
+        raise GitHubFehler("zu_viele_seiten")
+
+    def kommentare_seit(self, repo: str, seit: str) -> list[dict[str, Any]]:
+        """Alle Issue-/PR-Kommentare des Repos seit `seit` (ISO-Zeit)."""
+        s = quote(seit, safe=":")
+        return self._seiten(f"/repos/{_repo(repo)}/issues/comments?since={s}&per_page={SEITE}&page={{seite}}")
+
+    def review_kommentare_seit(self, repo: str, seit: str) -> list[dict[str, Any]]:
+        """Alle Code-Review-Kommentare an PRs des Repos seit `seit` (ISO-Zeit)."""
+        s = quote(seit, safe=":")
+        return self._seiten(f"/repos/{_repo(repo)}/pulls/comments?since={s}&per_page={SEITE}&page={{seite}}")
+
+    def reviews(self, repo: str, pr: int) -> list[dict[str, Any]]:
+        """Reviews eines PR, nur die mit Text."""
+        alle = self._seiten(f"/repos/{_repo(repo)}/pulls/{_nummer(pr)}/reviews?per_page={SEITE}&page={{seite}}")
+        return [x for x in alle if isinstance(x.get("body"), str) and x["body"].strip()]
+
+    def reagieren(self, repo: str, kommentar_id: int, *, review: bool = False) -> None:
+        """Setzt die Reaktion `eyes` auf einen Kommentar (Review-Kommentar mit `review=True`)."""
+        art = "pulls" if review else "issues"
+        self._api("POST", f"/repos/{_repo(repo)}/{art}/comments/{_nummer(kommentar_id)}/reactions",
+                  {"content": "eyes"})
+
+    def labels_setzen(self, repo: str, nummer: int, labels: Sequence[str]) -> None:
+        """Haengt Labels an ein Issue/PR (bestehende bleiben)."""
+        self._api("POST", f"/repos/{_repo(repo)}/issues/{_nummer(nummer)}/labels",
+                  {"labels": [_label(x) for x in labels]})
+
+    def pr_anlegen(self, repo: str, kopf: str, basis: str, titel: str, text: str) -> int:
+        """Legt einen PR an. Nur fuer Branches `debugger/...`; der Text traegt `self.marke`."""
+        r, k = _repo(repo), _debugger_branch(kopf)
+        antwort = self._api("POST", f"/repos/{r}/pulls",
+                            {"title": titel, "head": k, "base": basis, "body": self._mit_marke(text)})
+        nummer = antwort.get("number") if isinstance(antwort, dict) else None
+        if isinstance(nummer, bool) or not isinstance(nummer, int):
+            raise GitHubFehler("antwort_unlesbar")
+        return nummer
+
+    def pr_lesen(self, repo: str, nummer: int) -> dict[str, Any]:
+        antwort = self._api("GET", f"/repos/{_repo(repo)}/pulls/{_nummer(nummer)}")
+        if not isinstance(antwort, dict):
+            raise GitHubFehler("antwort_unlesbar")
+        return antwort
+
+    def prs_zum_kopf(self, repo: str, kopf: str) -> list[dict[str, Any]]:
+        """Alle PRs (offen und zu) mit Kopf-Branch `kopf` im selben Repo (Eigentuemer = Repo-Eigentuemer)."""
+        r = _repo(repo)
+        antwort = self._api("GET", f"/repos/{r}/pulls?head={quote(r.split('/')[0] + ':' + _debugger_branch(kopf), safe=':/')}"
+                                   "&state=all")
+        if not isinstance(antwort, list):
+            raise GitHubFehler("antwort_unlesbar")
+        return [x for x in antwort if isinstance(x, dict)]
+
+    def branch_loeschen(self, repo: str, branch: str) -> None:
+        """Loescht einen Branch `debugger/...`; ein 404 (schon weg) zaehlt als erledigt."""
+        r, b = _repo(repo), _debugger_branch(branch)
+        gefehlt = False
+        try:
+            self._api("DELETE", f"/repos/{r}/git/refs/heads/{b}")
+        except GitHubFehler as f:
+            if f.art != "http_404":
+                raise
+            gefehlt = True
+        if gefehlt:
+            return
