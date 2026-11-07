@@ -10,6 +10,7 @@ import pytest
 from selbstbild.debugger.klon import (
     GitFehler,
     KonfliktFehler,
+    WorktreeFehler,
     aufraeumen,
     branch_name,
     nachziehen,
@@ -256,3 +257,84 @@ def test_git_fehler_traegt_nur_unterbefehl(tmp_path: Path) -> None:
     with pytest.raises(GitFehler) as ei:
         voraus(tmp_path / "gibt-es-nicht", "debugger/1-x")
     assert str(ei.value).startswith("git ")
+
+
+def _konfig_wert(ort: Path, schluessel: str) -> str:
+    erg = subprocess.run(
+        ["git", "-C", str(ort), "config", "--get", schluessel],
+        capture_output=True, text=True,
+    )
+    return erg.stdout.strip()
+
+
+def test_worktree_ohne_upstream(umgebung: Umgebung) -> None:
+    _, klon, zweit = umgebung
+    wt = klon.parent / "wt" / "x-1"
+    worktree_bereit(klon, wt, "debugger/1-x", "master")
+    assert _konfig_wert(klon, "branch.debugger/1-x.merge") == ""
+    git(zweit, "checkout", "-q", "-b", "debugger/2-y")
+    commit(zweit, "y.txt", "y\n")
+    git(zweit, "push", "-q", "origin", "debugger/2-y")
+    wt2 = klon.parent / "wt" / "y-2"
+    worktree_bereit(klon, wt2, "debugger/2-y", "master")
+    assert _konfig_wert(klon, "branch.debugger/2-y.merge") == ""
+
+
+def test_worktree_pruefung_normales_verzeichnis(umgebung: Umgebung) -> None:
+    _, klon, _ = umgebung
+    wt = klon.parent / "wt" / "plain"
+    wt.mkdir(parents=True)
+    (wt / "datei.txt").write_text("x", encoding="utf-8")
+    with pytest.raises(WorktreeFehler):
+        worktree_bereit(klon, wt, "debugger/1-x", "master")
+    assert [p.name for p in wt.iterdir()] == ["datei.txt"]
+    with pytest.raises(WorktreeFehler):
+        aufraeumen(klon, wt, "debugger/1-x")
+    assert wt.exists()
+
+
+def test_worktree_pruefung_haupt_checkout(umgebung: Umgebung) -> None:
+    _, klon, _ = umgebung
+    with pytest.raises(WorktreeFehler):
+        worktree_bereit(klon, klon, "debugger/1-x", "master")
+    with pytest.raises(WorktreeFehler):
+        aufraeumen(klon, klon, "debugger/1-x")
+    assert (klon / "a.txt").exists()
+
+
+def test_worktree_pruefung_anderer_zweig(umgebung: Umgebung) -> None:
+    _, klon, zweit = umgebung
+    wt = _wt_mit_fremdem_commit(klon, zweit)
+    git(wt, "checkout", "-q", "-b", "debugger/9-anders")
+    with pytest.raises(WorktreeFehler):
+        worktree_bereit(klon, wt, "debugger/1-x", "master")
+    assert not (wt / "fremd.txt").exists()
+    with pytest.raises(WorktreeFehler):
+        aufraeumen(klon, wt, "debugger/1-x")
+    assert wt.exists()
+    git(wt, "checkout", "-q", "--detach")
+    with pytest.raises(WorktreeFehler):
+        worktree_bereit(klon, wt, "debugger/1-x", "master")
+
+
+def test_git_timeout_wird_gitfehler(
+    umgebung: Umgebung, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from selbstbild.debugger import klon as modul
+
+    gesehen: dict[str, object] = {}
+
+    def falsch(*a: object, **k: object) -> None:
+        gesehen.update(k)
+        raise subprocess.TimeoutExpired(cmd="git", timeout=1)
+
+    _, klon, _ = umgebung
+    monkeypatch.setattr(modul.subprocess, "run", falsch)
+    with pytest.raises(GitFehler) as ei:
+        nachziehen(klon, "master", [])
+    assert ei.value.code == modul.TIMEOUT_CODE
+    assert ei.value.unterbefehl == "fetch"
+    assert gesehen["stdin"] == subprocess.DEVNULL
+    assert gesehen["timeout"] == modul.GIT_TIMEOUT_S
+    env = gesehen["env"]
+    assert isinstance(env, dict) and env["GIT_TERMINAL_PROMPT"] == "0"

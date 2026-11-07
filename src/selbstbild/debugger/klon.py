@@ -5,6 +5,7 @@ Rueckgabecode, nie stderr (darin koennen URLs mit Token stehen).
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -13,6 +14,8 @@ from typing import Sequence
 PRAEFIX = "debugger/"
 TITEL_PRAEFIX = "[selbstbild] "
 MAX_KURZ = 30
+GIT_TIMEOUT_S = 300
+TIMEOUT_CODE = -1
 
 
 class KonfliktFehler(Exception):
@@ -23,24 +26,65 @@ class GitFehler(Exception):
     """Ein Git-Aufruf ist gescheitert; nennt nur Unterbefehl und Code."""
 
     def __init__(self, unterbefehl: str, code: int) -> None:
-        super().__init__(f"git {unterbefehl} fehlgeschlagen (Code {code})")
+        zusatz = " (Zeitueberschreitung)" if code == TIMEOUT_CODE else f" (Code {code})"
+        super().__init__(f"git {unterbefehl} fehlgeschlagen{zusatz}")
         self.unterbefehl = unterbefehl
         self.code = code
+
+
+class WorktreeFehler(ValueError):
+    """`wt` ist kein registrierter Worktree des Klons auf dem erwarteten Zweig."""
 
 
 def _git(
     ort: Path, *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
-    """Fuehrt `git -C <ort> ...` aus; bei check=True nur ein schlanker Fehler."""
-    erg = subprocess.run(
-        ["git", "-C", str(ort), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    """Fuehrt `git -C <ort> ...` aus, ohne Eingabe und ohne Passwort-Abfrage.
+
+    Zeitueberschreitung wird zu GitFehler(code=TIMEOUT_CODE); bei check=True
+    gibt es nur einen schlanken Fehler (nie stderr).
+    """
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        erg = subprocess.run(
+            ["git", "-C", str(ort), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            timeout=GIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        raise GitFehler(args[0] if args else "?", TIMEOUT_CODE) from None
     if check and erg.returncode != 0:
         raise GitFehler(args[0] if args else "?", erg.returncode)
     return erg
+
+
+def _ist_vorfahr(ort: Path, alt: str, neu: str) -> bool:
+    """`merge-base --is-ancestor`: 0 ja, 1 nein, alles andere ist ein Fehler."""
+    code = _git(ort, "merge-base", "--is-ancestor", alt, neu, check=False).returncode
+    if code not in (0, 1):
+        raise GitFehler("merge-base", code)
+    return code == 0
+
+
+def _norm(pfad: str | Path) -> str:
+    return os.path.normcase(str(Path(pfad).resolve()))
+
+
+def _worktree_pruefen(repo_klon: Path, wt: Path, branch: str) -> None:
+    """Wirft WorktreeFehler, wenn `wt` kein zusaetzlicher Worktree auf `branch` ist."""
+    liste = _git(repo_klon, "worktree", "list", "--porcelain").stdout
+    pfade = [z[len("worktree "):] for z in liste.splitlines() if z.startswith("worktree ")]
+    # Der erste Eintrag ist der Haupt-Checkout selbst und nie ein Helfer-Worktree.
+    if _norm(wt) not in {_norm(p) for p in pfade[1:]}:
+        raise WorktreeFehler("kein_worktree_des_klons")
+    aktuell = _git(wt, "symbolic-ref", "--short", "HEAD", check=False)
+    if aktuell.returncode != 0 or aktuell.stdout.strip() != branch:
+        raise WorktreeFehler("falscher_zweig_im_worktree")
 
 
 def _ref_da(ort: Path, ref: str) -> bool:
@@ -95,6 +139,8 @@ def worktree_bereit(
     laufen beide Seiten auseinander, folgt KonfliktFehler und nichts aendert sich.
     """
     _debugger_zweig_pruefen(branch)
+    if wt_ordner.exists():
+        _worktree_pruefen(repo_klon, wt_ordner, branch)
     _git(repo_klon, "fetch", "--prune", "origin")
     remote = f"origin/{branch}"
     remote_da = _ref_da(repo_klon, f"refs/remotes/{remote}")
@@ -105,20 +151,17 @@ def worktree_bereit(
             _git(repo_klon, "worktree", "add", str(wt_ordner), branch)
         else:
             start = remote if remote_da else f"origin/{basis}"
-            _git(repo_klon, "worktree", "add", "-b", branch, str(wt_ordner), start)
+            _git(repo_klon, "worktree", "add", "--no-track", "-b", branch, str(wt_ordner), start)
             return wt_ordner
     if not remote_da:
         return wt_ordner
-    if _git(wt_ordner, "merge", "--ff-only", remote, check=False).returncode != 0:
-        lokal_ist_vorfahr = _git(
-            wt_ordner, "merge-base", "--is-ancestor", "HEAD", remote, check=False
-        ).returncode
-        remote_ist_vorfahr = _git(
-            wt_ordner, "merge-base", "--is-ancestor", remote, "HEAD", check=False
-        ).returncode
-        if lokal_ist_vorfahr != 0 and remote_ist_vorfahr != 0:
+    erg = _git(wt_ordner, "merge", "--ff-only", remote, check=False)
+    if erg.returncode != 0:
+        if not _ist_vorfahr(wt_ordner, "HEAD", remote) and not _ist_vorfahr(
+            wt_ordner, remote, "HEAD"
+        ):
             raise KonfliktFehler(branch)
-        raise GitFehler("merge", 1)
+        raise GitFehler("merge", erg.returncode)
     return wt_ordner
 
 
@@ -138,6 +181,7 @@ def aufraeumen(repo_klon: Path, wt: Path, branch: str) -> None:
     """Entfernt Worktree und lokalen Zweig des Helfers (nur `debugger/*`)."""
     _debugger_zweig_pruefen(branch)
     if wt.exists():
+        _worktree_pruefen(repo_klon, wt, branch)
         _git(repo_klon, "worktree", "remove", "--force", str(wt))
     _git(repo_klon, "worktree", "prune")
     if _ref_da(repo_klon, f"refs/heads/{branch}"):
