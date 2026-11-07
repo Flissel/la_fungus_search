@@ -74,12 +74,22 @@ def _entschaerfen(text: str) -> str:
     return text.replace("<<<", "‹‹‹")
 
 
-def prompt_bauen(auftrag: Sequence[str], material: str, *, art: str) -> str:
-    """Baut den Prompt; kürzt nur das Material, sodass er höchstens 120 000 Byte hat."""
+def prompt_bauen(
+    auftrag: Sequence[str], material: str, *, art: str, hinweise: Sequence[str] = ()
+) -> str:
+    """Baut den Prompt; kürzt nur das Material, sodass er höchstens 120 000 Byte hat.
+
+    `hinweise` sind feste Sätze des Wächters (nicht aus Issue oder User); sie stehen nach
+    der Regel und vor `<<<AUFTRAG>>>`.
+    """
     if art not in _ART_TEXT:
         raise ValueError("unbekannte_art")
     block = "\n\n".join(_entschaerfen(a) for a in auftrag)
-    kopf = f"{_REGEL}\n\n{_ART_TEXT[art]}\n\n<<<AUFTRAG>>>\n{block}\n<<<ENDE AUFTRAG>>>\n\n<<<MATERIAL>>>\n"
+    zusatz = "".join(f"{_entschaerfen(h)}\n\n" for h in hinweise)
+    kopf = (
+        f"{_REGEL}\n\n{_ART_TEXT[art]}\n\n{zusatz}<<<AUFTRAG>>>\n{block}\n<<<ENDE AUFTRAG>>>\n\n"
+        "<<<MATERIAL>>>\n"
+    )
     fuss = f"\n<<<ENDE MATERIAL>>>\n\n{_SCHLUSS}\n"
     mat = _entschaerfen(material)
     rest = MAX_PROMPT_BYTES - len((kopf + fuss).encode("utf-8"))

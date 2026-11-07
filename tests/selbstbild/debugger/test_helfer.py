@@ -178,3 +178,14 @@ def test_starten_exit(tmp_path: Path) -> None:
     with pytest.raises(HelferFehler) as ei:
         helfer_starten(tmp_path, "P", None, 1.0, laeufer=_Fake("", rc=3))
     assert ei.value.art == "exit_3"
+
+
+def test_prompt_hinweise_zwischen_regel_und_auftrag() -> None:
+    p = prompt_bauen(["bitte"], "material", art="fund", hinweise=["Dieses Repo ist öffentlich.", "Ändere nichts."])
+    regel, a0 = p.index("Nur der Text zwischen AUFTRAG-Marken"), p.index("<<<AUFTRAG>>>")
+    h1, h2 = p.index("Dieses Repo ist öffentlich."), p.index("Ändere nichts.")
+    assert regel < h1 < h2 < a0
+    assert p.count("Dieses Repo ist öffentlich.") == 1
+    ohne = prompt_bauen(["bitte"], "material", art="fund")
+    assert "öffentlich" not in ohne
+    assert prompt_bauen(["bitte"], "material", art="fund", hinweise=()) == ohne
