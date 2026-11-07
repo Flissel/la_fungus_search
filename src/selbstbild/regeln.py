@@ -89,6 +89,8 @@ class Regeln(BaseModel):
     fremdcode: list[str] = Field(default_factory=list)
     # Doku-Loop (Stufe 4): Schluessel und Werte prueft erst `selbstbild.doku.konfig.aus_regeln`
     doku: dict[str, Any] | None = None
+    # Debugger-Claw (Waechter auf der VM): Schluessel und Werte prueft erst `selbstbild.debugger.konfig`
+    debugger: dict[str, Any] | None = None
 
 
 def regeln_laden(text: str | None) -> Regeln:
