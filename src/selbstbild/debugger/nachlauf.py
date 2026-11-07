@@ -38,6 +38,7 @@ from selbstbild.debugger.runde import (
     wt_pfad,
     zurueckgehalten,
 )
+from selbstbild.debugger.spiegel import ZurueckgehaltenFehler
 from selbstbild.debugger.stand import DebuggerStand, FundStand
 from selbstbild.funde.github import GitHubFehler
 from selbstbild.funde.text import pruefen
@@ -211,17 +212,26 @@ class _Nachlauf:
         except PushZuGross:  # R23: fail-closed
             muster = ZU_GROSS
         if muster is not None:
-            satz = zurueckgehalten(muster)
-            self.einmal(f"pin_wartet:{n}:schluessel", lambda: self.w.gh_lab.kommentieren(issue_repo, n, satz))
-            self.zeilen.append(f"#{n}: Pin zurückgehalten ({muster})")
+            self.gehalten(n, muster)
             return
-        # (6) Push, (7) PR, (8) FundStand ersetzen
+        # (6) Push (maßgebliche Prüfung im Spiegel, R29), (7) PR, (8) FundStand ersetzen
         if neu > 0:
-            self.w.push(wt, branch)
+            try:
+                self.w.push(wt, branch)
+            except ZurueckgehaltenFehler as e:
+                self.gehalten(n, e.muster)
+                return
         nummer = pr_finden_oder_anlegen(self.w, issue_repo, branch, basis, titel, koerper)
         self.stand.funde[str(n)] = FundStand(repo=issue_repo, branch=branch, sitzung=fund.sitzung, pr=nummer,
                                              zustand="pr", versuche=fund.versuche)
         self.zeilen.append(f"#{n}: Pin-PR #{nummer} geöffnet")
+
+    def gehalten(self, n: int, muster: str) -> None:
+        """Schlüssel-Verdacht vor dem Pin-Push: je Fund nur ein Rückhalte-Kommentar."""
+        satz = zurueckgehalten(muster)
+        issue_repo = self.konfig.issue_repo
+        self.einmal(f"pin_wartet:{n}:schluessel", lambda: self.w.gh_lab.kommentieren(issue_repo, n, satz))
+        self.zeilen.append(f"#{n}: Pin zurückgehalten ({muster})")
 
     def warten(self, n: int, grund: str) -> None:
         """R26: der Fund bleibt und wird erneut versucht; ins Issue je Grund nur ein Kommentar."""

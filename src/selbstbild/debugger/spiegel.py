@@ -1,24 +1,36 @@
-"""Spiegel des Debugger-Claw: der einzige Ort, an dem git mit GitHub spricht (Rulings R16, R20).
+"""Spiegel des Debugger-Claw: der einzige Ort, an dem git mit GitHub spricht (R16, R20, R29).
 
 Je Repo gibt es ein bare Repo `<spiegel_ordner>/<owner>__<name>.git`, das dem Wächter (root)
 gehört. Klon und Worktrees des Helfers (`claw`) haben den Spiegel als `origin` und kommen nie
-an den Token. Nur die Prozesse hier bekommen ihn, und nur über `GIT_ASKPASS` plus
+an den Token. Nur die GitHub-Prozesse hier bekommen ihn, und nur über `GIT_ASKPASS` plus
 `DEBUGGER_GIT_TOKEN` in genau ihrer Umgebung; die URL wird aus dem Repo-Namen gebaut, nie
-aus Remote-Konfiguration. Jeder Aufruf läuft mit `HAERTUNG`, ohne System- und globale
-Konfiguration, ohne Eingabe und mit Zeitgrenze. Fehler nennen nur Unterbefehl und Code.
+aus Remote-Konfiguration. Kein Prozess des Wächters läuft im Repo des Helfers: Objekte kommen
+nur als Bundle, das `claw` über das Präfix erzeugt (R29). Jeder Spiegel-Aufruf läuft mit
+`HAERTUNG` und `--git-dir`, ohne System- und globale Konfiguration, ohne Eingabe und mit
+Zeitgrenze. Fehler nennen nur Unterbefehl und Code.
 """
 from __future__ import annotations
 
 import os
 import re
-import shlex
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Callable
 
-from selbstbild.debugger.klon import TIMEOUT_CODE, GitFehler, debugger_zweig_pruefen
+from selbstbild.debugger.klon import (
+    MAX_PUSH_INHALT,
+    TIMEOUT_CODE,
+    ZU_GROSS,
+    GitFehler,
+    debugger_zweig_pruefen,
+    git_in_datei,
+)
+from selbstbild.funde.text import pruefen
 
 SPIEGEL_TIMEOUT_S = 300
+MAX_BUNDLE = 50_000_000
+PFAD_POSIX = "/usr/local/bin:/usr/bin:/bin"
 HAERTUNG: tuple[str, ...] = (
     "-c", "credential.helper=",
     "-c", f"core.hooksPath={os.devnull}",
@@ -27,17 +39,23 @@ HAERTUNG: tuple[str, ...] = (
     "-c", "protocol.https.allow=always",
     "-c", "protocol.file.allow=always",
 )
-# Upload-Pack läuft im fremden Repo (Klon des Helfers) und liest dort nur Objekte; ohne
-# `safe.directory` verweigert git als root ein Repo, das `claw` gehört. Kein Präfix: root liest.
-UPLOAD_PACK = " ".join(shlex.quote(x) for x in (
-    "git", "-c", "safe.directory=*", "-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false",
-    "upload-pack",
-))
+FSCK = ("-c", "transfer.fsckObjects=true")
+BUNDLE_REF = "HEAD"  # das Bundle trägt HEAD des Worktrees, nie einen Branch-Namen aus dem Klon
+NULL_SHA = "0" * 40
 
 _REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
-_ENV_DURCH = ("PATH", "HOME", "LANG", "SYSTEMROOT")  # SYSTEMROOT nur unter Windows (Tests)
+_BASIS = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+_SHA = re.compile(r"[0-9a-f]{40}")
 
-Laeufer = Callable[..., subprocess.CompletedProcess[str]]
+Laeufer = Callable[..., subprocess.CompletedProcess[bytes]]
+
+
+class ZurueckgehaltenFehler(Exception):
+    """Die Prüfung im Spiegel hat ein Muster getroffen (oder `zu_gross`); nichts wurde gepusht."""
+
+    def __init__(self, muster: str) -> None:
+        super().__init__(muster)
+        self.muster = muster
 
 
 def _repo_pruefen(repo: str) -> tuple[str, str]:
@@ -62,13 +80,19 @@ def spiegel_pfad(spiegel_ordner: Path, repo: str) -> Path:
 
 
 def _env(token_datei: Path | None) -> dict[str, str]:
-    """Minimale Umgebung; mit `token_datei` zusätzlich Askpass und Token (nur für GitHub)."""
-    env = {k: os.environ[k] for k in _ENV_DURCH if k in os.environ and (k != "SYSTEMROOT" or os.name == "nt")}
+    """Minimale Umgebung mit festem PATH; mit `token_datei` zusätzlich Askpass und Token."""
+    windows = os.name == "nt"  # nur für die Tests: dort bleibt der PATH des Eltern-Prozesses
+    env = {"PATH": os.environ.get("PATH", "") if windows else PFAD_POSIX}
+    for k in ("HOME", "LANG") + (("SYSTEMROOT",) if windows else ()):
+        if k in os.environ:
+            env[k] = os.environ[k]
     env.update({
         "GIT_TERMINAL_PROMPT": "0",
         "GCM_INTERACTIVE": "never",
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_NO_LAZY_FETCH": "1",
     })
     if token_datei is None:
         return env
@@ -87,21 +111,25 @@ def _env(token_datei: Path | None) -> dict[str, str]:
 
 
 def _ziel(repo: str, url: str | None) -> tuple[str, bool]:
-    """(URL, braucht_token): ohne `url` GitHub; eine lokale `url` (Tests) braucht keinen Token."""
+    """(URL, braucht_token). Ohne `url` GitHub; eine andere `url` nur als lokaler Pfad (Tests)."""
     standard = spiegel_url(repo)
-    if url is None:
+    if url is None or url == standard:
         return standard, True
-    return url, "://" in url
+    if "://" in url or url.startswith("-") or not url:
+        raise ValueError("url_nicht_erlaubt")
+    return url, False
 
 
-def _git(
-    pfad: Path, args: list[str], env: dict[str, str], laeufer: Laeufer, *, check: bool = True
-) -> subprocess.CompletedProcess[str]:
+def _lauf(
+    pfad: Path, args: list[str], env: dict[str, str], laeufer: Laeufer, *, check: bool = True,
+    eingabe: bytes | None = None, extra: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[bytes]:
+    """`git <HAERTUNG> <extra> --git-dir=<pfad> ...` (Bytes); Fehler nur als GitFehler."""
+    ein: dict[str, object] = {"stdin": subprocess.DEVNULL} if eingabe is None else {"input": eingabe}
     try:
         erg = laeufer(
-            ["git", *HAERTUNG, "-C", str(pfad), *args],
-            check=False, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env,
-            timeout=SPIEGEL_TIMEOUT_S,
+            ["git", *HAERTUNG, *extra, f"--git-dir={pfad}", *args],
+            check=False, capture_output=True, env=env, timeout=SPIEGEL_TIMEOUT_S, **ein,
         )
     except subprocess.TimeoutExpired:
         raise GitFehler(args[0], TIMEOUT_CODE) from None
@@ -110,16 +138,30 @@ def _git(
     return erg
 
 
+def _sha(pfad: Path, ref: str, env: dict[str, str], laeufer: Laeufer, *, pflicht: bool = True) -> str:
+    """SHA von `ref` im Spiegel; fehlt er: `""` oder (pflicht) GitFehler."""
+    erg = _lauf(pfad, ["rev-parse", "--verify", "-q", ref], env, laeufer, check=False)
+    sha = bytes(erg.stdout).decode("ascii", errors="replace").strip() if erg.returncode == 0 else ""
+    if sha and not _SHA.fullmatch(sha):
+        raise GitFehler("rev-parse", 1)
+    if pflicht and not sha:
+        raise GitFehler("rev-parse", erg.returncode or 1)
+    return sha
+
+
 def spiegel_bereit(pfad: Path, *, laeufer: Laeufer = subprocess.run) -> None:
-    """Legt den Spiegel als bare Repo an, wenn er fehlt; sonst nichts."""
+    """Legt den Spiegel als bare Repo an, wenn er fehlt; ein vorhandener Pfad muss bare sein."""
+    env = _env(None)
     if pfad.exists():
+        erg = _lauf(pfad, ["rev-parse", "--is-bare-repository"], env, laeufer, check=False)
+        if erg.returncode != 0 or bytes(erg.stdout).strip() != b"true":
+            raise ValueError("kein_bare_repo")
         return
     pfad.parent.mkdir(parents=True, exist_ok=True)
     try:
         erg = laeufer(
             ["git", *HAERTUNG, "init", "-q", "--bare", str(pfad)],
-            check=False, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=_env(None),
-            timeout=SPIEGEL_TIMEOUT_S,
+            check=False, capture_output=True, stdin=subprocess.DEVNULL, env=env, timeout=SPIEGEL_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
         raise GitFehler("init", TIMEOUT_CODE) from None
@@ -133,31 +175,93 @@ def spiegel_holen(
     """Holt alle Branches von GitHub in den Spiegel (`fetch --prune --no-tags`, erzwungen)."""
     ziel, braucht_token = _ziel(repo, url)
     env = _env(token_datei if braucht_token else None)
-    _git(pfad, ["fetch", "--prune", "--no-tags", ziel, "+refs/heads/*:refs/heads/*"], env, laeufer)
+    _lauf(pfad, ["fetch", "--prune", "--no-tags", ziel, "+refs/heads/*:refs/heads/*"], env, laeufer)
+
+
+def _objekte_pruefen(pfad: Path, sha: str, ohne: list[str], env: dict[str, str], laeufer: Laeufer) -> str | None:
+    """Prüft alle neuen Objekte (Commits mit Kopf, Bäume mit Namen, Blobs, Tags) roh im Spiegel.
+
+    Rückgabe: Mustername, `zu_gross` über `MAX_PUSH_INHALT`, oder None. Antwortet
+    `cat-file` mit einer anderen Id als angefragt, folgt GitFehler.
+    """
+    liste = _lauf(pfad, ["rev-list", "--objects", "--no-object-names", sha, *(f"^{x}" for x in ohne)], env, laeufer)
+    ids = [z.strip() for z in bytes(liste.stdout).decode("ascii", errors="replace").splitlines() if z.strip()]
+    if not ids or any(not _SHA.fullmatch(i) for i in ids):
+        raise GitFehler("rev-list", 1)
+    eingabe = "".join(f"{i}\n" for i in ids).encode("ascii")
+    kopfzeilen = bytes(_lauf(pfad, ["cat-file", "--batch-check"], env, laeufer, eingabe=eingabe).stdout).splitlines()
+    if len(kopfzeilen) != len(ids):
+        raise GitFehler("cat-file", 1)
+    gesamt = 0
+    for i, zeile in zip(ids, kopfzeilen):
+        teile = zeile.split()
+        if len(teile) != 3 or teile[0].decode("ascii", errors="replace") != i or not teile[2].isdigit():
+            raise GitFehler("cat-file", 1)
+        gesamt += int(teile[2])
+    if gesamt > MAX_PUSH_INHALT:
+        return ZU_GROSS
+    roh = bytes(_lauf(pfad, ["cat-file", "--batch"], env, laeufer, eingabe=eingabe).stdout)
+    inhalte: list[str] = []
+    pos = 0
+    for i in ids:
+        ende = roh.find(b"\n", pos)
+        kopf = roh[pos:ende].split() if ende >= 0 else []
+        if len(kopf) != 3 or kopf[0].decode("ascii", errors="replace") != i or not kopf[2].isdigit():
+            raise GitFehler("cat-file", 1)
+        start, groesse = ende + 1, int(kopf[2])
+        if start + groesse > len(roh):
+            raise GitFehler("cat-file", 1)
+        inhalte.append(roh[start:start + groesse].decode("utf-8", errors="replace"))
+        pos = start + groesse + 1
+    return pruefen("\n".join(inhalte))
 
 
 def spiegel_push(
-    pfad: Path, wt: Path, branch: str, repo: str, token_datei: Path, *, url: str | None = None,
-    laeufer: Laeufer = subprocess.run,
+    pfad: Path, wt: Path, branch: str, repo: str, token_datei: Path, *, basis: str = "master",
+    url: str | None = None, laeufer: Laeufer = subprocess.run,
 ) -> None:
-    """Pusht `HEAD` des Worktrees als `refs/heads/<branch>` über den Spiegel nach GitHub.
+    """Pusht `HEAD` des Worktrees als `refs/heads/<branch>` über den Spiegel nach GitHub (R29).
 
-    Nur `debugger/...` (sonst `ValueError` vor jeder Änderung). Erst holt der Spiegel die
-    Objekte aus dem Worktree (lokal, ohne Token), dann pusht er genau diesen einen Branch
-    ohne `+`. Token und Askpass werden vor dem ersten Schritt geprüft. Scheitert der Push,
-    zeigt der Branch im Spiegel wieder auf den alten Stand (oder fehlt wieder), damit der Klon
-    ihn beim nächsten Fetch nicht für gepusht hält.
+    1. `branch` muss `debugger/...` sein, `url` erlaubt, Token und Askpass da (vor jeder Änderung).
+    2. `claw` erzeugt über das Präfix ein Bundle `HEAD ^<basis> [^<branch>]` mit den SHAs aus dem
+       Spiegel; root schreibt es in eine eigene Temp-Datei (höchstens `MAX_BUNDLE`).
+    3. root holt das Bundle mit fsck nach `refs/pruefung/<branch>` und prüft dort alle neuen
+       Objekte roh; Treffer oder `zu_gross` → `ZurueckgehaltenFehler`, nichts wird gepusht.
+    4. `refs/heads/<branch>` = geprüfter SHA (nur neu oder Fast-Forward), Push `<sha>:refs/heads/
+       <branch>` ohne `+`; scheitert er, zeigt der Spiegel-Branch wieder auf den alten Stand.
+    `refs/pruefung/<branch>` wird immer gelöscht.
     """
     debugger_zweig_pruefen(branch)
+    if not isinstance(basis, str) or not _BASIS.fullmatch(basis) or ".." in basis:
+        raise ValueError("basis_ungueltig")
     ziel, braucht_token = _ziel(repo, url)
-    push_env, lokal_env = _env(token_datei if braucht_token else None), _env(None)
-    ref = f"refs/heads/{branch}"
-    alt = _git(pfad, ["rev-parse", "--verify", "-q", ref], lokal_env, laeufer, check=False)
-    vorher = alt.stdout.strip() if alt.returncode == 0 else ""
-    _git(pfad, ["fetch", "--no-tags", "--upload-pack", UPLOAD_PACK, str(wt), f"+HEAD:{ref}"], lokal_env, laeufer)
+    push_env, env = _env(token_datei if braucht_token else None), _env(None)
+    kopf, pruef = f"refs/heads/{branch}", f"refs/pruefung/{branch}"
+    basis_sha = _sha(pfad, f"refs/heads/{basis}", env, laeufer)
+    alt = _sha(pfad, kopf, env, laeufer, pflicht=False)
+    ohne = [basis_sha] + ([alt] if alt else [])
     try:
-        _git(pfad, ["push", ziel, f"{ref}:{ref}"], push_env, laeufer)
-    except GitFehler:
-        zurueck = ["update-ref", ref, vorher] if vorher else ["update-ref", "-d", ref]
-        _git(pfad, zurueck, lokal_env, laeufer, check=False)
-        raise
+        with tempfile.TemporaryDirectory(prefix="debugger-bundle-") as tmp:
+            datei = Path(tmp) / "push.bundle"
+            with datei.open("wb") as aus:
+                git_in_datei(wt, "bundle", "create", "-", BUNDLE_REF, *(f"^{x}" for x in ohne),
+                             ziel=aus, grenze=MAX_BUNDLE)
+            _lauf(pfad, ["fetch", "--no-tags", str(datei), f"+{BUNDLE_REF}:{pruef}"], env, laeufer, extra=FSCK)
+        sha = _sha(pfad, pruef, env, laeufer)
+        typ = _lauf(pfad, ["cat-file", "-t", sha], env, laeufer)
+        if bytes(typ.stdout).strip() != b"commit":
+            raise GitFehler("cat-file", 1)
+        muster = _objekte_pruefen(pfad, sha, ohne, env, laeufer)
+        if muster is not None:
+            raise ZurueckgehaltenFehler(muster)
+        if alt and _lauf(pfad, ["merge-base", "--is-ancestor", alt, sha], env, laeufer, check=False).returncode != 0:
+            raise GitFehler("merge-base", 1)  # kein Fast-Forward des Spiegel-Branches
+        _lauf(pfad, ["update-ref", kopf, sha, alt or NULL_SHA], env, laeufer)
+        try:
+            _lauf(pfad, ["push", ziel, f"{sha}:{kopf}"], push_env, laeufer)
+        except GitFehler:
+            zurueck = ["update-ref", kopf, alt, sha] if alt else ["update-ref", "-d", kopf, sha]
+            _lauf(pfad, zurueck, env, laeufer, check=False)
+            raise
+    finally:
+        _lauf(pfad, ["update-ref", "-d", pruef], env, laeufer, check=False)

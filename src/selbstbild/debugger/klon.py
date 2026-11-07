@@ -11,15 +11,18 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
-from typing import Sequence
+from typing import BinaryIO, Sequence
 
 PRAEFIX = "debugger/"
 TITEL_PRAEFIX = "[selbstbild] "
 MAX_KURZ = 30
 GIT_TIMEOUT_S = 300
 TIMEOUT_CODE = -1
+GROESSE_CODE = -2
 MAX_PUSH_INHALT = 5_000_000
+_BLOCK = 1 << 20
 ZU_GROSS = "zu_gross"
 
 _ZWEIG = re.compile(r"debugger/[A-Za-z0-9][A-Za-z0-9._/-]*")
@@ -35,7 +38,8 @@ class GitFehler(Exception):
     """Ein Git-Aufruf ist gescheitert; nennt nur Unterbefehl und Code."""
 
     def __init__(self, unterbefehl: str, code: int) -> None:
-        zusatz = " (Zeitueberschreitung)" if code == TIMEOUT_CODE else f" (Code {code})"
+        zusatz = {TIMEOUT_CODE: " (Zeitueberschreitung)", GROESSE_CODE: " (Ausgabe zu gross)"}.get(
+            code, f" (Code {code})")
         super().__init__(f"git {unterbefehl} fehlgeschlagen{zusatz}")
         self.unterbefehl = unterbefehl
         self.code = code
@@ -66,10 +70,11 @@ def git_praefix() -> tuple[str, ...]:
 
 
 def _env() -> dict[str, str]:
-    """Umgebung fuer Klon-Git: ohne Zugangsdaten, ohne Prompt, ohne Replace-Objekte."""
+    """Umgebung fuer Klon-Git: ohne Zugangsdaten, ohne Prompt, ohne Replace-Objekte, ohne Nachladen."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("DEBUGGER_") and k not in _ENV_GESPERRT}
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_NO_REPLACE_OBJECTS"] = "1"  # der Waechter sieht immer die echten Objekte
+    env["GIT_NO_LAZY_FETCH"] = "1"  # kein Nachladen ueber eine vom Helfer eingetragene Promisor-Quelle
     return env
 
 
@@ -115,6 +120,54 @@ def git_roh(ort: Path, *args: str, eingabe: bytes) -> bytes:
     if erg.returncode != 0:
         raise GitFehler(args[0] if args else "?", erg.returncode)
     return bytes(erg.stdout)
+
+
+def git_in_datei(ort: Path, *args: str, ziel: BinaryIO, grenze: int) -> None:
+    """Wie `git_lauf` (mit Praefix), aber stdout geht blockweise nach `ziel` (Datei des Waechters).
+
+    Mehr als `grenze` Bytes: Prozess wird beendet, `GitFehler(<unterbefehl>, GROESSE_CODE)`
+    (fail-closed). Zeitgrenze wie bei `git_lauf`; stderr wird verworfen.
+    """
+    unter = args[0] if args else "?"
+    proc = subprocess.Popen(
+        [*_praefix, "git", "-C", str(ort), *args],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=_env(),
+    )
+    abgelaufen = threading.Event()
+
+    def stopp() -> None:
+        abgelaufen.set()
+        proc.kill()
+
+    wecker = threading.Timer(GIT_TIMEOUT_S, stopp)
+    wecker.start()
+    zu_gross = False
+    try:
+        aus = proc.stdout
+        if aus is None:  # pragma: no cover - stdout=PIPE ist gesetzt
+            raise GitFehler(unter, 1)
+        gesamt = 0
+        while block := aus.read(_BLOCK):
+            gesamt += len(block)
+            if gesamt > grenze:
+                zu_gross = True
+                proc.kill()
+                break
+            ziel.write(block)
+        code = proc.wait()
+    finally:
+        wecker.cancel()
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    if abgelaufen.is_set():
+        raise GitFehler(unter, TIMEOUT_CODE)
+    if zu_gross:
+        raise GitFehler(unter, GROESSE_CODE)
+    if code != 0:
+        raise GitFehler(unter, code)
 
 
 def ist_vorfahr(ort: Path, alt: str, neu: str) -> bool:

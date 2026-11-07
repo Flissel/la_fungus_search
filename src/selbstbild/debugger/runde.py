@@ -30,6 +30,7 @@ from selbstbild.debugger.klon import (
     worktree_bereit,
 )
 from selbstbild.debugger.konfig import DebuggerKonfig
+from selbstbild.debugger.spiegel import ZurueckgehaltenFehler
 from selbstbild.debugger.stand import DebuggerStand, FundStand
 from selbstbild.funde.github import GitHub, GitHubFehler
 from selbstbild.funde.text import pruefen
@@ -375,6 +376,9 @@ class _Lauf:
         if neu > 0:
             try:
                 self.w.push(wt, fund.branch)
+            except ZurueckgehaltenFehler as e:  # R29: maßgebliche Prüfung im Spiegel
+                self.halten(e.muster)
+                return self.fertig(fund)
             except (GitFehler, RuntimeError, ValueError, OSError):
                 return self.fehlschlag(fund, "push")
         neuer_pr = fund.pr is None

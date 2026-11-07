@@ -450,6 +450,27 @@ def test_pin_zu_gross_haelt_zurueck(welt: Welt, monkeypatch: pytest.MonkeyPatch)
     assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
 
 
+def test_pin_spiegel_haelt_beim_push_zurueck(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    from selbstbild.debugger.spiegel import ZurueckgehaltenFehler
+
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    sha = welt.os_merge()
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
+
+    def halt(wt: Path, branch: str) -> None:
+        welt.pushes.append((wt, branch))
+        raise ZurueckgehaltenFehler("zu_gross")
+
+    monkeypatch.setattr(welt, "push", halt)
+    vorher = FundStand(**vars(welt.stand.funde[str(N)]))
+    for _ in range(2):
+        assert welt.lauf() == [f"#{N}: Pin zurückgehalten (zu_gross)"]
+        assert welt.stand.funde[str(N)] == vorher
+    satz = PRAEFIX + "Antwort zurückgehalten (Schlüssel-Verdacht: zu_gross)."
+    assert welt.lab.namen("kommentieren") == [("kommentieren", ISSUE_REPO, N, satz)]
+    assert len(welt.pushes) == 2 and welt.lab.namen("pr_anlegen") == []
+
+
 ENTHALTEN = f"{PRAEFIX}Der Fix aus {OS_REPO}#77 ist in Vibemind_V1 schon enthalten."
 
 

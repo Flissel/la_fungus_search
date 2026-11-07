@@ -19,6 +19,7 @@ from selbstbild.debugger.runde import (
     runde_ausfuehren,
     ziel_bestimmen,
 )
+from selbstbild.debugger.spiegel import ZurueckgehaltenFehler
 from selbstbild.debugger.stand import DebuggerStand, FundStand
 from selbstbild.funde.github import GitHub, GitHubFehler
 
@@ -178,11 +179,14 @@ class Welt:
     frei: float | None = 8.0
     pushes: list[tuple[Path, str]] = field(default_factory=list)
     push_fehler: bool = False
+    push_halt: str | None = None
 
     def push(self, wt: Path, branch: str) -> None:
         self.pushes.append((wt, branch))
         if self.push_fehler:
             raise GitFehler("push", 1)
+        if self.push_halt is not None:
+            raise ZurueckgehaltenFehler(self.push_halt)
         git(wt, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
 
     @property
@@ -675,3 +679,17 @@ def test_push_inhalt_zu_gross_haelt_zurueck(welt: Welt) -> None:
     assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
     assert welt.lab.namen("kommentieren") == [
         ("kommentieren", ISSUE_REPO, N, PRAEFIX + "Antwort zurückgehalten (Schlüssel-Verdacht: zu_gross).")]
+
+
+@pytest.mark.parametrize("muster", ["GitHub-Token (klassisch)", "zu_gross"])
+def test_spiegel_haelt_beim_push_zurueck(welt: Welt, muster: str) -> None:
+    """R29: die maßgebliche Prüfung im Spiegel hält zurück, obwohl die Vorprüfung im Klon nichts sah."""
+    welt.push_halt = muster
+    welt.helfer.schritte = [fix("b.txt", "fix: b")]
+    assert welt.runde(kom(1)) == "abgelehnt:schluessel"
+    assert len(welt.pushes) == 1 and welt.lab.namen("pr_anlegen") == []
+    assert welt.lab.namen("kommentieren") == [
+        ("kommentieren", ISSUE_REPO, N, PRAEFIX + f"Antwort zurückgehalten (Schlüssel-Verdacht: {muster}).")]
+    fund = welt.stand.funde[str(N)]
+    assert fund.pr is None and fund.versuche == {} and welt.stand.verarbeitet == [1]
+    assert BRANCH not in git(welt.origin, "branch", "--list")
