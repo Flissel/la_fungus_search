@@ -31,7 +31,8 @@ from selbstbild.debugger.klon import (
 from selbstbild.debugger.konfig import DebuggerKonfig
 from selbstbild.debugger.spiegel import ZurueckgehaltenFehler, ist_pin_branch
 from selbstbild.debugger.stand import DebuggerStand, FundStand
-from selbstbild.debugger.versuche import MAX_VERSUCHE, einmal_reagieren, reagiert_aufraeumen, versuch_zaehlen
+from selbstbild.debugger.versuche import (MAX_VERSUCHE, einmal_reagieren, limit_pause, reagiert_aufraeumen,
+                                          versuch_zaehlen)
 from selbstbild.debugger.ziel import fund_neu, pfad_norm, repo_klon_pfad, wt_pfad, ziel_bestimmen
 from selbstbild.funde.github import GitHub, GitHubFehler
 from selbstbild.funde.text import pruefen
@@ -50,9 +51,8 @@ RUECKFRAGE_LABEL = "selbstbild:rueckfrage"
 MAX_DIFF = 60_000
 MAX_GEMELDET = 200
 NUR_EINORDNEN_TEXT = PRAEFIX + "Fixes in diesem Repo sind nicht freigegeben, ich kann nur einordnen."
-HINWEIS_OEFFENTLICH = (
-    "Dieses Repo ist öffentlich. Commit-Texte beschreiben nur die Code-Änderung, ohne Inhalte aus dem Issue."
-)
+HINWEIS_OEFFENTLICH = ("Dieses Repo ist öffentlich. Commit-Texte beschreiben nur die Code-Änderung, "
+                       "ohne Inhalte aus dem Issue.")
 HINWEIS_NUR_EINORDNEN = "Fixes in diesem Repo sind nicht freigegeben. Ändere keine Dateien, ordne nur ein."
 HINWEIS_FEST = ("Arbeite nur in diesem Worktree und seinem Branch. Keine Einträge in WORKBOARD.md, keine Commits "
                 "auf master, kein Push.")  # Punkt 10: immer, als erster Hinweis
@@ -306,6 +306,7 @@ class _Lauf:
             except OSError as e:
                 LOG.warning("Budget-Nachtrag nicht buchbar (%s)", type(e).__name__)
         if fehler == "helfer_antwort_fehler":  # R42: Abo-Limit o. Ä., kein Versuch, Kommentare bleiben offen
+            limit_pause(fund, ende)  # R46
             _warten_melden("limit", self.n, self.konfig, self.stand, self.w, ende)
             return "wartet:limit"
         if erg is None:

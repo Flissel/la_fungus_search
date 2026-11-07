@@ -191,7 +191,8 @@ def test_antwort_fehler_wartet_limit_ungezaehlt(welt: Welt) -> None:
     for _ in range(2):
         assert welt.runde(kom(1)) == "wartet:limit"
     fund = welt.stand.funde[str(N)]
-    assert fund.versuche == {} and fund.naechster_versuch is None and welt.stand.verarbeitet == []
+    assert fund.versuche == {} and welt.stand.verarbeitet == []
+    assert fund.naechster_versuch == (welt.jetzt + timedelta(minutes=30)).isoformat()  # R46
     assert [k[3] for k in welt.lab.namen("kommentieren")] == [PRAEFIX + "Auftrag wartet (limit)."]
     assert "wartet:limit:2026-11-07" in welt.stand.gemeldet
 

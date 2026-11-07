@@ -183,3 +183,40 @@ def test_aehnliche_branches_sind_keine_pin_branches() -> None:
     assert ist_pin_branch(pin_branch(318))
     for branch in ("debugger/7-pinsel", "debugger/7-fix", "debugger/7-pin-x", "debugger/x-pin", "pin"):
         assert not ist_pin_branch(branch), branch
+
+
+# ---------- R47: Branch-Namen treffen nie das Pin-Muster ----------
+
+@pytest.mark.parametrize("titel", ["[selbstbild] Pin", "Pin", "[selbstbild] Doku zum Pin", "pin!!!",
+                                   "[selbstbild] " + "x" * 26 + " pin"])
+@pytest.mark.parametrize("runde", [1, 2, 13])
+def test_branch_name_nie_pin_muster(titel: str, runde: int) -> None:
+    from selbstbild.debugger.klon import MAX_KURZ, branch_name
+    from selbstbild.debugger.spiegel import ist_pin_branch
+
+    name = branch_name(7, titel, runde)
+    assert not ist_pin_branch(name)
+    kurz = name.removeprefix("debugger/7-")
+    ohne_runde = kurz.removesuffix(f"-{runde}") if runde > 1 else kurz
+    assert len(kurz) <= MAX_KURZ and not ohne_runde.endswith("-pin") and ohne_runde != "pin"
+    assert "--" not in kurz
+
+
+def test_branch_name_pin_beispiele() -> None:
+    from selbstbild.debugger.klon import branch_name
+
+    assert branch_name(5, "[selbstbild] Pin") == "debugger/5-pin-fix"
+    assert branch_name(5, "[selbstbild] Pin", 2) == "debugger/5-pin-fix-2"
+    assert branch_name(5, "[selbstbild] Pinsel") == "debugger/5-pinsel"  # nur das Wortende zählt
+
+
+def test_fix_branch_mit_titel_pin_laesst_sich_pushen(pw: PinWelt) -> None:
+    from selbstbild.debugger.klon import branch_name
+
+    branch = branch_name(7, "[selbstbild] Pin")
+    wt = worktree_bereit(pw.klon, pw.wt.parent / "Vibemind_V1-7-pin-fix", branch, "master", start=pw.basis)
+    (wt / "fix.txt").write_text("fix\n", encoding="utf-8", newline="\n")
+    git(wt, "add", "fix.txt")
+    git(wt, "commit", "-q", "-m", "fix: normaler Fix")
+    spiegel_push(pw.spiegel, wt, branch, REPO, pw.token, url=str(pw.github))
+    assert git(pw.github, "rev-parse", f"refs/heads/{branch}") == git(wt, "rev-parse", "HEAD")

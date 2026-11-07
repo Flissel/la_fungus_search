@@ -22,6 +22,7 @@ from typing import BinaryIO, Sequence
 PRAEFIX = "debugger/"
 TITEL_PRAEFIX = "[selbstbild] "
 MAX_KURZ = 30
+_PIN_ZUSATZ = "-fix"  # R47
 GIT_TIMEOUT_S = 300
 TIMEOUT_CODE = -1
 GROESSE_CODE = -2
@@ -294,7 +295,8 @@ def branch_name(issue: int, titel: str, runde: int = 1) -> str:
     """`debugger/<issue>-<kurz>`; kurz hoechstens 30 Zeichen aus [a-z0-9-].
 
     Ab Runde 2 endet kurz auf `-<runde>` (R37). Das Suffix zaehlt zur Grenze: gekuerzt
-    wird nur der Titelteil, nie das Suffix.
+    wird nur der Titelteil, nie das Suffix. R47: Endet der Titelteil auf `pin` (Wortende), wird
+    `-fix` angehaengt (ebenfalls innerhalb der Grenze), damit nie das Pin-Muster entsteht.
     """
     if isinstance(runde, bool) or not isinstance(runde, int) or runde < 1:
         raise ValueError("runde_ungueltig")
@@ -302,8 +304,14 @@ def branch_name(issue: int, titel: str, runde: int = 1) -> str:
     text = titel.removeprefix(TITEL_PRAEFIX).lower()
     # Zeichenweise ersetzen, kuerzen, dann zusammenfassen (so verlangt es
     # der verbindliche Testfall aus dem Brief).
-    roh = re.sub(r"[^a-z0-9]", "-", text)[:MAX_KURZ - len(suffix)]
-    kurz = re.sub(r"-{2,}", "-", roh).strip("-") or "fund"
+    roh = re.sub(r"[^a-z0-9]", "-", text)
+
+    def kuerzen(platz: int) -> str:
+        return re.sub(r"-{2,}", "-", roh[:platz]).strip("-") or "fund"
+
+    kurz = kuerzen(MAX_KURZ - len(suffix))
+    if kurz == "pin" or kurz.endswith("-pin"):  # R47: nie `debugger/<n>-pin[-<runde>]` oder `…-pin`
+        kurz = kuerzen(MAX_KURZ - len(suffix) - len(_PIN_ZUSATZ)) + _PIN_ZUSATZ
     return f"{PRAEFIX}{issue}-{kurz}{suffix}"
 
 

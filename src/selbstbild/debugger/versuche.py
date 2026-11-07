@@ -14,6 +14,7 @@ from selbstbild.debugger.stand import DebuggerStand, FundStand
 
 MAX_VERSUCHE = 3
 PAUSE = timedelta(minutes=10)  # R42: je gezähltem Versuch
+LIMIT_PAUSE = timedelta(minutes=30)  # R46: nach `wartet:limit`, ohne Versuch
 MAX_GH_FEHLER = 3  # Punkt 1: so oft in Folge, dann ist der Kandidat für den Tag gesperrt
 REAGIERT = "reagiert:"
 GH_FEHLER = "gh_fehler:"
@@ -38,6 +39,11 @@ def versuch_zaehlen(fund: FundStand, ids: Sequence[int], jetzt: datetime) -> lis
     rest = [fund.versuche[str(i)] for i in ids if str(i) in fund.versuche]
     fund.naechster_versuch = (jetzt + PAUSE * max(rest)).isoformat() if rest else None
     return aufgegeben
+
+
+def limit_pause(fund: FundStand, jetzt: datetime) -> None:
+    """R46: Abo-Limit, kein Versuch; der Fund pausiert 30 min (kein Helfer, keine `laeuft`-Zeile)."""
+    fund.naechster_versuch = (jetzt + LIMIT_PAUSE).isoformat()
 
 
 def pausiert(fund: FundStand | None, jetzt: datetime) -> bool:

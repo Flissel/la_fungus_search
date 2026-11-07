@@ -13,6 +13,7 @@ from test_wachter import ISSUE_REPO, START, Welt, token_umgebung, welt  # noqa: 
 
 import selbstbild.debugger.wachter as wachter
 from selbstbild.debugger.auftraege import Auftrag
+from selbstbild.debugger.helfer import HelferErgebnis, HelferFehler
 from selbstbild.debugger.klon import branch_name
 from selbstbild.debugger.konfig import DebuggerKonfig
 from selbstbild.debugger.stand import DebuggerStand, FundStand, stand_speichern
@@ -177,3 +178,35 @@ def test_main_ohne_askpass_exit_2(tmp_path: Path, token_umgebung: Path,  # noqa:
     ort = str(tmp_path)
     assert wachter.main(["durchgang", ort, "--klon", ort, "--ordner", ort, "--spiegel", ort]) == 2
     assert "AskpassFehlt" in caplog.text
+
+
+# ---------- R46: Abo-Limit pausiert 30 min ----------
+
+def test_limit_pausiert_dreissig_minuten_ohne_helfer_und_budget(welt: Welt) -> None:
+    aufrufe: list[Path] = []
+    antworten: list[Any] = [HelferFehler("antwort_fehler")]
+
+    def helfer(wt: Path, prompt: str, sitzung: str | None, frist_s: float) -> HelferErgebnis:
+        aufrufe.append(wt)
+        if antworten:
+            raise antworten.pop(0)
+        return HelferErgebnis("s-1", "Jetzt geht es.", "antwort", None)
+
+    def budget() -> list[str]:
+        return [z for d in sorted(welt.ordner.glob("budget-*.jsonl"))
+                for z in d.read_text(encoding="utf-8").splitlines()]
+
+    welt.helfer = helfer  # type: ignore[assignment]
+    welt.kommentar(1, 318)
+    assert welt.durchgang() == 0
+    fund = welt.stand().funde["318"]
+    assert len(aufrufe) == 1 and fund.versuche == {} and welt.stand().verarbeitet == []
+    assert fund.naechster_versuch == (welt.jetzt + timedelta(minutes=30)).isoformat()
+    zeilen = budget()
+    welt.jetzt += timedelta(minutes=5)
+    assert welt.durchgang() == 0
+    assert len(aufrufe) == 1 and budget() == zeilen  # kein Helfer, keine `laeuft`-Zeile
+    welt.jetzt += timedelta(minutes=26)  # 31 min nach dem Limit
+    assert welt.durchgang() == 0
+    assert len(aufrufe) == 2 and welt.stand().verarbeitet == [1]
+    assert welt.stand().funde["318"].naechster_versuch is None
