@@ -243,6 +243,19 @@ def test_speicher_knapp_ueberspringt(u: Umg) -> None:
     assert u.stand()["letzter_fehler"] == "speicher"
 
 
+def test_speicher_knapp_ohne_aenderung_meldet_nichts(u: Umg) -> None:
+    # Abnahme 07.11.: ein Lauf ohne Aenderung braucht keinen Speicher und darf nicht "übersprungen" melden
+    u.funde = _funde_json({"anlegen": 1})
+    assert u.lauf() == 0
+    u.kinder.clear()
+    u.frei = 2.0
+    u.uhr = TAG1 + timedelta(hours=1)
+    assert u.lauf() == 0
+    assert u.kinder == []
+    s = u.stand()
+    assert s["ergebnis"] == "unveraendert" and s["letzter_fehler"] is None and s["ausstehend"] == []
+
+
 def test_speicher_unbekannt_ueberspringt(u: Umg) -> None:
     u.frei = None
     assert u.lauf() == 0

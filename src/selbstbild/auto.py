@@ -1,8 +1,8 @@
 """Taeglicher Lauf `python -m selbstbild auto <wurzel> [--trocken]` (Stufe 6a, Task 4; Spec 4.1 und 4.4).
 
 Ablauf: Sperre `auto.lock` -> Stand `auto-stand.json` laden -> Zweig pruefen (`kopf_pruefen`, `doku.zweig`) ->
-Speicher pruefen (mindestens `MIN_FREI_GB` freier Commit-Speicher) -> Aenderungs-Tor (HEAD, Hash des Goldsatzes,
-Antwort-Labels der Rueckfragen aus genau einem `gh.issues`) -> Kindprozesse `vermessen` und `analysieren` ->
+Aenderungs-Tor (HEAD, Hash des Goldsatzes, Antwort-Labels der Rueckfragen aus genau einem `gh.issues`) ->
+Speicher pruefen (mindestens `MIN_FREI_GB` freier Commit-Speicher) -> Kindprozesse `vermessen` und `analysieren` ->
 `rueckfragen_abgleichen` -> Kindprozess `funde [--senden]` -> Zusammenfassung -> hoechstens eine Telegram-Nachricht
 je Kalendertag -> Stand schreiben (atomar, nie mit `--trocken`).
 
@@ -407,16 +407,7 @@ class _Lauf:
         if grund:
             return self.ueberspringen(f"zweig:{grund}", f"übersprungen: Zweig nicht messbar ({grund})")
 
-        self.schritt = "speicher"
-        try:
-            frei = self.w.frei_gb()
-        except Exception:  # noqa: BLE001
-            frei = None
-        if frei is None or frei < MIN_FREI_GB:
-            wert = "unbekannt" if frei is None else f"{frei:.1f} GB"
-            return self.ueberspringen("speicher", f"übersprungen: Speicher (frei {wert}, nötig {MIN_FREI_GB:g} GB)")
-
-        self.schritt = "tor"
+        self.schritt = "tor"  # vor dem Speicher: das Tor liest nur Git und GitHub (Abnahme 07.11.)
         kopf_jetzt = kopf(self.wurzel)
         gold = Path(self.w.goldsatz) if self.w.goldsatz is not None else goldsatz_standard(aussen)
         gh, bestand, sig = self._antworten_lesen(ziel)
@@ -429,6 +420,15 @@ class _Lauf:
                 self._erinnern(bestand)
             self.abschliessen()
             return 0
+
+        self.schritt = "speicher"
+        try:
+            frei = self.w.frei_gb()
+        except Exception:  # noqa: BLE001
+            frei = None
+        if frei is None or frei < MIN_FREI_GB:
+            wert = "unbekannt" if frei is None else f"{frei:.1f} GB"
+            return self.ueberspringen("speicher", f"übersprungen: Speicher (frei {wert}, nötig {MIN_FREI_GB:g} GB)")
 
         for schritt in ("vermessen", "analysieren"):
             self.schritt = schritt
