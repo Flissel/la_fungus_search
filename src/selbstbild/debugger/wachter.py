@@ -13,9 +13,10 @@ import logging
 import os
 import subprocess
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, NoReturn, Sequence
+from typing import Callable, Iterator, NoReturn, Sequence
 
 # `_zeit`: dieselbe Zeitlesung wie die Filter der Aufträge, damit Lesemarke und Filter übereinstimmen
 from selbstbild.debugger.auftraege import Auftrag, Kommentar, _zeit, auftraege_bilden, kommentar_aus_api
@@ -28,11 +29,12 @@ from selbstbild.debugger.runde import Werkzeuge, pfad_norm, runde_ausfuehren, wt
 from selbstbild.debugger.spiegel import spiegel_bereit, spiegel_holen, spiegel_pfad, spiegel_push
 from selbstbild.debugger.stand import DebuggerStand, stand_laden, stand_speichern
 from selbstbild.funde.github import DEBUGGER_MARKE, GitHub, GitHubFehler
-from selbstbild.sperre import SperreBelegt, pid_lebt_standard, sperre
+from selbstbild.sperre import SperreBelegt, sperre
 
 LOG = logging.getLogger("selbstbild.debugger")
 STAND_DATEI = "debugger-stand.json"
 SPERRE = "debugger.lock"
+KERNEL_SPERRE = "debugger.flock"
 UEBERLAPPUNG = timedelta(minutes=10)  # wegen der Uhr (VM gegen GitHub)
 PKILL_TIMEOUT_S = 30
 KLON_GRUND = "klon:"
@@ -46,9 +48,43 @@ def _iso(t: datetime) -> str:
     return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _pid_lebt(pid: int) -> bool:
-    """Eine Sperre mit der eigenen PID stammt aus einem früheren Leben (Container-Neustart, gleiche PID)."""
-    return pid != os.getpid() and pid_lebt_standard(pid)
+@contextmanager
+def kernel_sperre(pfad: Path) -> Iterator[None]:
+    """R34: exklusiver Kernel-Lock auf `pfad` für den ganzen Durchgang; belegt: `SperreBelegt`.
+
+    POSIX `fcntl.flock(LOCK_EX | LOCK_NB)`: gilt über Container hinweg, die dasselbe Volume
+    einbinden (eine PID ist dort keine Identität), und fällt mit dem Prozess. Windows (nur Tests,
+    PC): `msvcrt.locking(LK_NBLCK)` auf das erste Byte. Die Datei bleibt liegen, sie trägt nichts.
+    """
+    pfad.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(pfad, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise SperreBelegt(pfad.name) from None
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)  # POSIX: gibt den flock frei
+
+
+def _verwaist(_pid: int) -> bool:
+    """Unter dem Kernel-Lock läuft kein anderer Durchgang: jede vorhandene Dateisperre ist verwaist."""
+    return False
 
 
 def claw_prozesse_beenden(laeufer: Laeufer = subprocess.run) -> None:
@@ -67,6 +103,14 @@ def claw_prozesse_beenden(laeufer: Laeufer = subprocess.run) -> None:
         return
     if erg.returncode not in (0, 1):
         LOG.warning("pkill gescheitert (Code %d)", erg.returncode)
+
+
+class StandUnlesbar(Exception):
+    """Die Stand-Datei ließ sich nicht lesen (OSError); sie darf nicht überschrieben werden."""
+
+
+class TokenDateiFehlt(RuntimeError):
+    """`DEBUGGER_TOKEN_DATEI` ist nicht gesetzt (Startfehler)."""
 
 
 class _Durchgang:
@@ -100,8 +144,14 @@ class _Durchgang:
         return code
 
     def laden(self) -> DebuggerStand:
-        """Ein kaputter Stand wird beiseitegelegt (nie überschrieben); danach gilt der erste Start."""
+        """Ein kaputter Stand wird beiseitegelegt (nie überschrieben); danach gilt der erste Start.
+
+        R36: Ein Lesefehler (`stand_unlesbar`) ist kein kaputter Inhalt: `StandUnlesbar`, der
+        Durchgang endet mit Exit 1 und speichert nicht.
+        """
         stand = stand_laden(self.pfad)
+        if stand.start is None and "stand_unlesbar" in stand.gemeldet:
+            raise StandUnlesbar()
         if stand.start is None and "stand_kaputt" in stand.gemeldet and self.pfad.exists():
             kopie = self.pfad.with_name(f"{self.pfad.name}.kaputt-{_iso(self.w.uhr()).replace(':', '')}")
             os.replace(self.pfad, kopie)
@@ -182,16 +232,18 @@ def durchgang(wurzel: Path, klon: Path, ordner: Path, w: Werkzeuge, *, konfig: D
               laeufer: Laeufer = subprocess.run) -> int:
     """Ein Durchgang: Exit 0 (auch bei Wartegrund, Klon-Grund oder GitHub-Fehler), 1 bei Ausnahme, 3 bei Sperre.
 
+    Zuerst der Kernel-Lock (R34), darunter die Dateisperre: Eine vorhandene Sperrdatei stammt dann
+    sicher aus einem beendeten Lauf und wird übernommen, auch nach einem Neustart mit derselben PID.
     Der Stand wird gespeichert, sobald er geladen ist; danach (R32) werden die Prozesse des
     Helfer-Nutzers beendet, wenn `DEBUGGER_CLAW_UID` gesetzt ist. `laeufer` nur für Tests.
     """
     try:
         konfig = konfig if konfig is not None else konfig_laden(wurzel)
     except ValueError as e:
-        LOG.error("Konfiguration ungültig: %s", e)
+        LOG.error("Konfiguration ungültig (%s)", type(e).__name__)
         return 1
     try:
-        with sperre(ordner / SPERRE, pid_lebt=_pid_lebt):
+        with kernel_sperre(ordner / KERNEL_SPERRE), sperre(ordner / SPERRE, veraltet_s=0.0, pid_lebt=_verwaist):
             try:
                 return _Durchgang(konfig, klon, ordner, w).lauf()
             finally:
@@ -226,7 +278,7 @@ def werkzeuge_standard(konfig: DebuggerKonfig, ordner: Path, spiegel_ordner: Pat
     """
     roh = os.environ.get("DEBUGGER_TOKEN_DATEI", "").strip()
     if not roh:
-        raise RuntimeError("DEBUGGER_TOKEN_DATEI fehlt")
+        raise TokenDateiFehlt()
     token_datei = Path(roh)
     praefix = tuple(os.environ.get("DEBUGGER_PRAEFIX", "").split())
     git_praefix_setzen(praefix)
@@ -280,8 +332,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         konfig = konfig_laden(args.wurzel)
         w = fabrik(konfig)  # Startfehler (Konfiguration, Token-Datei) sofort und klar
-    except (ValueError, RuntimeError) as e:
-        LOG.error("Start nicht möglich: %s", e)
+    except (ValueError, RuntimeError) as e:  # nur der Typ; `TokenDateiFehlt` sagt, was fehlt
+        LOG.error("Start nicht möglich (%s)", type(e).__name__)
         return 2
     if args.art == "durchgang":
         return durchgang(args.wurzel, args.klon, args.ordner, w, konfig=konfig)

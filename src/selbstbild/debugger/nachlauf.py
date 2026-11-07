@@ -221,6 +221,9 @@ class _Nachlauf:
             except ZurueckgehaltenFehler as e:
                 self.gehalten(n, e.muster)
                 return
+            except ValueError:  # z. B. Repo zum Worktree unklar: der Fund wartet, die übrigen laufen weiter
+                self.warten(n, "push")
+                return
         nummer = pr_finden_oder_anlegen(self.w, issue_repo, branch, basis, titel, koerper)
         self.stand.funde[str(n)] = FundStand(repo=issue_repo, branch=branch, sitzung=fund.sitzung, pr=nummer,
                                              zustand="pr", versuche=fund.versuche)

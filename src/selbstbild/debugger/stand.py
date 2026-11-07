@@ -39,13 +39,19 @@ class DebuggerStand:
 
 
 def stand_laden(pfad: Path) -> DebuggerStand:
-    """Fehlende oder kaputte Datei ergibt einen leeren Stand mit Eintrag in `gemeldet`. Die Datei bleibt."""
+    """Fehlende, unlesbare oder kaputte Datei ergibt einen leeren Stand mit Eintrag in `gemeldet`.
+
+    `stand_fehlt`: keine Datei. `stand_unlesbar`: Lesefehler (OSError), der Inhalt ist evtl. heil.
+    `stand_kaputt`: Inhalt nicht deutbar. Die Datei bleibt in jedem Fall.
+    """
     try:
         text = pfad.read_text(encoding="utf-8")
     except FileNotFoundError:
         return DebuggerStand(gemeldet=["stand_fehlt"])
-    except (OSError, UnicodeDecodeError):
+    except UnicodeDecodeError:
         return DebuggerStand(gemeldet=["stand_kaputt"])
+    except OSError:
+        return DebuggerStand(gemeldet=["stand_unlesbar"])
     try:
         roh = json.loads(text)
         funde = {str(k): FundStand(**v) for k, v in roh.get("funde", {}).items()}

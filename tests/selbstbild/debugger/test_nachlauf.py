@@ -471,6 +471,26 @@ def test_pin_spiegel_haelt_beim_push_zurueck(welt: Welt, monkeypatch: pytest.Mon
     assert len(welt.pushes) == 2 and welt.lab.namen("pr_anlegen") == []
 
 
+def test_pin_push_ziel_unklar_wartet(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ein ValueError beim Push (Repo zum Worktree unklar) lässt den Fund warten, ohne PR, je Grund ein Kommentar."""
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    sha = welt.os_merge()
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
+
+    def unklar(wt: Path, branch: str) -> None:
+        welt.pushes.append((wt, branch))
+        raise ValueError("repo_zum_worktree_unklar")
+
+    monkeypatch.setattr(welt, "push", unklar)
+    vorher = FundStand(**vars(welt.stand.funde[str(N)]))
+    for _ in range(2):
+        assert welt.lauf() == [f"#{N}: Pin wartet (push)"]
+        assert welt.stand.funde[str(N)] == vorher
+    assert welt.lab.namen("kommentieren") == [
+        ("kommentieren", ISSUE_REPO, N, PRAEFIX + "Pin für vibemind-os wartet (push).")]
+    assert len(welt.pushes) == 2 and welt.lab.namen("pr_anlegen") == []
+
+
 ENTHALTEN = f"{PRAEFIX}Der Fix aus {OS_REPO}#77 ist in Vibemind_V1 schon enthalten."
 
 

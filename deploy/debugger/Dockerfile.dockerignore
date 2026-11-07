@@ -1,0 +1,21 @@
+# Nur für den Build von deploy/debugger/Dockerfile (BuildKit liest <Dockerfile>.dockerignore
+# neben dem Dockerfile, der Kontext ist die la_fungus-Wurzel). Erlaubt ist nur, was das Image braucht.
+*
+!pyproject.toml
+!README.md
+!src
+!deploy/debugger/askpass.sh
+!deploy/debugger/einstieg.sh
+
+# auch innerhalb der erlaubten Pfade nie
+.git
+**/.git
+.venv*
+**/.venv*
+**/.env
+**/.env.*
+**/__pycache__
+**/*.pyc
+**/tests
+**/testdaten
+**/daten

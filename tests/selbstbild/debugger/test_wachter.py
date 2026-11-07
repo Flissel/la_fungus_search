@@ -41,21 +41,17 @@ def git(ort: Path, *args: str) -> str:
 def _repos(tmp: Path) -> Path:
     """Bare-Origin (steht für den Spiegel) mit einem Commit auf master und ein Klon davon."""
     origin = tmp / "origin.git"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(origin)], check=True, capture_output=True)
-    start = tmp / "start"
-    start.mkdir()
-    git(start, "init", "-q", "-b", "master")
-    for k, v in (("user.name", "T"), ("user.email", "t@example.invalid"), ("core.autocrlf", "false"),
-                 ("commit.gpgsign", "false")):
-        git(start, "config", k, v)
-    (start / "a.txt").write_text("a\n", encoding="utf-8", newline="\n")
-    git(start, "add", "-A")
-    git(start, "commit", "-q", "-m", "a")
-    git(start, "remote", "add", "origin", str(origin))
-    git(start, "push", "-q", "origin", "master")
     klon = tmp / "klon"
-    subprocess.run(["git", "clone", "-q", "-c", "core.autocrlf=false", str(origin), str(klon)],
-                   check=True, capture_output=True)
+    for argv in (["git", "init", "-q", "--bare", "-b", "master", str(origin)],
+                 ["git", "clone", "-q", "-c", "core.autocrlf=false", str(origin), str(klon)]):
+        subprocess.run(argv, check=True, capture_output=True)
+    for k, v in (("user.name", "T"), ("user.email", "t@example.invalid"), ("commit.gpgsign", "false")):
+        git(klon, "config", k, v)
+    git(klon, "symbolic-ref", "HEAD", "refs/heads/master")  # leerer Klon: Zweig nicht vom lokalen Standard
+    (klon / "a.txt").write_text("a\n", encoding="utf-8", newline="\n")
+    git(klon, "add", "-A")
+    git(klon, "commit", "-q", "-m", "a")
+    git(klon, "push", "-q", "origin", "master")
     return klon
 
 
@@ -204,14 +200,18 @@ def test_durchgang_fuehrt_hoechstens_eine_runde(welt: Welt) -> None:
     assert [a[2] for a in welt.lab.namen("kommentieren")] == [318, 319]
 
 
-def test_durchgang_sperre_belegt_exit_3(welt: Welt) -> None:
-    sperre = welt.ordner / "debugger.lock"
-    sperre.write_text(json.dumps({"pid": os.getppid(), "start": "2026-11-07T11:59:00"}), encoding="utf-8")
+def test_durchgang_sperre_belegt_exit_3(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R34: Hält ein anderer Durchgang (z. B. ein zweiter Container) den Kernel-Lock, Exit 3."""
+    monkeypatch.setenv("DEBUGGER_CLAW_UID", "1000")
+    beendet: list[list[str]] = []
     vorher = welt.stand_pfad.read_bytes()
     welt.kommentar(1)
-    assert welt.durchgang() == 3
-    assert welt.stand_pfad.read_bytes() == vorher and sperre.exists()
+    with wachter.kernel_sperre(welt.ordner / wachter.KERNEL_SPERRE):
+        assert welt.durchgang(laeufer=lambda argv, **kw: beendet.append(argv)) == 3
+    assert welt.stand_pfad.read_bytes() == vorher and not (welt.ordner / wachter.SPERRE).exists()
     assert welt.lesen.aufrufe == [] and welt.helfer.aufrufe == [] and welt.geholt == 0
+    assert beendet == []  # die Prozesse des anderen Laufs bleiben unberührt
+    assert welt.durchgang(laeufer=lambda argv, **kw: subprocess.CompletedProcess(argv, 1)) == 0  # frei
 
 
 def test_durchgang_klon_nicht_sauber_keine_runde(welt: Welt, caplog: pytest.LogCaptureFixture) -> None:
@@ -289,10 +289,26 @@ def test_kaputter_stand_bleibt_als_kopie(welt: Welt) -> None:
     assert s.start == s.seit == "2026-11-07T12:00:00Z" and "stand_kaputt" in s.gemeldet
 
 
-def test_sperre_mit_eigener_pid_gilt_als_verwaist(welt: Welt) -> None:
-    """Nach einem Container-Neustart hat der Wächter oft dieselbe PID wie vorher."""
-    (welt.ordner / "debugger.lock").write_text(json.dumps({"pid": os.getpid(), "start": "x"}), encoding="utf-8")
+@pytest.mark.parametrize("pid", ["eigene", "lebende_fremde"])
+def test_alte_sperrdatei_bei_freiem_kernel_lock_uebernommen(welt: Welt, pid: str) -> None:
+    """R34: Nach einem Neustart (oft dieselbe PID) blockiert eine alte Sperrdatei nicht; ohne Kernel-Lock
+    läuft kein anderer Durchgang, sie ist also verwaist."""
+    zahl = os.getpid() if pid == "eigene" else os.getppid()
+    sperrdatei = welt.ordner / wachter.SPERRE
+    sperrdatei.write_text(json.dumps({"pid": zahl, "start": "2026-11-07T11:59:00"}), encoding="utf-8")
+    welt.kommentar(1)
     assert welt.durchgang() == 0
+    assert len(welt.helfer.aufrufe) == 1 and not sperrdatei.exists()
+
+
+def test_stand_unlesbar_exit_1_ohne_speichern(welt: Welt, caplog: pytest.LogCaptureFixture) -> None:
+    """R36: Ein Lesefehler (hier: Ordner statt Datei) legt nichts beiseite und überschreibt nichts."""
+    welt.stand_pfad.unlink()
+    welt.stand_pfad.mkdir()
+    assert welt.durchgang() == 1
+    assert welt.stand_pfad.is_dir() and not list(welt.ordner.glob(f"{STAND_DATEI}*.kaputt-*"))
+    assert not list(welt.ordner.glob(f"{STAND_DATEI}.tmp"))  # kein Speicherversuch
+    assert "StandUnlesbar" in caplog.text and welt.lesen.aufrufe == [] and welt.geholt == 0
 
 
 def test_holen_vor_nachziehen(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -376,9 +392,7 @@ def test_werkzeuge_standard_push_und_holen(tmp_path: Path, token_umgebung: Path,
     aufrufe: list[tuple[Any, ...]] = []
     monkeypatch.setattr(wachter, "spiegel_bereit", lambda pfad: aufrufe.append(("bereit", pfad)))
     monkeypatch.setattr(wachter, "spiegel_holen", lambda pfad, repo, td: aufrufe.append(("holen", pfad, repo, td)))
-    monkeypatch.setattr(wachter, "spiegel_push",
-                        lambda pfad, wt, branch, repo, td, *, basis: aufrufe.append(("push", pfad, wt, branch, repo,
-                                                                                     td, basis)))
+    monkeypatch.setattr(wachter, "spiegel_push", lambda *a, basis: aufrufe.append(("push", *a, basis)))
     ordner, spiegel = tmp_path / "stand", tmp_path / "spiegel"
     konfig = DebuggerKonfig(issue_repo=ISSUE_REPO, repos={ISSUE_REPO: ".", OS_REPO: "vibemind-os"}, basis="main")
     w = werkzeuge_standard(konfig, ordner, spiegel)
@@ -394,20 +408,16 @@ def test_werkzeuge_standard_push_und_holen(tmp_path: Path, token_umgebung: Path,
         w.push(tmp_path / "anderswo", "debugger/5-fix")
 
 
-def test_werkzeuge_standard_ohne_token_datei(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ohne_token_datei_klarer_startfehler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                             caplog: pytest.LogCaptureFixture) -> None:
     monkeypatch.delenv("DEBUGGER_TOKEN_DATEI", raising=False)
-    with pytest.raises(RuntimeError, match="DEBUGGER_TOKEN_DATEI"):
+    with pytest.raises(wachter.TokenDateiFehlt):
         werkzeuge_standard(DebuggerKonfig(issue_repo=ISSUE_REPO, repos={ISSUE_REPO: "."}), tmp_path, tmp_path)
-
-
-def test_cli_ohne_token_datei_klarer_startfehler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                  caplog: pytest.LogCaptureFixture) -> None:
-    monkeypatch.delenv("DEBUGGER_TOKEN_DATEI", raising=False)
     (tmp_path / "selbstbild.yaml").write_text(
         f"debugger:\n  issue_repo: {ISSUE_REPO}\n  repos:\n    {ISSUE_REPO}: .\n", encoding="utf-8")
     ort = str(tmp_path)
     assert wachter.main(["schleife", ort, "--klon", ort, "--ordner", ort, "--spiegel", ort]) == 2
-    assert "DEBUGGER_TOKEN_DATEI" in caplog.text
+    assert "TokenDateiFehlt" in caplog.text
 
 
 class _Halt(Exception):

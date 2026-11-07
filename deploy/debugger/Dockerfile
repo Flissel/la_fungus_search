@@ -1,6 +1,7 @@
 # Debugger-Claw: Wächter (root) und Helfer `claude` (Nutzer claw, uid 1000) in einem Container.
-# Build-Kontext ist die Wurzel des la_fungus-Checkouts (siehe compose.yml und README.md).
-FROM python:3.11-slim
+# Build-Kontext ist die Wurzel des la_fungus-Checkouts (siehe compose.yml und README.md). Was in den
+# Kontext kommt, regelt `Dockerfile.dockerignore` neben dieser Datei (BuildKit), nur für diesen Build.
+FROM python:3.11-slim-bookworm
 
 ARG GH_VERSION=2.83.*
 ARG CLAUDE_CODE_VERSION=2.1.268
@@ -19,7 +20,11 @@ RUN apt-get update \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cache clean --force
+# bookworm bringt Node 18 (18.19). --engine-strict: verlangt claude-code eine neuere Node-Version,
+# bricht der Build hier ab statt mit Warnung weiterzulaufen (dann NodeSource, siehe README).
+RUN node --version \
+ && npm install -g --engine-strict "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+ && npm cache clean --force
 
 # Helfer-Nutzer claw. HOME gehört root (die .gitconfig darin schreibt der Einstieg);
 # beschreibbar für claw ist nur das Volume /home/claw/.claude.

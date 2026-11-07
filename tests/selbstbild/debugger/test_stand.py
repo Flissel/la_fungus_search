@@ -39,6 +39,14 @@ def test_stand_kaputt_ergibt_leer(tmp_path: Path) -> None:
     assert p.read_text(encoding="utf-8") == "{kaputt"
 
 
+def test_stand_unlesbar_eigene_kennung(tmp_path: Path) -> None:
+    """R36: ein Lesefehler (hier: Ordner statt Datei) ist nicht `stand_kaputt`."""
+    p = tmp_path / "stand.json"
+    p.mkdir()
+    s = stand_laden(p)
+    assert s.start is None and s.gemeldet == ["stand_unlesbar"] and p.is_dir()
+
+
 def test_verarbeitet_kappt_auf_5000(tmp_path: Path) -> None:
     s = DebuggerStand()
     s.verarbeitet_hinzu(range(1, 5006))
