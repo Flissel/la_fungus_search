@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from selbstbild.debugger.klon import gruppe_toeten
+
+_NACH_KILL_S = 5.0
+
 ERLAUBT = (
     "Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),"
     "Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(python -m pytest:*),Bash(pytest:*)"
@@ -143,13 +147,31 @@ def ergebnis_lesen(cli_ausgabe: str) -> HelferErgebnis:
     return HelferErgebnis(sitzung, text, aktion, antwort)
 
 
+def _starten(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:
+    """Wie `subprocess.run` (ohne Pipes), aber als eigene Sitzung (POSIX).
+
+    Läuft die Frist ab, stirbt die ganze Gruppe samt Enkeln (R31); danach `TimeoutExpired`.
+    """
+    frist = kw.pop("timeout")
+    proc = subprocess.Popen(argv, start_new_session=os.name != "nt", **kw)
+    try:
+        return subprocess.CompletedProcess(argv, proc.wait(timeout=frist))
+    except subprocess.TimeoutExpired:
+        gruppe_toeten(proc)
+        try:
+            proc.wait(timeout=_NACH_KILL_S)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+
+
 def helfer_starten(
     wt: Path,
     prompt: str,
     sitzung: str | None,
     frist_s: float,
     *,
-    laeufer: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    laeufer: Callable[..., subprocess.CompletedProcess[bytes]] = _starten,
     praefix: Sequence[str] = (),
 ) -> HelferErgebnis:
     """Startet `claude -p` im Worktree; Ausgabe über Temp-Datei, Env ohne Zugangsdaten.
@@ -164,7 +186,8 @@ def helfer_starten(
         for k, v in os.environ.items()
         if not k.startswith("DEBUGGER_") and k not in _ENV_GESPERRT
     }
-    with tempfile.TemporaryDirectory(prefix="debugger-helfer-") as tmp:
+    # ignore_cleanup_errors: unter Windows (Tests) kann ein überlebender Enkel die Datei noch offen halten
+    with tempfile.TemporaryDirectory(prefix="debugger-helfer-", ignore_cleanup_errors=True) as tmp:
         ziel = Path(tmp) / "stdout.json"
         try:
             with ziel.open("wb") as aus:

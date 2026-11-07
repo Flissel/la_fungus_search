@@ -1,9 +1,12 @@
 """Tests fuer klon.py mit echten temporaeren Repos (bares origin + Klone)."""
 from __future__ import annotations
 
+import io
+import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -319,25 +322,57 @@ def test_worktree_pruefung_anderer_zweig(umgebung: Umgebung) -> None:
         worktree_bereit(klon, wt, "debugger/1-x", "master")
 
 
-def test_git_timeout_wird_gitfehler(
-    umgebung: Umgebung, monkeypatch: pytest.MonkeyPatch
-) -> None:
+class _Ein(io.BytesIO):
+    """stdin-Ersatz, der seinen Inhalt nach `close()` behält."""
+
+    def close(self) -> None:
+        self.inhalt = self.getvalue()
+
+
+class FakePopen:
+    """Popen-Ersatz: protokolliert argv/kw; `haengt=True` simuliert einen Prozess, der nie endet."""
+
+    aufrufe: list[dict[str, Any]] = []
+    haengt = False
+
+    def __init__(self, argv: list[str], **kw: Any) -> None:
+        FakePopen.aufrufe.append({"argv": argv, **kw})
+        self.pid = 4242
+        self.stdout = io.BytesIO(b"")
+        self.stdin = _Ein() if kw.get("stdin") == subprocess.PIPE else None
+        self.getoetet = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        if FakePopen.haengt and not self.getoetet:
+            raise subprocess.TimeoutExpired("git", timeout or 0)
+        return 0
+
+    def kill(self) -> None:
+        self.getoetet = True
+
+
+@pytest.fixture
+def fake_popen(monkeypatch: pytest.MonkeyPatch) -> type[FakePopen]:
     from selbstbild.debugger import klon as modul
 
-    gesehen: dict[str, object] = {}
+    FakePopen.aufrufe, FakePopen.haengt = [], False
+    monkeypatch.setattr(modul.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(modul.os, "killpg", lambda pid, sig: None, raising=False)
+    return FakePopen
 
-    def falsch(*a: object, **k: object) -> None:
-        gesehen.update(k)
-        raise subprocess.TimeoutExpired(cmd="git", timeout=1)
+
+def test_git_timeout_wird_gitfehler(umgebung: Umgebung, fake_popen: type[FakePopen]) -> None:
+    from selbstbild.debugger import klon as modul
 
     _, klon, _ = umgebung
-    monkeypatch.setattr(modul.subprocess, "run", falsch)
+    fake_popen.haengt = True
     with pytest.raises(GitFehler) as ei:
         nachziehen(klon, "master", [])
     assert ei.value.code == modul.TIMEOUT_CODE
     assert ei.value.unterbefehl == "fetch"
-    assert gesehen["stdin"] == subprocess.DEVNULL
-    assert gesehen["timeout"] == modul.GIT_TIMEOUT_S
+    (gesehen,) = fake_popen.aufrufe
+    assert gesehen["stdin"] == subprocess.DEVNULL and gesehen["stderr"] == subprocess.DEVNULL
+    assert gesehen["start_new_session"] == (os.name != "nt")
     env = gesehen["env"]
     assert isinstance(env, dict) and env["GIT_TERMINAL_PROMPT"] == "0"
 
@@ -355,19 +390,13 @@ def ohne_praefix() -> Iterator[None]:
 
 
 def test_git_praefix_wird_vorangestellt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ohne_praefix: None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ohne_praefix: None, fake_popen: type[FakePopen]
 ) -> None:
     from selbstbild.debugger import klon as modul
 
-    aufrufe: list[dict[str, Any]] = []
-
-    def fake(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[Any]:
-        aufrufe.append({"argv": argv, **kw})
-        return subprocess.CompletedProcess(argv, 0, b"" if "input" in kw else "", "")
-
+    aufrufe = fake_popen.aufrufe
     for k in ("DEBUGGER_GIT_TOKEN", "DEBUGGER_ASKPASS", "GH_TOKEN", "GITHUB_TOKEN", "GIT_ASKPASS"):
         monkeypatch.setenv(k, "geheim")
-    monkeypatch.setattr(modul.subprocess, "run", fake)
     assert modul.git_praefix() == ()
     modul.git_lauf(tmp_path, "status")
     assert aufrufe[-1]["argv"] == ["git", "-C", str(tmp_path), "status"]
@@ -383,9 +412,35 @@ def test_git_praefix_wird_vorangestellt(
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         for k in ("DEBUGGER_GIT_TOKEN", "DEBUGGER_ASKPASS", "GH_TOKEN", "GITHUB_TOKEN", "GIT_ASKPASS"):
             assert k not in env
-    assert aufrufe[-1]["input"] == b"x\n"
+    assert aufrufe[-1]["stdin"] == subprocess.PIPE
+    with (tmp_path / "aus").open("wb") as aus:
+        modul.git_in_datei(tmp_path, "bundle", ziel=aus, grenze=10)
+    assert aufrufe[-1]["argv"][:6] == [*modul.git_praefix(), "git"]
+    assert all(a["start_new_session"] == (os.name != "nt") for a in aufrufe)
     with pytest.raises(TypeError):
         modul.git_praefix_setzen("setpriv --reuid=1000")
+
+
+@pytest.mark.parametrize("laeufer", ["git_in_datei", "git_lauf", "git_roh"])
+def test_git_in_datei_timeout_trotz_enkel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ohne_praefix: None, enkel: Any, laeufer: str
+) -> None:
+    """S6/R31: ein Enkel hält stdout offen; die Frist greift trotzdem binnen Sekunden."""
+    from selbstbild.debugger import klon as modul
+
+    monkeypatch.setattr(modul, "GIT_TIMEOUT_S", 2)
+    modul.git_praefix_setzen(enkel.praefix(0))
+    beginn = time.monotonic()
+    with pytest.raises(GitFehler) as ei, (tmp_path / "aus").open("wb") as aus:
+        if laeufer == "git_in_datei":
+            modul.git_in_datei(tmp_path, "bundle", ziel=aus, grenze=1000)
+        elif laeufer == "git_lauf":
+            modul.git_lauf(tmp_path, "status")
+        else:
+            modul.git_roh(tmp_path, "cat-file", "--batch", eingabe=b"x\n")
+    dauer = time.monotonic() - beginn
+    assert ei.value.code == modul.TIMEOUT_CODE and dauer < 15, dauer
+    enkel.tot_pruefen()
 
 
 def test_git_praefix_echter_umweg(umgebung: Umgebung, ohne_praefix: None) -> None:

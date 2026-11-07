@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -199,3 +200,13 @@ def test_helfer_praefix(tmp_path: Path) -> None:
     assert f.aufruf["cwd"] == tmp_path
     helfer_starten(tmp_path, "P", None, 30.0, laeufer=f)
     assert f.argv == helfer_argv("P", None)
+
+
+def test_helfer_timeout_trotz_enkel(tmp_path: Path, enkel: Any) -> None:
+    """S6/R31: der Helfer startet einen Enkel und hängt; nach der Frist endet die ganze Gruppe."""
+    beginn = time.monotonic()
+    with pytest.raises(HelferFehler) as ei:
+        helfer_starten(tmp_path, "P", None, 2.0, praefix=enkel.praefix(60))
+    dauer = time.monotonic() - beginn
+    assert ei.value.art == "frist" and dauer < 15, dauer
+    enkel.tot_pruefen()

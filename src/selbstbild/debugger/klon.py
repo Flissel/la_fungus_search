@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import BinaryIO, Sequence
 
@@ -23,6 +25,7 @@ TIMEOUT_CODE = -1
 GROESSE_CODE = -2
 MAX_PUSH_INHALT = 5_000_000
 _BLOCK = 1 << 20
+_NACH_KILL_S = 5.0
 ZU_GROSS = "zu_gross"
 
 _ZWEIG = re.compile(r"debugger/[A-Za-z0-9][A-Za-z0-9._/-]*")
@@ -78,6 +81,102 @@ def _env() -> dict[str, str]:
     return env
 
 
+def gruppe_toeten(proc: subprocess.Popen[bytes]) -> None:
+    """Beendet den Prozess samt allen Nachfahren seiner Sitzung (POSIX); unter Windows nur ihn (Tests)."""
+    if os.name == "nt":
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _begrenzt(
+    argv: list[str], unter: str, *, eingabe: bytes | None = None, ziel: BinaryIO | None = None,
+    grenze: int | None = None,
+) -> tuple[int, bytes]:
+    """Einziger Laeufer fuer Prozesse als `claw`: eigene Sitzung (POSIX), Lesen mit Restfrist (R31).
+
+    stdout liest ein Thread; der Waechter wartet hoechstens `GIT_TIMEOUT_S`, auch wenn ein Enkel
+    (Hook, Filter, pytest des Helfers) die Pipe offen haelt. Bei Zeit- oder Groessenueberschreitung
+    wird die ganze Gruppe beendet und `GitFehler(unter, TIMEOUT_CODE | GROESSE_CODE)` geworfen.
+    stdout geht nach `ziel` oder kommt als Bytes zurueck; stderr wird verworfen. Rueckgabe: Code, Bytes.
+    """
+    frist = GIT_TIMEOUT_S
+    ende = time.monotonic() + frist
+    proc = subprocess.Popen(
+        argv, stdin=subprocess.DEVNULL if eingabe is None else subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, env=_env(), start_new_session=os.name != "nt",
+    )
+    teile: list[bytes] = []
+    halt, zu_gross = threading.Event(), threading.Event()
+
+    def lesen() -> None:
+        aus, gesamt = proc.stdout, 0
+        try:
+            while aus is not None:
+                block = aus.read1(_BLOCK)
+                if not block or halt.is_set():
+                    return
+                gesamt += len(block)
+                if grenze is not None and gesamt > grenze:
+                    zu_gross.set()
+                    return
+                if ziel is not None:
+                    ziel.write(block)
+                else:
+                    teile.append(block)
+        except (OSError, ValueError):
+            return
+        finally:  # der Thread besitzt die Pipe; er kann den Aufruf überleben (Windows-Enkel)
+            if aus is not None:
+                aus.close()
+
+    def schreiben() -> None:
+        ein = proc.stdin
+        try:
+            if ein is not None and eingabe is not None:
+                ein.write(eingabe)
+        except (OSError, ValueError):
+            pass
+        finally:
+            if ein is not None:
+                try:
+                    ein.close()
+                except OSError:
+                    pass
+
+    leser = threading.Thread(target=lesen, daemon=True)
+    leser.start()
+    if eingabe is not None:
+        threading.Thread(target=schreiben, daemon=True).start()
+    leser.join(frist)
+    code: int | None = None
+    if not leser.is_alive() and not zu_gross.is_set():
+        try:
+            code = proc.wait(timeout=max(0.0, ende - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            code = None
+    if code is None:
+        halt.set()
+        gruppe_toeten(proc)
+        leser.join(_NACH_KILL_S)  # POSIX: nach dem Gruppen-Kill kommt EOF; sonst bleibt der Thread liegen
+        try:
+            proc.wait(timeout=_NACH_KILL_S)
+        except subprocess.TimeoutExpired:
+            pass
+        raise GitFehler(unter, GROESSE_CODE if zu_gross.is_set() else TIMEOUT_CODE)
+    return code, b"".join(teile)
+
+
+def _argv(ort: Path, args: tuple[str, ...]) -> list[str]:
+    return [*_praefix, "git", "-C", str(ort), *args]
+
+
 def git_lauf(
     ort: Path, *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
@@ -86,88 +185,30 @@ def git_lauf(
     Ausgabe als UTF-8 (Ersatzzeichen bei Fehlern). Zeitueberschreitung wird zu
     GitFehler(code=TIMEOUT_CODE); bei check=True gibt es nur einen schlanken Fehler (nie stderr).
     """
-    try:
-        erg = subprocess.run(
-            [*_praefix, "git", "-C", str(ort), *args],
-            check=False,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            stdin=subprocess.DEVNULL,
-            env=_env(),
-            timeout=GIT_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired:
-        raise GitFehler(args[0] if args else "?", TIMEOUT_CODE) from None
-    if check and erg.returncode != 0:
-        raise GitFehler(args[0] if args else "?", erg.returncode)
-    return erg
+    argv = _argv(ort, args)
+    code, aus = _begrenzt(argv, args[0] if args else "?")
+    if check and code != 0:
+        raise GitFehler(args[0] if args else "?", code)
+    return subprocess.CompletedProcess(argv, code, aus.decode("utf-8", errors="replace"), "")
 
 
 def git_roh(ort: Path, *args: str, eingabe: bytes) -> bytes:
     """Wie `git_lauf`, aber mit Bytes auf stdin und rohen Bytes als Ergebnis (immer check)."""
-    try:
-        erg = subprocess.run(
-            [*_praefix, "git", "-C", str(ort), *args],
-            check=False,
-            capture_output=True,
-            input=eingabe,
-            env=_env(),
-            timeout=GIT_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired:
-        raise GitFehler(args[0] if args else "?", TIMEOUT_CODE) from None
-    if erg.returncode != 0:
-        raise GitFehler(args[0] if args else "?", erg.returncode)
-    return bytes(erg.stdout)
+    code, aus = _begrenzt(_argv(ort, args), args[0] if args else "?", eingabe=eingabe)
+    if code != 0:
+        raise GitFehler(args[0] if args else "?", code)
+    return aus
 
 
 def git_in_datei(ort: Path, *args: str, ziel: BinaryIO, grenze: int) -> None:
     """Wie `git_lauf` (mit Praefix), aber stdout geht blockweise nach `ziel` (Datei des Waechters).
 
-    Mehr als `grenze` Bytes: Prozess wird beendet, `GitFehler(<unterbefehl>, GROESSE_CODE)`
+    Mehr als `grenze` Bytes: die Gruppe wird beendet, `GitFehler(<unterbefehl>, GROESSE_CODE)`
     (fail-closed). Zeitgrenze wie bei `git_lauf`; stderr wird verworfen.
     """
-    unter = args[0] if args else "?"
-    proc = subprocess.Popen(
-        [*_praefix, "git", "-C", str(ort), *args],
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=_env(),
-    )
-    abgelaufen = threading.Event()
-
-    def stopp() -> None:
-        abgelaufen.set()
-        proc.kill()
-
-    wecker = threading.Timer(GIT_TIMEOUT_S, stopp)
-    wecker.start()
-    zu_gross = False
-    try:
-        aus = proc.stdout
-        if aus is None:  # pragma: no cover - stdout=PIPE ist gesetzt
-            raise GitFehler(unter, 1)
-        gesamt = 0
-        while block := aus.read(_BLOCK):
-            gesamt += len(block)
-            if gesamt > grenze:
-                zu_gross = True
-                proc.kill()
-                break
-            ziel.write(block)
-        code = proc.wait()
-    finally:
-        wecker.cancel()
-        if proc.stdout is not None:
-            proc.stdout.close()
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait()
-    if abgelaufen.is_set():
-        raise GitFehler(unter, TIMEOUT_CODE)
-    if zu_gross:
-        raise GitFehler(unter, GROESSE_CODE)
+    code, _ = _begrenzt(_argv(ort, args), args[0] if args else "?", ziel=ziel, grenze=grenze)
     if code != 0:
-        raise GitFehler(unter, code)
+        raise GitFehler(args[0] if args else "?", code)
 
 
 def ist_vorfahr(ort: Path, alt: str, neu: str) -> bool:
