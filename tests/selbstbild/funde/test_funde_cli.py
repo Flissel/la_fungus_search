@@ -23,11 +23,12 @@ import selbstbild
 import selbstbild.__main__ as cli
 from selbstbild.doku.konfig import aus_regeln
 from selbstbild.doku.pruefliste import pruefliste_pfad
-from selbstbild.funde.github import GitHub
+from selbstbild.funde.github import AUTO_MARKE, GitHub
 from selbstbild.funde.sync import stand_pfad
 from selbstbild.funde.typen import ARTEN
 
 DATEN = Path(__file__).parent / "daten"
+MARKE = "\n\n" + AUTO_MARKE  # Kommentare der Automatik tragen die Marke
 TOKEN = "gho_GEHEIMTOKEN0123456789abcdefXYZ"
 ZIEL = "Test/ziel"
 HEUTE = date(2026, 11, 4)
@@ -742,7 +743,7 @@ def test_schliess_kommentar_nennt_analyse_commit(umg: Umgebung, capsys: pytest.C
     alt = _einzel_issue(umg.fake, "doku_widerspruch", "0" * 16, "aussen")
     code, j = umg.lauf(capsys, "--senden")
     assert code == 0 and umg.fake.issues[alt]["state"] == "closed"
-    assert (alt, f"Fund im Code verschwunden (Commit `{gemessen[:7]}`)") in umg.fake.kommentare
+    assert (alt, f"Fund im Code verschwunden (Commit `{gemessen[:7]}`)" + MARKE) in umg.fake.kommentare
     assert not any(n.startswith("quelle-unlesbar:analyse-stand") for n in j["notizen"])  # Vorfahr: lesbar
 
 
@@ -752,7 +753,7 @@ def test_schliess_kommentar_ohne_analyse_nennt_head(umg: Umgebung, capsys: pytes
     alt = _einzel_issue(umg.fake, "doku_widerspruch", "0" * 16, "aussen")
     code, j = umg.lauf(capsys, "--senden")
     assert code == 0
-    assert (alt, f"Fund im Code verschwunden (Commit `{head[:7]}`)") in umg.fake.kommentare
+    assert (alt, f"Fund im Code verschwunden (Commit `{head[:7]}`)" + MARKE) in umg.fake.kommentare
     assert any("Analyse-Commit unbekannt" in n and "HEAD" in n for n in j["notizen"])
 
 

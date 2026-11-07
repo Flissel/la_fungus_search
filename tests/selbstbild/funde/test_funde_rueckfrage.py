@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 import yaml
 
-from selbstbild.funde.github import GitHub
+from selbstbild.funde.github import AUTO_MARKE, GitHub
 from selbstbild.funde.rueckfrage import (
     ANTWORTEN,
     MAX_NEU,
@@ -70,7 +70,8 @@ def _tot(gold_pfad: Path) -> list[dict[str, Any]]:
 
 
 def _kommentare(fake: FakeGh, n: int) -> list[str]:
-    return [t for k, t in fake.kommentare if k == n]
+    """Kommentartexte ohne die angehaengte Automatik-Marke (die prueft test_funde_github_marke)."""
+    return [t.removesuffix("\n\n" + AUTO_MARKE) for k, t in fake.kommentare if k == n]
 
 
 def _schreibend(fake: FakeGh) -> list[tuple[str, str]]:

@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 
-from selbstbild.funde.github import GitHub, GitHubFehler
+from selbstbild.funde.github import AUTO_MARKE, GitHub, GitHubFehler
 from selbstbild.funde.sammeln import UNLESBAR_PRAEFIX
 from selbstbild.funde.sync import (
     IssueStand,
@@ -35,6 +35,7 @@ TAG1 = date(2026, 11, 4)
 TAG2 = date(2026, 11, 5)
 COMMIT = "abc1234def5678"
 GEPRUEFT = frozenset({"vibemind"})
+MARKE = "\n\n" + AUTO_MARKE  # Kommentare der Automatik tragen die Marke
 
 
 # ---------- gefaelschtes gh ----------
@@ -252,7 +253,7 @@ def test_tagesgrenze(tmp_path: Path) -> None:
     assert len({fund_schluessel(f) for f in funde}) == len({i["body"].split(" -->")[0] for i in _einzel(fake)})
     # das Sammel-Issue ist jetzt leer und wird geschlossen -- die Funde sind nicht weg, sondern befoerdert
     assert sammel["state"] == "closed"
-    assert (sammel["number"], "Sammlung leer: verbleibende Funde als Einzel-Issues geführt") in fake.kommentare
+    assert (sammel["number"], "Sammlung leer: verbleibende Funde als Einzel-Issues geführt" + MARKE) in fake.kommentare
     assert not any("verschwunden" in t for n, t in fake.kommentare if n == sammel["number"])
 
 
@@ -274,8 +275,8 @@ def test_fund_weg_schliesst(tmp_path: Path) -> None:
     assert einzel["state"] == "open" and sammel["state"] == "open"
     b = _lauf(fake, [], tmp_path)
     assert einzel["state"] == "closed" and sammel["state"] == "closed"
-    assert (einzel["number"], "Fund im Code verschwunden (Commit `abc1234`)") in fake.kommentare
-    assert (sammel["number"], "Sammlung leer: alle Funde im Code verschwunden (Commit `abc1234`)") in fake.kommentare
+    assert (einzel["number"], "Fund im Code verschwunden (Commit `abc1234`)" + MARKE) in fake.kommentare
+    assert (sammel["number"], "Sammlung leer: alle Funde im Code verschwunden (Commit `abc1234`)" + MARKE) in fake.kommentare
     assert {a.art for a in b.aktionen} == {"schliessen", "sammel_schliessen"}
 
 
@@ -292,7 +293,7 @@ def test_fund_als_fremdcode_ausgenommen_schliesst_mit_eigenem_text(tmp_path: Pat
     _lauf(fake, [], tmp_path, fremd=fremd)
     assert sammel["state"] == "closed"
     assert (sammel["number"], "Sammlung leer: Funde als Fremdcode ausgenommen "
-            "(Regel fremdcode in selbstbild.yaml, Commit `abc1234`)") in fake.kommentare
+            "(Regel fremdcode in selbstbild.yaml, Commit `abc1234`)" + MARKE) in fake.kommentare
     assert not any("verschwunden" in t for n, t in fake.kommentare if n == sammel["number"])
 
 
@@ -305,8 +306,8 @@ def test_einzel_fund_als_fremdcode_ausgenommen(tmp_path: Path) -> None:
     _lauf(fake, [], tmp_path, fremd=fremd)
     nr_f = next(i["number"] for k, i in ei.items() if fund_schluessel(f).split(":")[1] in k)
     nr_g = next(i["number"] for k, i in ei.items() if fund_schluessel(g).split(":")[1] in k)
-    assert (nr_f, "Fund als Fremdcode ausgenommen (Regel fremdcode in selbstbild.yaml, Commit `abc1234`)")         in fake.kommentare
-    assert (nr_g, "Fund im Code verschwunden (Commit `abc1234`)") in fake.kommentare
+    assert (nr_f, "Fund als Fremdcode ausgenommen (Regel fremdcode in selbstbild.yaml, Commit `abc1234`)" + MARKE) in fake.kommentare
+    assert (nr_g, "Fund im Code verschwunden (Commit `abc1234`)" + MARKE) in fake.kommentare
 
 
 def test_fehler_mitten_drin_kein_doppelt(tmp_path: Path) -> None:
@@ -525,7 +526,7 @@ def test_label_sicherstellen_und_methoden() -> None:
     gh.bearbeiten(REPO, n, "neu")
     gh.schliessen(REPO, n, "weg")
     assert fake.issues[n]["body"] == "neu" and fake.issues[n]["state"] == "closed"
-    assert fake.issues[n]["state_reason"] == "completed" and fake.kommentare == [(n, "weg")]
+    assert fake.issues[n]["state_reason"] == "completed" and fake.kommentare == [(n, "weg" + MARKE)]
     gh.oeffnen(REPO, n)
     assert fake.issues[n]["state"] == "open"
 
@@ -987,7 +988,7 @@ def test_kommentieren_post_comments() -> None:
     gh = GitHub("Flissel", laufzeit=fake)
     n = fake.issue("t", "b")
     gh.kommentieren(REPO, n, "Hallo")
-    assert fake.kommentare == [(n, "Hallo")]
+    assert fake.kommentare == [(n, "Hallo" + MARKE)]
     assert ("POST", f"/repos/{REPO}/issues/{n}/comments") in fake.aufrufe
     assert fake.issues[n]["state"] == "open"
 

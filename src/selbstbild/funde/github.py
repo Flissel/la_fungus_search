@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -22,6 +23,9 @@ SEITE = 100
 MAX_SEITEN = 100  # Bremse: hoechstens 10.000 Issues mit Label `selbstbild`
 TIMEOUT_S = 60.0
 HOST = "github.com"
+AUTO_MARKE = "<!-- selbstbild:auto -->"  # an jedem Kommentar der Tagesautomatik
+DEBUGGER_MARKE = "<!-- selbstbild:debugger -->"  # an jedem Text des Debugger-Helfers
+_GRUENDE = ("completed", "not_planned")
 # Variablen, die gh als Token nehmen wuerde: fuer `auth token` entfernen, fuer `api` nur GH_TOKEN setzen
 _TOKEN_VARS = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
 _REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
@@ -83,7 +87,8 @@ class GitHub:
     """`gh` mit einem festen Konto; `laufzeit` ist fuer Tests injizierbar (Signatur wie `subprocess.run`)."""
 
     def __init__(self, konto: str, *, laufzeit: Callable[..., Any] = subprocess.run, gh: str = "gh",
-                 timeout_s: float = TIMEOUT_S, host: str = HOST) -> None:
+                 timeout_s: float = TIMEOUT_S, host: str = HOST, marke: str | None = AUTO_MARKE,
+                 token_datei: Path | None = None) -> None:
         if not isinstance(konto, str) or not _KONTO.fullmatch(konto):
             raise ValueError("gh-Konto ungültig")
         self.konto = konto
@@ -91,6 +96,8 @@ class GitHub:
         self.gh = gh
         self.timeout_s = timeout_s
         self.host = host
+        self.marke = marke
+        self.token_datei = token_datei
         self._token: _Geheim | None = None
         self._label_da: set[tuple[str, str]] = set()
 
@@ -138,9 +145,15 @@ class GitHub:
 
     def _token_holen(self) -> str:
         if self._token is None:
-            aus = self._starten([self.gh, "auth", "token", "--hostname", self.host, "--user", self.konto],
-                                self._basis_env(), None)
-            wert = aus.decode("utf-8", errors="replace").strip()
+            if self.token_datei is not None:
+                try:
+                    wert = Path(self.token_datei).read_text(encoding="utf-8").strip()
+                except (OSError, ValueError):
+                    wert = ""  # Datei fehlt/unlesbar: gleiche Art wie leer, ohne Pfad oder Inhalt
+            else:
+                aus = self._starten([self.gh, "auth", "token", "--hostname", self.host, "--user", self.konto],
+                                    self._basis_env(), None)
+                wert = aus.decode("utf-8", errors="replace").strip()
             if not wert or any(z.isspace() for z in wert):
                 raise GitHubFehler("kein_token") from None
             self._token = _Geheim(wert)
@@ -223,11 +236,19 @@ class GitHub:
     def oeffnen(self, repo: str, nummer: int) -> None:
         self._api("PATCH", f"/repos/{_repo(repo)}/issues/{_nummer(nummer)}", {"state": "open"})
 
-    def kommentieren(self, repo: str, nummer: int, text: str) -> None:
-        self._api("POST", f"/repos/{_repo(repo)}/issues/{_nummer(nummer)}/comments", {"body": text})
+    def _mit_marke(self, text: str) -> str:
+        """Haengt `self.marke` an (hinter eine Leerzeile), falls gesetzt und noch nicht im Text."""
+        if self.marke is None or self.marke in text:
+            return text
+        return text + "\n\n" + self.marke
 
-    def schliessen(self, repo: str, nummer: int, kommentar: str) -> None:
-        """Erst der Kommentar, dann zu (`state_reason: completed`)."""
+    def kommentieren(self, repo: str, nummer: int, text: str) -> None:
+        self._api("POST", f"/repos/{_repo(repo)}/issues/{_nummer(nummer)}/comments", {"body": self._mit_marke(text)})
+
+    def schliessen(self, repo: str, nummer: int, kommentar: str, grund: str = "completed") -> None:
+        """Erst der Kommentar, dann zu (`state_reason`: `completed` oder `not_planned`)."""
+        if grund not in _GRUENDE:
+            raise ValueError("Schließgrund ungültig")
         r, n = _repo(repo), _nummer(nummer)
         self.kommentieren(r, n, kommentar)
-        self._api("PATCH", f"/repos/{r}/issues/{n}", {"state": "closed", "state_reason": "completed"})
+        self._api("PATCH", f"/repos/{r}/issues/{n}", {"state": "closed", "state_reason": grund})
