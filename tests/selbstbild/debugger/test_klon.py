@@ -400,7 +400,7 @@ def test_git_praefix_wird_vorangestellt(
         monkeypatch.setenv(k, "geheim")
     assert modul.git_praefix() == ()
     modul.git_lauf(tmp_path, "status")
-    assert aufrufe[-1]["argv"] == ["git", "-C", str(tmp_path), "status"]
+    assert aufrufe[-1]["argv"] == ["git", *modul.KLON_HAERTUNG, "-C", str(tmp_path), "status"]
     praefix = ["setpriv", "--reuid=1000", "--regid=1000", "--init-groups", "--"]
     modul.git_praefix_setzen(praefix)
     praefix.append("veraendert")  # der Präfix ist eine Kopie

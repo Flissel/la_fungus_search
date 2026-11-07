@@ -46,6 +46,9 @@ NULL_SHA = "0" * 40
 _REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 _BASIS = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 _SHA = re.compile(r"[0-9a-f]{40}")
+LESEN = ("rev-parse", "cat-file", "merge-base", "ls-tree")  # spiegel_lesen: nur diese Unterbefehle
+PIN_INHALT = "pin_inhalt"
+_DIFF_ZEILE = re.compile(r":(\d{6}) (\d{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) ([A-Z])	(.+)")
 
 Laeufer = Callable[..., subprocess.CompletedProcess[bytes]]
 
@@ -149,6 +152,34 @@ def _sha(pfad: Path, ref: str, env: dict[str, str], laeufer: Laeufer, *, pflicht
     return sha
 
 
+def spiegel_lesen(pfad: Path, *args: str, laeufer: Laeufer = subprocess.run) -> tuple[int, str]:
+    """Liest im Spiegel als root (R39): `git <HAERTUNG> --git-dir=<pfad> <args>`, ohne Token.
+
+    Nur Unterbefehle aus `LESEN`; alles andere ergibt `ValueError`. Rückgabe: Code und stdout
+    (UTF-8 mit Ersatzzeichen); stderr wird nie gezeigt. Zeitgrenze wie alle Spiegel-Aufrufe.
+    """
+    if not args or args[0] not in LESEN:
+        raise ValueError("nicht_lesend")
+    erg = _lauf(pfad, list(args), _env(None), laeufer, check=False)
+    return erg.returncode, bytes(erg.stdout).decode("utf-8", errors="replace")
+
+
+def _nur_gitlink_ok(pfad: Path, sha: str, basis_sha: str, ohne: list[str], nur_gitlink: tuple[str, str],
+                    env: dict[str, str], laeufer: Laeufer) -> bool:
+    """R39: genau ein neuer Commit, einziger Elter `basis_sha`, einzige Änderung der Gitlink am Pfad."""
+    sub_pfad, erwartet = nur_gitlink
+    neu = bytes(_lauf(pfad, ["rev-list", sha, *(f"^{x}" for x in ohne)], env, laeufer).stdout).split()
+    if neu != [sha.encode("ascii")]:
+        return False
+    eltern = bytes(_lauf(pfad, ["rev-list", "--parents", "-n", "1", sha], env, laeufer).stdout).split()
+    if eltern != [sha.encode("ascii"), basis_sha.encode("ascii")]:
+        return False
+    diff = bytes(_lauf(pfad, ["diff-tree", "-r", "--no-commit-id", basis_sha, sha], env, laeufer).stdout)
+    zeilen = [z for z in diff.decode("utf-8", errors="replace").splitlines() if z.strip()]
+    m = _DIFF_ZEILE.fullmatch(zeilen[0]) if len(zeilen) == 1 else None
+    return m is not None and m.group(2) == "160000" and m.group(6) == sub_pfad and m.group(4) == erwartet
+
+
 def spiegel_bereit(pfad: Path, *, laeufer: Laeufer = subprocess.run) -> None:
     """Legt den Spiegel als bare Repo an, wenn er fehlt; ein vorhandener Pfad muss bare sein."""
     env = _env(None)
@@ -216,9 +247,17 @@ def _objekte_pruefen(pfad: Path, sha: str, ohne: list[str], env: dict[str, str],
     return pruefen("\n".join(inhalte))
 
 
+_PIN_BRANCH = re.compile(r"debugger/\d+-pin(?:-\d+)?")
+
+
+def ist_pin_branch(branch: str) -> bool:
+    """R45: `debugger/<n>-pin`, auch mit Runden-Suffix `-<runde>` (das Muster von `pin_branch`)."""
+    return isinstance(branch, str) and _PIN_BRANCH.fullmatch(branch) is not None
+
+
 def spiegel_push(
     pfad: Path, wt: Path, branch: str, repo: str, token_datei: Path, *, basis: str = "master",
-    url: str | None = None, laeufer: Laeufer = subprocess.run,
+    url: str | None = None, laeufer: Laeufer = subprocess.run, nur_gitlink: tuple[str, str] | None = None,
 ) -> None:
     """Pusht `HEAD` des Worktrees als `refs/heads/<branch>` über den Spiegel nach GitHub (R29).
 
@@ -230,10 +269,20 @@ def spiegel_push(
     4. `refs/heads/<branch>` = geprüfter SHA (nur neu oder Fast-Forward), Push `<sha>:refs/heads/
        <branch>` ohne `+`; scheitert er, zeigt der Spiegel-Branch wieder auf den alten Stand.
     `refs/pruefung/<branch>` wird immer gelöscht.
+
+    `nur_gitlink=(Submodul-Pfad, erwarteter SHA)` (Pin-Push, R39): nach dem Bundle-Fetch muss es
+    genau einen neuen Commit geben, dessen einziger Elter der Basis-SHA des Spiegels ist und der
+    nur den Gitlink am Pfad auf den erwarteten SHA setzt; sonst `ZurueckgehaltenFehler("pin_inhalt")`.
+    Ein Pin-Branch (`ist_pin_branch`) ohne `nur_gitlink` wird vor jedem Prozess abgewiesen (R45).
     """
     debugger_zweig_pruefen(branch)
     if not isinstance(basis, str) or not _BASIS.fullmatch(basis) or ".." in basis:
         raise ValueError("basis_ungueltig")
+    if nur_gitlink is not None and (len(nur_gitlink) != 2 or not _SHA.fullmatch(nur_gitlink[1])
+                                    or not nur_gitlink[0] or nur_gitlink[0].startswith(("-", "/"))):
+        raise ValueError("nur_gitlink_ungueltig")
+    if nur_gitlink is None and ist_pin_branch(branch):  # R45: die Grenze, nicht die Aufrufer
+        raise ZurueckgehaltenFehler(PIN_INHALT)
     ziel, braucht_token = _ziel(repo, url)
     push_env, env = _env(token_datei if braucht_token else None), _env(None)
     kopf, pruef = f"refs/heads/{branch}", f"refs/pruefung/{branch}"
@@ -251,6 +300,8 @@ def spiegel_push(
         typ = _lauf(pfad, ["cat-file", "-t", sha], env, laeufer)
         if bytes(typ.stdout).strip() != b"commit":
             raise GitFehler("cat-file", 1)
+        if nur_gitlink is not None and not _nur_gitlink_ok(pfad, sha, basis_sha, ohne, nur_gitlink, env, laeufer):
+            raise ZurueckgehaltenFehler(PIN_INHALT)
         muster = _objekte_pruefen(pfad, sha, ohne, env, laeufer)
         if muster is not None:
             raise ZurueckgehaltenFehler(muster)

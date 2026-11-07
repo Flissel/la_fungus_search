@@ -3,8 +3,10 @@
 Alle Aufrufe laufen ohne Shell und ohne Token. Klon und Worktrees gehoeren dem Helfer-Nutzer
 (`claw`); jeder Git-Aufruf darin laeuft mit dem modulweiten Praefix (`git_praefix_setzen`,
 im Container `setpriv --reuid=1000 ...`), damit Hooks, Filter oder Konfiguration, die der
-Helfer ins geteilte `.git` schreibt, nie mit Rechten des Waechters laufen. Mit GitHub spricht
-nur `spiegel.py`. Git-Fehler tragen nur Unterbefehl und Rueckgabecode, nie stderr.
+Helfer ins geteilte `.git` schreibt, nie mit Rechten des Waechters laufen. Zusaetzlich laeuft
+jeder dieser Aufrufe ohne Hooks und ohne fsmonitor (`KLON_HAERTUNG`, R39): Hooks, die der Helfer
+anlegt, laufen hoechstens in seinen eigenen Prozessen. Mit GitHub spricht nur `spiegel.py`.
+Git-Fehler tragen nur Unterbefehl und Rueckgabecode, nie stderr.
 """
 from __future__ import annotations
 
@@ -29,6 +31,9 @@ _BLOCK = 1 << 20
 _NACH_KILL_S = 5.0
 ZU_GROSS = "zu_gross"
 
+KLON_HAERTUNG: tuple[str, ...] = ("-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false")
+
+_SHA = re.compile(r"[0-9a-f]{40}")
 _ZWEIG = re.compile(r"debugger/[A-Za-z0-9][A-Za-z0-9._/-]*")
 _ENV_GESPERRT = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GIT_ASKPASS")
 _praefix: tuple[str, ...] = ()
@@ -182,7 +187,7 @@ def _begrenzt(
 
 
 def _argv(ort: Path, args: tuple[str, ...]) -> list[str]:
-    return [*_praefix, "git", "-C", str(ort), *args]
+    return [*_praefix, "git", *KLON_HAERTUNG, "-C", str(ort), *args]
 
 
 def git_lauf(
@@ -259,13 +264,23 @@ def nachziehen(klon: Path, basis: str, submodule: Sequence[str]) -> str | None:
     Rueckgabe None bei Erfolg, sonst "falscher_zweig", "nicht_sauber",
     "kein_fast_forward" oder "submodul_fehler". Bei den ersten beiden Werten
     bleibt der Arbeitsbaum unberuehrt.
+
+    R40: Der Sauberkeitstest sieht die Submodule nicht (`--ignore-submodules=all`); jedes
+    verwaltete Submodul wird getrennt geprueft. Eigene Aenderungen darin heissen "nicht_sauber",
+    ein nur abweichender Checkout (Gitlink weiter als das Submodul) ist in Ordnung, denn das
+    Submodul-Update laeuft in jedem Durchgang nach dem ff-Merge erneut.
     """
-    git_lauf(klon, "fetch", "--prune")
+    git_lauf(klon, "fetch", "--prune", "--no-recurse-submodules")
     aktuell = git_lauf(klon, "symbolic-ref", "--short", "HEAD", check=False)
     if aktuell.returncode != 0 or aktuell.stdout.strip() != basis:
         return "falscher_zweig"
-    if git_lauf(klon, "status", "--porcelain").stdout.strip():
+    if git_lauf(klon, "status", "--porcelain", "--ignore-submodules=all").stdout.strip():
         return "nicht_sauber"
+    for pfad in submodule:
+        ort = klon / pfad
+        # nicht initialisiert: kein eigenes .git, git -C liefe sonst im aeusseren Repo
+        if (ort / ".git").exists() and git_lauf(ort, "status", "--porcelain").stdout.strip():
+            return "nicht_sauber"
     if git_lauf(klon, "merge", "--ff-only", f"origin/{basis}", check=False).returncode != 0:
         return "kein_fast_forward"
     for pfad in submodule:
@@ -275,27 +290,36 @@ def nachziehen(klon: Path, basis: str, submodule: Sequence[str]) -> str | None:
     return None
 
 
-def branch_name(issue: int, titel: str) -> str:
-    """`debugger/<issue>-<kurz>`; kurz hoechstens 30 Zeichen aus [a-z0-9-]."""
+def branch_name(issue: int, titel: str, runde: int = 1) -> str:
+    """`debugger/<issue>-<kurz>`; kurz hoechstens 30 Zeichen aus [a-z0-9-].
+
+    Ab Runde 2 endet kurz auf `-<runde>` (R37). Das Suffix zaehlt zur Grenze: gekuerzt
+    wird nur der Titelteil, nie das Suffix.
+    """
+    if isinstance(runde, bool) or not isinstance(runde, int) or runde < 1:
+        raise ValueError("runde_ungueltig")
+    suffix = f"-{runde}" if runde > 1 else ""
     text = titel.removeprefix(TITEL_PRAEFIX).lower()
-    # Zeichenweise ersetzen, auf 30 kuerzen, dann zusammenfassen (so verlangt es
+    # Zeichenweise ersetzen, kuerzen, dann zusammenfassen (so verlangt es
     # der verbindliche Testfall aus dem Brief).
-    roh = re.sub(r"[^a-z0-9]", "-", text)[:MAX_KURZ]
+    roh = re.sub(r"[^a-z0-9]", "-", text)[:MAX_KURZ - len(suffix)]
     kurz = re.sub(r"-{2,}", "-", roh).strip("-") or "fund"
-    return f"{PRAEFIX}{issue}-{kurz}"
+    return f"{PRAEFIX}{issue}-{kurz}{suffix}"
 
 
 def worktree_bereit(
-    repo_klon: Path, wt_ordner: Path, branch: str, basis: str
+    repo_klon: Path, wt_ordner: Path, branch: str, basis: str, *, start: str | None = None
 ) -> Path:
     """Stellt einen Worktree fuer `branch` bereit.
 
-    Fehlt er, wird er aus `origin/<branch>` oder `origin/<basis>` angelegt
-    (ein lokaler Alt-Zweig ohne Worktree wird wiederverwendet, nie geloescht).
+    Fehlt er, wird er aus `origin/<branch>` oder sonst aus `start` (Standard `origin/<basis>`)
+    angelegt (ein lokaler Alt-Zweig ohne Worktree wird wiederverwendet, nie geloescht).
     Existiert er und gibt es `origin/<branch>`, wird per ff-only nachgezogen;
     laufen beide Seiten auseinander, folgt KonfliktFehler und nichts aendert sich.
     """
     debugger_zweig_pruefen(branch)
+    if start is not None and not _SHA.fullmatch(start):
+        raise ValueError("start_ungueltig")
     if wt_ordner.exists():
         _worktree_pruefen(repo_klon, wt_ordner, branch)
     git_lauf(repo_klon, "fetch", "--prune", "origin")
@@ -307,8 +331,8 @@ def worktree_bereit(
         if _ref_da(repo_klon, f"refs/heads/{branch}"):
             git_lauf(repo_klon, "worktree", "add", str(wt_ordner), branch)
         else:
-            start = remote if remote_da else f"origin/{basis}"
-            git_lauf(repo_klon, "worktree", "add", "--no-track", "-b", branch, str(wt_ordner), start)
+            von = remote if remote_da else (start or f"origin/{basis}")
+            git_lauf(repo_klon, "worktree", "add", "--no-track", "-b", branch, str(wt_ordner), von)
             return wt_ordner
     if not remote_da:
         return wt_ordner

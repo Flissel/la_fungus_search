@@ -91,7 +91,7 @@ class FakeGitHub:
         return [a for a in self.aufrufe if a[0] == name]
 
     def schreibend(self) -> list[tuple[Any, ...]]:
-        return [a for a in self.aufrufe if a[0] not in ("api", "prs_zum_kopf")]
+        return [a for a in self.aufrufe if a[0] not in ("api", "prs_zum_kopf", "pr_lesen")]
 
     def texte(self) -> str:
         return "\n".join(repr(a) for a in self.aufrufe)
@@ -113,6 +113,10 @@ class FakeGitHub:
         self.aufrufe.append(("pr_anlegen", repo, kopf, basis, titel, text))
         self._fehler("pr_anlegen")
         return 501
+
+    def pr_lesen(self, repo: str, nummer: int) -> dict[str, Any]:
+        self.aufrufe.append(("pr_lesen", repo, nummer))
+        return dict(self.daten.get("pr_lesen", {}).get((repo, nummer), {"state": "open", "merged": False}))
 
     def prs_zum_kopf(self, repo: str, kopf: str) -> list[dict[str, Any]]:
         self.aufrufe.append(("prs_zum_kopf", repo, kopf))
@@ -284,7 +288,7 @@ def test_fix_oeffentlich_ohne_gespraech(welt: Welt) -> None:
                text="<!-- selbstbild:repo=vibemind/vibemind-os -->\n\nISSUE_TEXT_DETAIL")
     welt.helfer.schritte = [fix("c.txt", "fix: Port aus Konfig lesen", text="HELFER_TEXT")]
     assert welt.runde(kom(1, "AUFTRAG_DETAIL bitte fixen")) == "ok"
-    branch = branch_name(N, "[selbstbild] Doku-Widerspruch: Port falsch (vibemind/vibemind-os)")
+    branch = f"debugger/{N}-fix"  # R38: öffentlich ohne Titelteil
     wt_os = welt.ordner / "wt" / f"vibemind-os-{branch.removeprefix('debugger/')}"
     assert welt.pushes == [(wt_os, branch)]
     assert git(welt.os_origin, "log", "--format=%s", "-1", branch) == "fix: Port aus Konfig lesen"

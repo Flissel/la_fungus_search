@@ -16,6 +16,7 @@ from selbstbild.debugger.klon import worktree_bereit
 from selbstbild.debugger.konfig import DebuggerKonfig
 from selbstbild.debugger.nachlauf import nachlauf
 from selbstbild.debugger.runde import Werkzeuge, runde_ausfuehren
+from selbstbild.debugger.spiegel import spiegel_pfad
 from selbstbild.debugger.stand import DebuggerStand, FundStand
 from selbstbild.funde.github import GitHub, GitHubFehler
 
@@ -49,8 +50,10 @@ def commit(ort: Path, datei: str, betreff: str | None = None) -> str:
     return git(ort, "rev-parse", "HEAD")
 
 
-def _bare(tmp: Path, name: str) -> Path:
-    origin = tmp / f"{name}.git"
+def _bare(tmp: Path, repo: str) -> Path:
+    """Bare Repo am Ort des root-Spiegels; es steht zugleich für GitHub (R39: Prüfungen im Spiegel)."""
+    origin = spiegel_pfad(tmp / "spiegel", repo)
+    origin.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q", "--bare", "-b", "master", str(origin)], check=True, capture_output=True)
     return origin
 
@@ -137,10 +140,12 @@ class Welt:
     lab: FakeGitHub
     lesen: FakeGitHub
     pushes: list[tuple[Path, str]] = field(default_factory=list)
+    push_kw: list[dict[str, Any]] = field(default_factory=list)
     helfer: Callable[..., HelferErgebnis] = _kein_helfer
 
-    def push(self, wt: Path, branch: str) -> None:
+    def push(self, wt: Path, branch: str, **kw: Any) -> None:
         self.pushes.append((wt, branch))
+        self.push_kw.append(kw)
         git(wt, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
 
     @property
@@ -148,6 +153,7 @@ class Welt:
         return Werkzeuge(
             gh_lab=cast(GitHub, self.lab), gh_lesen=cast(GitHub, self.lesen), helfer=self.helfer,
             frei_gb=lambda: 8.0, uhr=lambda: datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc), push=self.push,
+            spiegel=self.tmp / "spiegel",
         )
 
     def lauf(self) -> list[str]:
@@ -203,12 +209,12 @@ def welt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Welt:
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "always")
-    os_origin = _bare(tmp_path, "os")
+    os_origin = _bare(tmp_path, OS_REPO)
     os_arbeit = _arbeit(tmp_path, "os-arbeit", os_origin)
     commit(os_arbeit, "a.txt")
     git(os_arbeit, "push", "-q", "origin", "master")
 
-    origin = _bare(tmp_path, "aussen")
+    origin = _bare(tmp_path, ISSUE_REPO)
     start = _arbeit(tmp_path, "aussen-start", origin)
     commit(start, "a.txt")
     git(start, "submodule", "add", "-q", os_origin.as_uri(), "vibemind-os")
@@ -457,7 +463,7 @@ def test_pin_spiegel_haelt_beim_push_zurueck(welt: Welt, monkeypatch: pytest.Mon
     sha = welt.os_merge()
     welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
 
-    def halt(wt: Path, branch: str) -> None:
+    def halt(wt: Path, branch: str, **kw: Any) -> None:
         welt.pushes.append((wt, branch))
         raise ZurueckgehaltenFehler("zu_gross")
 
@@ -477,7 +483,7 @@ def test_pin_push_ziel_unklar_wartet(welt: Welt, monkeypatch: pytest.MonkeyPatch
     sha = welt.os_merge()
     welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
 
-    def unklar(wt: Path, branch: str) -> None:
+    def unklar(wt: Path, branch: str, **kw: Any) -> None:
         welt.pushes.append((wt, branch))
         raise ValueError("repo_zum_worktree_unklar")
 
@@ -567,6 +573,7 @@ def test_runde_nutzt_pin_worktree_des_nachlaufs(welt: Welt) -> None:
     welt.lauf()
     pin_wt = welt.wt(ISSUE_REPO, PIN_BRANCH)
     assert pin_wt.exists()
+    welt.pr(ISSUE_REPO, 412)  # R37: die Runde liest den Pin-PR, er ist offen
     gesehen: list[Path] = []
 
     def helfer(wt: Path, prompt: str, sitzung: str | None, frist_s: float) -> HelferErgebnis:

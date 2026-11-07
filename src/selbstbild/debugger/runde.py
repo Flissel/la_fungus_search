@@ -6,7 +6,7 @@ speichern muss der Aufrufer.
 """
 from __future__ import annotations
 
-import re
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,25 +16,30 @@ from selbstbild.debugger.auftraege import Auftrag, Kommentar
 from selbstbild.debugger.budget import budget_buchen, budget_pruefen
 from selbstbild.debugger.helfer import HelferErgebnis, HelferFehler, prompt_bauen
 from selbstbild.debugger.klon import (
-    PRAEFIX as BRANCH_PRAEFIX,
     TITEL_PRAEFIX,
     ZU_GROSS,
     GitFehler,
     KonfliktFehler,
     PushZuGross,
     WorktreeFehler,
+    aufraeumen,
     betreffzeilen,
-    branch_name,
     push_inhalt,
     voraus,
     worktree_bereit,
 )
 from selbstbild.debugger.konfig import DebuggerKonfig
-from selbstbild.debugger.spiegel import ZurueckgehaltenFehler
+from selbstbild.debugger.spiegel import ZurueckgehaltenFehler, ist_pin_branch
 from selbstbild.debugger.stand import DebuggerStand, FundStand
+from selbstbild.debugger.ziel import fund_neu, pfad_norm, repo_klon_pfad, wt_pfad, ziel_bestimmen
 from selbstbild.funde.github import GitHub, GitHubFehler
 from selbstbild.funde.text import pruefen
 
+# pfad_norm, repo_klon_pfad, wt_pfad und ziel_bestimmen stehen in ziel.py; hier für Nachlauf und Wächter
+__all__ = ["Werkzeuge", "pfad_norm", "pr_finden_oder_anlegen", "repo_klon_pfad", "runde_ausfuehren", "wt_pfad",
+           "ziel_bestimmen", "zurueckgehalten"]
+
+LOG = logging.getLogger("selbstbild.debugger")
 PRAEFIX = "🤖 Debugger-Claw: "
 KEINE_BEGRUENDUNG = "(keine Begründung vom Helfer)"
 MAX_PR_TITEL = 256
@@ -49,15 +54,12 @@ HINWEIS_OEFFENTLICH = (
     "Dieses Repo ist öffentlich. Commit-Texte beschreiben nur die Code-Änderung, ohne Inhalte aus dem Issue."
 )
 HINWEIS_NUR_EINORDNEN = "Fixes in diesem Repo sind nicht freigegeben. Ändere keine Dateien, ordne nur ein."
-
-_REPO_MARKE = re.compile(r"<!--\s*selbstbild:repo\s*=\s*([^\s>][^>]*?)\s*-->")
-_SAMMEL_MARKE = re.compile(r"<!--\s*selbstbild:sammel\s*=\s*[a-z_]+:([^\s>][^>]*?)\s*-->")
-_TITEL_KLAMMER = re.compile(r"\(([^()]+)\)\s*$")
-_TITEL_STRICH = re.compile(r"\s–\s(\S+)\s*$")
+PIN_TEXT = PRAEFIX + ("Der Pin-PR enthält nur die Submodul-Aktualisierung. Für einen weiteren Fix bitte nach dem "
+                      "Merge kommentieren.")
 
 
 def _nichts() -> None:
-    """Standard für `Werkzeuge.holen`: nichts holen (Tests, PC)."""
+    """Standard für `Werkzeuge.holen` und `Werkzeuge.claw_aufraeumen`: nichts tun (Tests, PC)."""
 
 
 @dataclass
@@ -69,43 +71,10 @@ class Werkzeuge:
     helfer: Callable[..., HelferErgebnis]  # wie helfer_starten(wt, prompt, sitzung, frist_s)
     frei_gb: Callable[[], float | None]
     uhr: Callable[[], datetime]
-    push: Callable[[Path, str], None]
+    push: Callable[..., None]  # (wt, branch, *, nur_gitlink=None) über den Spiegel
     holen: Callable[[], None] = _nichts  # R27: Spiegel von GitHub holen, vor `nachziehen`
-
-
-# ---------- Ziel-Repo (Ruling R1) ----------
-
-def _code_repo(issue_text: str, issue_titel: str) -> str | None:
-    for muster in (_REPO_MARKE, _SAMMEL_MARKE):
-        if m := muster.search(issue_text):
-            return m.group(1).strip()
-    for muster in (_TITEL_KLAMMER, _TITEL_STRICH):
-        if m := muster.search(issue_titel):
-            return m.group(1).strip()
-    return None
-
-
-def pfad_norm(pfad: str) -> str:
-    p = pfad.replace("\\", "/").strip().strip("/")
-    while p.startswith("./"):
-        p = p[2:]
-    return p or "."
-
-
-def ziel_bestimmen(issue_text: str, issue_titel: str, konfig: DebuggerKonfig) -> tuple[str, bool]:
-    """`(repo, nur_einordnen)` aus Repo-Marke, Sammel-Marke oder Titel-Endung des Issues.
-
-    Das erste Pfadsegment (Wurzelname) fällt weg, der Rest muss genau ein Pfad aus
-    `konfig.repos` sein. Kein Treffer: `issue_repo`, nur einordnen. Kein code_repo: `issue_repo`.
-    """
-    code_repo = _code_repo(issue_text, issue_titel)
-    if not code_repo:
-        return konfig.issue_repo, False
-    pfad = pfad_norm(code_repo.partition("/")[2])
-    for repo, ort in konfig.repos.items():
-        if pfad_norm(ort) == pfad:
-            return repo, False
-    return konfig.issue_repo, True
+    claw_aufraeumen: Callable[[], None] = _nichts  # R44: Prozesse des Helfer-Nutzers beenden
+    spiegel: Path | None = None  # Ordner der root-eigenen Spiegel (R39: Pin-Prüfungen)
 
 
 # ---------- Runde ----------
@@ -113,21 +82,6 @@ def ziel_bestimmen(issue_text: str, issue_titel: str, konfig: DebuggerKonfig) ->
 def zurueckgehalten(muster: str) -> str:
     """Der feste Rückhalte-Satz, wenn ein Text ein Schlüssel-Muster trifft."""
     return f"{PRAEFIX}Antwort zurückgehalten (Schlüssel-Verdacht: {muster})."
-
-
-def repo_klon_pfad(konfig: DebuggerKonfig, klon: Path, repo: str) -> Path:
-    """Ort des Repos im Klon (`.` ist der Klon selbst); `KeyError` bei nicht freigegebenem Repo."""
-    ort = pfad_norm(konfig.repos[repo])
-    return klon if ort == "." else klon / ort
-
-
-def wt_pfad(ordner: Path, repo: str, branch: str) -> Path:
-    """Worktree eines Branches außerhalb des Klons (R6): `ordner/wt/<repo_name>-<branch ohne debugger/>`.
-
-    Einzige Pfadregel für Runde und Nachlauf; Zeichen außerhalb `[A-Za-z0-9-]` werden zu `-`.
-    """
-    kurz = re.sub(r"[^A-Za-z0-9-]", "-", branch.removeprefix(BRANCH_PRAEFIX)) or "fund"
-    return ordner / "wt" / f"{repo.split('/')[1]}-{kurz}"
 
 
 def pr_finden_oder_anlegen(w: Werkzeuge, repo: str, kopf: str, basis: str, titel: str, koerper: str) -> int:
@@ -272,6 +226,25 @@ class _Lauf:
                 teile.append(self._kommentar(c, ort))
         return "\n".join(teile)
 
+    # --- Fund (R37) ---
+
+    def pr_offen(self, fund: FundStand) -> bool:
+        return fund.pr is not None and self.w.gh_lesen.pr_lesen(fund.repo, fund.pr).get("state") == "open"
+
+    def fund_bestimmen(self, titel: str, ziel: str) -> FundStand:
+        """Bestehender FundStand gewinnt (R1); nach `erledigt` oder mit nicht mehr offenem PR ein neuer.
+
+        Der neue Stand (R37) hat kein PR und keine Sitzung, das Repo aus `ziel_bestimmen`, die
+        alten Versuche und `runde + 1`, also auch einen neuen Branch-Namen.
+        """
+        alt = self.stand.funde.get(str(self.n))
+        if alt is not None and alt.zustand != "erledigt" and (alt.pr is None or self.pr_offen(alt)):
+            return alt
+        fund = fund_neu(self.n, titel, ziel, self.konfig, runde=alt.runde + 1 if alt else 1,
+                        versuche=alt.versuche if alt else None)
+        self.stand.funde[str(self.n)] = fund
+        return fund
+
     # --- Ablauf ---
 
     def ausfuehren(self) -> str:
@@ -281,10 +254,10 @@ class _Lauf:
         roh_labels = issue.get("labels")
         labels = {x.get("name") if isinstance(x, dict) else x for x in roh_labels or [] if isinstance(roh_labels, list)}
         ziel, nur_einordnen = ziel_bestimmen(text, titel, self.konfig)
-        fund = self.stand.funde.get(str(self.n))
-        if fund is None:
-            fund = FundStand(repo=ziel, branch=branch_name(self.n, titel))
-            self.stand.funde[str(self.n)] = fund
+        fund = self.fund_bestimmen(titel, ziel)
+        # R45: auf dem Pin-Branch nur einordnen und nie pushen (der Pin-PR trägt nur den Gitlink)
+        pin = fund.repo == self.konfig.issue_repo and ist_pin_branch(fund.branch)
+        nur_einordnen = nur_einordnen or pin
         if fund.repo not in self.konfig.repos:
             self.melden(f"{PRAEFIX}Das Repo {fund.repo} ist nicht freigegeben, ich bearbeite den Auftrag nicht.")
             return self.fertig(fund, "abgelehnt:repo")
@@ -320,6 +293,7 @@ class _Lauf:
             except OSError:
                 fehler = "helfer_start"
         finally:
+            self.w.claw_aufraeumen()  # R44: nichts vom Helfer läuft weiter, bevor gepusht wird
             ende = self.w.uhr()
             budget_buchen(self.ordner, fehler or ("ok" if erg is not None else "abbruch"),
                           (ende - beginn).total_seconds(), jetzt=ende)
@@ -327,15 +301,28 @@ class _Lauf:
             return self.fehlschlag(fund, fehler or "helfer_unbekannt")
         fund.sitzung = erg.sitzung
         try:
-            return self.aktion(erg, fund, wt, titel, nur_einordnen=nur_einordnen, rueckfrage=rueckfrage)
+            return self.aktion(erg, fund, wt, titel, nur_einordnen=nur_einordnen, rueckfrage=rueckfrage, pin=pin)
         except GitHubFehler:  # zählt als Versuch, sonst wiederholte jeder Durchgang die volle Runde
             return self.fehlschlag(fund, "github")
+        finally:
+            if pin:
+                self.pin_verwerfen(fund, wt)
+
+    def pin_verwerfen(self, fund: FundStand, wt: Path) -> None:
+        """R45: Commits des Helfers im Pin-Worktree werden nie gepusht; der Worktree wird entfernt."""
+        try:
+            if voraus(wt, fund.branch, basis=self.konfig.basis) > 0:
+                aufraeumen(repo_klon_pfad(self.konfig, self.klon, fund.repo), wt, fund.branch)
+        except (GitFehler, WorktreeFehler, ValueError, OSError) as e:
+            LOG.warning("Pin-Worktree nicht aufgeräumt (%s)", type(e).__name__)
 
     def aktion(self, erg: HelferErgebnis, fund: FundStand, wt: Path, titel: str, *,
-               nur_einordnen: bool, rueckfrage: bool) -> str:
+               nur_einordnen: bool, rueckfrage: bool, pin: bool = False) -> str:
         issue_repo = self.konfig.issue_repo
         grund = _begruendung(erg.text)
-        if erg.aktion == "fix" and nur_einordnen:
+        if erg.aktion == "fix" and pin:
+            self.melden(PIN_TEXT)
+        elif erg.aktion == "fix" and nur_einordnen:
             self.antworten(fund, f"{NUR_EINORDNEN_TEXT}\n\n{grund}")
         elif erg.aktion == "fix":
             return self.fix(grund, fund, wt, titel)
@@ -378,6 +365,8 @@ class _Lauf:
             if (muster := pruefen(t)) is not None:
                 self.halten(muster)
                 return self.fertig(fund)
+        if neu > 0 and fund.pr is not None and not self.pr_offen(fund):
+            return "wartet:pr_zu"  # R37: PR während der Runde zu; der Nachlauf räumt ihn ab, dann neu
         if neu > 0:
             try:
                 self.w.push(wt, fund.branch)

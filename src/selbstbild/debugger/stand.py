@@ -12,7 +12,7 @@ MAX_VERARBEITET = 5000
 
 @dataclass
 class FundStand:
-    """Bearbeitungsstand eines Fundes (Issue)."""
+    """Bearbeitungsstand eines Fundes (Issue); neue Felder haben Standardwerte, alte Stände laden weiter."""
 
     repo: str
     branch: str
@@ -20,6 +20,7 @@ class FundStand:
     pr: int | None = None
     zustand: str = "offen"  # "offen" | "pr" | "erledigt"
     versuche: dict[str, int] = field(default_factory=dict)
+    runde: int = 1  # R37: zählt neue Anläufe nach `erledigt`; fehlt in alten Ständen
 
 
 @dataclass

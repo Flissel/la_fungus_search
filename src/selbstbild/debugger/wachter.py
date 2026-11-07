@@ -1,8 +1,8 @@
 """Wächter des Debugger-Claw: ein Durchgang, die Schleife und die CLI `python -m selbstbild debugger`.
 
 Ein Durchgang: Sperre -> Stand -> (erster Start) -> Spiegel holen -> Klon nachziehen -> Kommentare
-lesen -> höchstens eine Runde -> Nachlauf -> Lesemarke `seit` -> Stand speichern -> Prozesse des
-Helfer-Nutzers beenden. Der Token liegt nur in der Datei aus `DEBUGGER_TOKEN_DATEI`; der Wächter
+lesen -> höchstens eine Runde -> Helfer-Prozesse beenden -> Nachlauf -> Lesemarke `seit` -> Stand
+speichern -> Prozesse des Helfer-Nutzers beenden. Der Token liegt nur in der Datei aus `DEBUGGER_TOKEN_DATEI`; der Wächter
 legt ihn nie in seine eigene Umgebung. Ausnahmen kommen nur mit ihrem Typ ins Log.
 """
 from __future__ import annotations
@@ -181,6 +181,7 @@ class _Durchgang:
             erster = kandidaten[0]
             ergebnis = runde_ausfuehren(erster, k, stand, self.klon, self.ordner, w)
             LOG.info("Runde #%d: %s", erster.issue, ergebnis)
+        w.claw_aufraeumen()  # R44: vor dem Nachlauf läuft nichts mehr als claw
         for zeile in nachlauf(k, stand, self.klon, self.ordner, w):
             LOG.info("Nachlauf %s", zeile)
         stand.seit = _iso(self.neue_marke(stand, beginn, kandidaten))
@@ -274,7 +275,8 @@ def werkzeuge_standard(konfig: DebuggerKonfig, ordner: Path, spiegel_ordner: Pat
     """Echte Werkzeuge: gh als `helfer_konto` mit Token-Datei, Helfer und Klon-Git mit `DEBUGGER_PRAEFIX`.
 
     `push` findet das Repo zum Worktree über dieselbe Pfadregel wie Runde und Nachlauf (`wt_pfad`)
-    und pusht über den Spiegel; `holen` legt je Repo den Spiegel an und holt ihn von GitHub.
+    und pusht über den Spiegel (Pin-Push mit `nur_gitlink`, R39); `holen` legt je Repo den Spiegel
+    an und holt ihn von GitHub; `claw_aufraeumen` ist `claw_prozesse_beenden` (R44).
     """
     roh = os.environ.get("DEBUGGER_TOKEN_DATEI", "").strip()
     if not roh:
@@ -290,12 +292,13 @@ def werkzeuge_standard(konfig: DebuggerKonfig, ordner: Path, spiegel_ordner: Pat
             spiegel_bereit(pfad)
             spiegel_holen(pfad, repo, token_datei)
 
-    def push(wt: Path, branch: str) -> None:
+    def push(wt: Path, branch: str, *, nur_gitlink: tuple[str, str] | None = None) -> None:
         treffer = [r for r in repos if wt_pfad(ordner, r, branch) == wt]
         if len(treffer) != 1:
             raise ValueError("repo_zum_worktree_unklar")
         repo = treffer[0]
-        spiegel_push(spiegel_pfad(spiegel_ordner, repo), wt, branch, repo, token_datei, basis=konfig.basis)
+        spiegel_push(spiegel_pfad(spiegel_ordner, repo), wt, branch, repo, token_datei, basis=konfig.basis,
+                     nur_gitlink=nur_gitlink)
 
     return Werkzeuge(
         gh_lab=GitHub(konfig.helfer_konto, marke=DEBUGGER_MARKE, token_datei=token_datei),
@@ -305,6 +308,8 @@ def werkzeuge_standard(konfig: DebuggerKonfig, ordner: Path, spiegel_ordner: Pat
         uhr=lambda: datetime.now(timezone.utc),
         push=push,
         holen=holen,
+        claw_aufraeumen=claw_prozesse_beenden,
+        spiegel=spiegel_ordner,
     )
 
 

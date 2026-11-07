@@ -392,7 +392,8 @@ def test_werkzeuge_standard_push_und_holen(tmp_path: Path, token_umgebung: Path,
     aufrufe: list[tuple[Any, ...]] = []
     monkeypatch.setattr(wachter, "spiegel_bereit", lambda pfad: aufrufe.append(("bereit", pfad)))
     monkeypatch.setattr(wachter, "spiegel_holen", lambda pfad, repo, td: aufrufe.append(("holen", pfad, repo, td)))
-    monkeypatch.setattr(wachter, "spiegel_push", lambda *a, basis: aufrufe.append(("push", *a, basis)))
+    monkeypatch.setattr(wachter, "spiegel_push",
+                        lambda *a, basis, nur_gitlink: aufrufe.append(("push", *a, basis, nur_gitlink)))
     ordner, spiegel = tmp_path / "stand", tmp_path / "spiegel"
     konfig = DebuggerKonfig(issue_repo=ISSUE_REPO, repos={ISSUE_REPO: ".", OS_REPO: "vibemind-os"}, basis="main")
     w = werkzeuge_standard(konfig, ordner, spiegel)
@@ -403,7 +404,13 @@ def test_werkzeuge_standard_push_und_holen(tmp_path: Path, token_umgebung: Path,
     aufrufe.clear()
     wt = wt_pfad(ordner, OS_REPO, "debugger/5-fix")
     w.push(wt, "debugger/5-fix")
-    assert aufrufe == [("push", os_sp, wt, "debugger/5-fix", OS_REPO, token_umgebung, "main")]
+    assert aufrufe == [("push", os_sp, wt, "debugger/5-fix", OS_REPO, token_umgebung, "main", None)]
+    aufrufe.clear()
+    pin_wt = wt_pfad(ordner, ISSUE_REPO, "debugger/5-pin")
+    w.push(pin_wt, "debugger/5-pin", nur_gitlink=("vibemind-os", "a" * 40))  # R39: an spiegel_push durchgereicht
+    assert aufrufe == [("push", aussen, pin_wt, "debugger/5-pin", ISSUE_REPO, token_umgebung, "main",
+                        ("vibemind-os", "a" * 40))]
+    assert w.spiegel == spiegel and w.claw_aufraeumen is wachter.claw_prozesse_beenden  # R39, R44
     with pytest.raises(ValueError):
         w.push(tmp_path / "anderswo", "debugger/5-fix")
 
