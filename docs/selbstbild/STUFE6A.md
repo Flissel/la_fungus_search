@@ -38,7 +38,7 @@ Die Gesamtfrist je Lauf ist 100 min. Jeder Kindprozess bekommt die Restzeit.
 | 2. Lauf nach cb8fde0 | 1,8 s | `unveraendert`, kein Kindprozess | nichts | keine |
 | Lauf bei belegter Sperre | <1 s | Exit 3, Stand byte-gleich | nichts | keine |
 
-Die Telegram-Nachricht ist nur laut `letzte_nachricht_tag` gesendet. Ob sie beim User angekommen ist, habe ich nicht geprüft.
+Die Telegram-Nachricht ging als Direktnachricht von @VibeMind_agent_bot raus. Der User hat am 07.11. bestätigt, dass sie angekommen ist.
 
 Gemessene Dauern des echten Laufs:
 
