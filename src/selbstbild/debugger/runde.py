@@ -79,7 +79,7 @@ def _code_repo(issue_text: str, issue_titel: str) -> str | None:
     return None
 
 
-def _pfad_norm(pfad: str) -> str:
+def pfad_norm(pfad: str) -> str:
     p = pfad.replace("\\", "/").strip().strip("/")
     while p.startswith("./"):
         p = p[2:]
@@ -95,9 +95,9 @@ def ziel_bestimmen(issue_text: str, issue_titel: str, konfig: DebuggerKonfig) ->
     code_repo = _code_repo(issue_text, issue_titel)
     if not code_repo:
         return konfig.issue_repo, False
-    pfad = _pfad_norm(code_repo.partition("/")[2])
+    pfad = pfad_norm(code_repo.partition("/")[2])
     for repo, ort in konfig.repos.items():
-        if _pfad_norm(ort) == pfad:
+        if pfad_norm(ort) == pfad:
             return repo, False
     return konfig.issue_repo, True
 
@@ -155,7 +155,7 @@ def _betreffzeilen(wt: Path, gegen: str) -> list[str]:
     return [z for z in reversed(aus.splitlines()) if z.strip()]
 
 
-def _push_inhalt(wt: Path, branch: str, basis: str) -> str:
+def push_inhalt(wt: Path, branch: str, basis: str) -> str:
     """Volles `git log -p` (Nachrichten und Diffs) dessen, was ein Push nach `branch` hochlädt (R21)."""
     remote = f"refs/remotes/origin/{branch}"
     da = _git_text(wt, "rev-parse", "--verify", "-q", remote, check=False).returncode == 0
@@ -165,8 +165,29 @@ def _push_inhalt(wt: Path, branch: str, basis: str) -> str:
 
 # ---------- Runde ----------
 
-def _zurueckgehalten(muster: str) -> str:
+def zurueckgehalten(muster: str) -> str:
+    """Der feste Rückhalte-Satz, wenn ein Text ein Schlüssel-Muster trifft."""
     return f"{PRAEFIX}Antwort zurückgehalten (Schlüssel-Verdacht: {muster})."
+
+
+def repo_klon_pfad(konfig: DebuggerKonfig, klon: Path, repo: str) -> Path:
+    """Ort des Repos im Klon (`.` ist der Klon selbst); `KeyError` bei nicht freigegebenem Repo."""
+    ort = pfad_norm(konfig.repos[repo])
+    return klon if ort == "." else klon / ort
+
+
+def wt_pfad(ordner: Path, repo: str, issue: int, zusatz: str = "") -> Path:
+    """Worktree eines Fundes außerhalb des Klons (R6): `ordner/wt/<repo_name>-<issue><zusatz>`."""
+    return ordner / "wt" / f"{repo.split('/')[1]}-{issue}{zusatz}"
+
+
+def pr_finden_oder_anlegen(w: Werkzeuge, repo: str, kopf: str, basis: str, titel: str, koerper: str) -> int:
+    """Nummer eines offenen PR mit Kopf `kopf`, sonst ein neuer PR über `gh_lab`."""
+    for pr in w.gh_lesen.prs_zum_kopf(repo, kopf):
+        nummer = pr.get("number")
+        if pr.get("state") == "open" and isinstance(nummer, int) and not isinstance(nummer, bool):
+            return nummer
+    return w.gh_lab.pr_anlegen(repo, kopf, basis, titel, koerper)
 
 
 def _liste(daten: Any) -> list[dict[str, Any]]:
@@ -221,7 +242,7 @@ class _Lauf:
 
     def halten(self, muster: str) -> None:
         self.zurueckgehalten = True
-        self.w.gh_lab.kommentieren(self.konfig.issue_repo, self.n, _zurueckgehalten(muster))
+        self.w.gh_lab.kommentieren(self.konfig.issue_repo, self.n, zurueckgehalten(muster))
 
     def melden(self, text: str) -> None:
         self.senden(self.konfig.issue_repo, self.n, text)
@@ -318,9 +339,8 @@ class _Lauf:
         if fund.repo not in self.konfig.repos:
             self.melden(f"{PRAEFIX}Das Repo {fund.repo} ist nicht freigegeben, ich bearbeite den Auftrag nicht.")
             return self.fertig(fund, "abgelehnt:repo")
-        ort = _pfad_norm(self.konfig.repos[fund.repo])
-        repo_klon = self.klon if ort == "." else self.klon / ort
-        wt = self.ordner / "wt" / f"{fund.repo.split('/')[1]}-{self.n}"
+        repo_klon = repo_klon_pfad(self.konfig, self.klon, fund.repo)
+        wt = wt_pfad(self.ordner, fund.repo, self.n)
         try:
             worktree_bereit(repo_klon, wt, fund.branch, self.konfig.basis)
         except KonfliktFehler:
@@ -389,7 +409,7 @@ class _Lauf:
         try:
             neu = voraus(wt, fund.branch, basis=basis)
             betreffe = _betreffzeilen(wt, f"origin/{basis}")
-            inhalt = _push_inhalt(wt, fund.branch, basis) if neu > 0 else ""
+            inhalt = push_inhalt(wt, fund.branch, basis) if neu > 0 else ""
         except GitFehler:
             return self.fehlschlag(fund, "git")
         if neu == 0 and (fund.pr is not None or not betreffe):
@@ -413,18 +433,11 @@ class _Lauf:
                 return self.fehlschlag(fund, "push")
         neuer_pr = fund.pr is None
         if fund.pr is None:
-            fund.pr = self._pr_finden_oder_anlegen(fund, pr_titel, koerper)
+            fund.pr = pr_finden_oder_anlegen(self.w, fund.repo, fund.branch, self.konfig.basis, pr_titel, koerper)
         fund.zustand = "pr"
         zusatz = f"PR: {fund.repo}#{fund.pr}" if neuer_pr else f"Neuer Stand im PR {fund.repo}#{fund.pr}."
         self.antworten(fund, f"{PRAEFIX}{grund}\n\n{zusatz}")
         return self.fertig(fund)
-
-    def _pr_finden_oder_anlegen(self, fund: FundStand, titel: str, koerper: str) -> int:
-        for pr in self.w.gh_lesen.prs_zum_kopf(fund.repo, fund.branch):
-            nummer = pr.get("number")
-            if pr.get("state") == "open" and isinstance(nummer, int) and not isinstance(nummer, bool):
-                return nummer
-        return self.w.gh_lab.pr_anlegen(fund.repo, fund.branch, self.konfig.basis, titel, koerper)
 
 
 def _warten_melden(grund: str, issue: int, konfig: DebuggerKonfig, stand: DebuggerStand, w: Werkzeuge,
@@ -435,7 +448,7 @@ def _warten_melden(grund: str, issue: int, konfig: DebuggerKonfig, stand: Debugg
         return
     text = f"{PRAEFIX}Auftrag wartet ({grund})."
     muster = pruefen(text)
-    w.gh_lab.kommentieren(konfig.issue_repo, issue, text if muster is None else _zurueckgehalten(muster))
+    w.gh_lab.kommentieren(konfig.issue_repo, issue, text if muster is None else zurueckgehalten(muster))
     stand.gemeldet.append(schluessel)
     del stand.gemeldet[:-MAX_GEMELDET]
 
