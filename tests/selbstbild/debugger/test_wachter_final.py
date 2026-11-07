@@ -180,9 +180,9 @@ def test_main_ohne_askpass_exit_2(tmp_path: Path, token_umgebung: Path,  # noqa:
     assert "AskpassFehlt" in caplog.text
 
 
-# ---------- R46: Abo-Limit pausiert 30 min ----------
+# ---------- R49: Abo-Limit gilt global ----------
 
-def test_limit_pausiert_dreissig_minuten_ohne_helfer_und_budget(welt: Welt) -> None:
+def test_limit_bei_a_haelt_auch_b_an(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
     aufrufe: list[Path] = []
     antworten: list[Any] = [HelferFehler("antwort_fehler")]
 
@@ -196,17 +196,43 @@ def test_limit_pausiert_dreissig_minuten_ohne_helfer_und_budget(welt: Welt) -> N
         return [z for d in sorted(welt.ordner.glob("budget-*.jsonl"))
                 for z in d.read_text(encoding="utf-8").splitlines()]
 
+    nachlaeufe: list[int] = []
+    echt = wachter.nachlauf
+
+    def nachlauf(*args: Any) -> list[str]:
+        nachlaeufe.append(1)
+        return echt(*args)
+
+    monkeypatch.setattr(wachter, "nachlauf", nachlauf)
     welt.helfer = helfer  # type: ignore[assignment]
-    welt.kommentar(1, 318)
+    welt.kommentar(1, 318, "2026-11-07T11:00:00Z")
     assert welt.durchgang() == 0
-    fund = welt.stand().funde["318"]
-    assert len(aufrufe) == 1 and fund.versuche == {} and welt.stand().verarbeitet == []
-    assert fund.naechster_versuch == (welt.jetzt + timedelta(minutes=30)).isoformat()
+    stand = welt.stand()
+    assert len(aufrufe) == 1 and stand.funde["318"].versuche == {} and stand.verarbeitet == []
+    assert stand.limit_bis == (welt.jetzt + timedelta(minutes=30)).isoformat()
+    assert stand.funde["318"].naechster_versuch is None  # R49: kein fundbezogenes Limit mehr
+    welt.kommentar(2, 319, "2026-11-07T11:10:00Z")  # Fund B
     zeilen = budget()
     welt.jetzt += timedelta(minutes=5)
     assert welt.durchgang() == 0
-    assert len(aufrufe) == 1 and budget() == zeilen  # kein Helfer, keine `laeuft`-Zeile
+    assert len(aufrufe) == 1 and budget() == zeilen  # auch für B kein Helfer, keine Buchung
+    assert len(nachlaeufe) == 2 and welt.stand().seit == "2026-11-07T11:00:00Z"  # Nachlauf lief, `seit` hält
     welt.jetzt += timedelta(minutes=26)  # 31 min nach dem Limit
     assert welt.durchgang() == 0
     assert len(aufrufe) == 2 and welt.stand().verarbeitet == [1]
-    assert welt.stand().funde["318"].naechster_versuch is None
+    welt.jetzt += timedelta(minutes=1)
+    assert welt.durchgang() == 0
+    assert len(aufrufe) == 3 and aufrufe[2].name.startswith("Vibemind_V1-319-")
+    assert welt.stand().verarbeitet == [1, 2]
+
+
+def test_alter_stand_ohne_limit_bis_laedt(tmp_path: Path) -> None:
+    import json
+
+    from selbstbild.debugger.stand import stand_laden
+
+    datei = tmp_path / "stand.json"
+    datei.write_text(json.dumps({"start": "x", "seit": "x"}), encoding="utf-8")
+    assert stand_laden(datei).limit_bis is None
+    datei.write_text(json.dumps({"start": "x", "seit": "x", "limit_bis": 5}), encoding="utf-8")
+    assert "stand_kaputt" in stand_laden(datei).gemeldet

@@ -268,7 +268,7 @@ class _Nachlauf:
         nummer = pr_finden_oder_anlegen(self.w, issue_repo, branch, basis, titel, koerper)
         # Punkt 4: die Sitzung gehörte zum Worktree des Fixes, nicht zum Pin-Worktree
         self.stand.funde[str(n)] = FundStand(repo=issue_repo, branch=branch, sitzung=None, pr=nummer,
-                                             zustand="pr", versuche=fund.versuche)
+                                             zustand="pr", versuche=fund.versuche, runde=fund.runde)
         self.zeilen.append(f"#{n}: Pin-PR #{nummer} geöffnet")
 
     def gehalten(self, n: int, muster: str) -> None:

@@ -159,3 +159,18 @@ def test_branch_name_runde_suffix() -> None:
         assert _debugger_branch(name) == name
     with pytest.raises(ValueError):
         branch_name(5, "x", 0)
+
+
+def test_worktree_bereit_fetch_ohne_submodule(mit_submodul: dict[str, Path], tmp_path: Path,
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    gesehen: list[list[str]] = []
+    echt = klon_modul._begrenzt
+
+    def begrenzt(argv: list[str], unter: str, **kw: object) -> tuple[int, bytes]:
+        gesehen.append(argv)
+        return echt(argv, unter, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(klon_modul, "_begrenzt", begrenzt)
+    worktree_bereit(mit_submodul["klon"], tmp_path / "wt" / "x-5", "debugger/5-x", "master")
+    holen = [a for a in gesehen if "fetch" in a]
+    assert holen and all("--no-recurse-submodules" in a for a in holen)

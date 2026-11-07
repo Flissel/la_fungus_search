@@ -188,6 +188,7 @@ def test_aehnliche_branches_sind_keine_pin_branches() -> None:
 # ---------- R47: Branch-Namen treffen nie das Pin-Muster ----------
 
 @pytest.mark.parametrize("titel", ["[selbstbild] Pin", "Pin", "[selbstbild] Doku zum Pin", "pin!!!",
+                                   "[selbstbild] Pin 2", "pin-12",
                                    "[selbstbild] " + "x" * 26 + " pin"])
 @pytest.mark.parametrize("runde", [1, 2, 13])
 def test_branch_name_nie_pin_muster(titel: str, runde: int) -> None:
@@ -207,6 +208,7 @@ def test_branch_name_pin_beispiele() -> None:
 
     assert branch_name(5, "[selbstbild] Pin") == "debugger/5-pin-fix"
     assert branch_name(5, "[selbstbild] Pin", 2) == "debugger/5-pin-fix-2"
+    assert branch_name(5, "[selbstbild] Pin 2") == "debugger/5-pin-2-fix"  # R47b: fertiger Name geprüft
     assert branch_name(5, "[selbstbild] Pinsel") == "debugger/5-pinsel"  # nur das Wortende zählt
 
 

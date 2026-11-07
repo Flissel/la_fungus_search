@@ -309,10 +309,21 @@ def branch_name(issue: int, titel: str, runde: int = 1) -> str:
     def kuerzen(platz: int) -> str:
         return re.sub(r"-{2,}", "-", roh[:platz]).strip("-") or "fund"
 
-    kurz = kuerzen(MAX_KURZ - len(suffix))
-    if kurz == "pin" or kurz.endswith("-pin"):  # R47: nie `debugger/<n>-pin[-<runde>]` oder `…-pin`
-        kurz = kuerzen(MAX_KURZ - len(suffix) - len(_PIN_ZUSATZ)) + _PIN_ZUSATZ
+    platz = MAX_KURZ - len(suffix)
+    kurz = kuerzen(platz)
+    # R47/R47b: nie auf `-pin` enden und nie als fertiger Name das Pin-Muster treffen
+    while kurz == "pin" or kurz.endswith("-pin") or ist_pin_branch(f"{PRAEFIX}{issue}-{kurz}{suffix}"):
+        platz -= len(_PIN_ZUSATZ)
+        kurz = kuerzen(platz) + _PIN_ZUSATZ
     return f"{PRAEFIX}{issue}-{kurz}{suffix}"
+
+
+_PIN_BRANCH = re.compile(r"debugger/\d+-pin(?:-\d+)?")
+
+
+def ist_pin_branch(branch: str) -> bool:
+    """R45: `debugger/<n>-pin`, auch mit Runden-Suffix `-<runde>` (das Muster von `pin_branch`)."""
+    return isinstance(branch, str) and _PIN_BRANCH.fullmatch(branch) is not None
 
 
 def worktree_bereit(
@@ -330,7 +341,7 @@ def worktree_bereit(
         raise ValueError("start_ungueltig")
     if wt_ordner.exists():
         _worktree_pruefen(repo_klon, wt_ordner, branch)
-    git_lauf(repo_klon, "fetch", "--prune", "origin")
+    git_lauf(repo_klon, "fetch", "--prune", "--no-recurse-submodules", "origin")
     remote = f"origin/{branch}"
     remote_da = _ref_da(repo_klon, f"refs/remotes/{remote}")
     if not wt_ordner.exists():

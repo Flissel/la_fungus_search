@@ -1,8 +1,8 @@
 """Versuche, Pausen und Einmal-Schlüssel des Debugger-Claw (rein, ohne Netz).
 
-Alles hier verändert nur den Stand im Speicher: gezählte Versuche mit Pause (R42), die
-Reaktion nur einmal je Kommentar (Punkt 2) und der Tageszähler für ungezählte GitHub-Fehler
-einer Runde (Punkt 1). Schlüssel in `stand.gemeldet` werden mit den anderen Meldungen gekappt.
+Alles hier verändert nur den Stand im Speicher: gezählte Versuche mit Pause (R42), das globale
+Abo-Limit (R49), die Reaktion nur einmal je Kommentar (Punkt 2) und der Tageszähler für
+ungezählte GitHub-Fehler einer Runde (Punkt 1). Schlüssel in `stand.gemeldet` werden mit den anderen Meldungen gekappt.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from selbstbild.debugger.stand import DebuggerStand, FundStand
 
 MAX_VERSUCHE = 3
 PAUSE = timedelta(minutes=10)  # R42: je gezähltem Versuch
-LIMIT_PAUSE = timedelta(minutes=30)  # R46: nach `wartet:limit`, ohne Versuch
+LIMIT_PAUSE = timedelta(minutes=30)  # R46/R49: nach `wartet:limit` global, ohne Versuch
 MAX_GH_FEHLER = 3  # Punkt 1: so oft in Folge, dann ist der Kandidat für den Tag gesperrt
 REAGIERT = "reagiert:"
 GH_FEHLER = "gh_fehler:"
@@ -41,9 +41,14 @@ def versuch_zaehlen(fund: FundStand, ids: Sequence[int], jetzt: datetime) -> lis
     return aufgegeben
 
 
-def limit_pause(fund: FundStand, jetzt: datetime) -> None:
-    """R46: Abo-Limit, kein Versuch; der Fund pausiert 30 min (kein Helfer, keine `laeuft`-Zeile)."""
-    fund.naechster_versuch = (jetzt + LIMIT_PAUSE).isoformat()
+def limit_setzen(stand: DebuggerStand, jetzt: datetime) -> None:
+    """R49: Abo-Limit gilt global; 30 min startet kein Helfer (kein Versuch, keine `laeuft`-Zeile)."""
+    stand.limit_bis = (jetzt + LIMIT_PAUSE).isoformat()
+
+
+def limit_aktiv(stand: DebuggerStand, jetzt: datetime) -> bool:
+    """True, solange `jetzt < stand.limit_bis`; ein unlesbarer Wert hält nichts zurück."""
+    return bool(stand.limit_bis) and jetzt < _zeit(str(stand.limit_bis))
 
 
 def pausiert(fund: FundStand | None, jetzt: datetime) -> bool:

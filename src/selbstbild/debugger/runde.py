@@ -10,9 +10,9 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
-from selbstbild.debugger.auftraege import Auftrag, Kommentar
+from selbstbild.debugger.auftraege import Auftrag
 from selbstbild.debugger.budget import budget_buchen, budget_pruefen
 from selbstbild.debugger.helfer import HelferErgebnis, HelferFehler, prompt_bauen
 from selbstbild.debugger.klon import (
@@ -29,9 +29,10 @@ from selbstbild.debugger.klon import (
     worktree_bereit,
 )
 from selbstbild.debugger.konfig import DebuggerKonfig
+from selbstbild.debugger.material import auftrag_texte, material_bauen
 from selbstbild.debugger.spiegel import ZurueckgehaltenFehler, ist_pin_branch
 from selbstbild.debugger.stand import DebuggerStand, FundStand
-from selbstbild.debugger.versuche import (MAX_VERSUCHE, einmal_reagieren, limit_pause, reagiert_aufraeumen,
+from selbstbild.debugger.versuche import (MAX_VERSUCHE, einmal_reagieren, limit_setzen, reagiert_aufraeumen,
                                           versuch_zaehlen)
 from selbstbild.debugger.ziel import fund_neu, pfad_norm, repo_klon_pfad, wt_pfad, ziel_bestimmen
 from selbstbild.funde.github import GitHub, GitHubFehler
@@ -45,10 +46,7 @@ LOG = logging.getLogger("selbstbild.debugger")
 PRAEFIX = "🤖 Debugger-Claw: "
 KEINE_BEGRUENDUNG = "(keine Begründung vom Helfer)"
 MAX_PR_TITEL = 256
-MAX_SEITEN = 10
-SEITE = 100
 RUECKFRAGE_LABEL = "selbstbild:rueckfrage"
-MAX_DIFF = 60_000
 MAX_GEMELDET = 200
 NUR_EINORDNEN_TEXT = PRAEFIX + "Fixes in diesem Repo sind nicht freigegeben, ich kann nur einordnen."
 HINWEIS_OEFFENTLICH = ("Dieses Repo ist öffentlich. Commit-Texte beschreiben nur die Code-Änderung, "
@@ -95,32 +93,12 @@ def pr_finden_oder_anlegen(w: Werkzeuge, repo: str, kopf: str, basis: str, titel
     return w.gh_lab.pr_anlegen(repo, kopf, basis, titel, koerper)
 
 
-def _liste(daten: Any) -> list[dict[str, Any]]:
-    return [x for x in daten if isinstance(x, dict)] if isinstance(daten, list) else []
-
-
-def _autor(roh: dict[str, Any]) -> str:
-    user = roh.get("user")
-    return str(user.get("login", "")) if isinstance(user, dict) else ""
-
-
 def _begruendung(text: str) -> str:
     return text.strip() or KEINE_BEGRUENDUNG
 
 
 def _kappen(titel: str) -> str:
     return titel if len(titel) <= MAX_PR_TITEL else titel[: MAX_PR_TITEL - 1] + "…"
-
-
-def _seiten(gh: GitHub, pfad: str) -> list[dict[str, Any]]:
-    """Liest `pfad` seitenweise (100 je Seite) bis zur ersten kurzen Seite, höchstens 10 Seiten."""
-    alle: list[dict[str, Any]] = []
-    for seite in range(1, MAX_SEITEN + 1):
-        teil = gh._api("GET", f"{pfad}?per_page={SEITE}&page={seite}")
-        alle += _liste(teil)
-        if not isinstance(teil, list) or len(teil) < SEITE:
-            break
-    return alle
 
 
 class _Lauf:
@@ -188,57 +166,24 @@ class _Lauf:
             pass
         return f"fehler:{art}"
 
-    # --- Material ---
-
-    def auftrag_texte(self) -> list[str]:
-        return [self._auftrag_text(k) for k in self.auftrag.kommentare]
-
-    @staticmethod
-    def _auftrag_text(k: Kommentar) -> str:
-        if not k.pfad:
-            return k.text
-        ort = f"{k.pfad}:{k.zeile}" if k.zeile is not None else k.pfad
-        return f"[{ort}] {k.text}"
-
-    def _kommentar(self, c: dict[str, Any], ort: str = "") -> str:
-        """Kommentar fürs Material; nur Auslöser und Helfer-Konto, alle anderen als Platzhalter (R22)."""
-        autor = _autor(c)
-        if autor not in (self.konfig.ausloeser, self.konfig.helfer_konto):
-            return f"[Kommentar von {autor or '?'} ausgelassen]"
-        return f"--- {autor} ({c.get('created_at', '')}){ort}\n{c.get('body') or ''}"
-
-    def material(self, titel: str, text: str, fund: FundStand) -> str:
-        lesen = self.w.gh_lesen
-        basis = f"/repos/{self.konfig.issue_repo}/issues/{self.n}"
-        teile = [f"Issue #{self.n}: {titel}", text, "", "Kommentare des Issues:"]
-        teile += [self._kommentar(c) for c in _seiten(lesen, f"{basis}/comments")]
-        if fund.pr is not None:
-            pr = f"/repos/{fund.repo}/pulls/{fund.pr}"
-            diff = "\n".join(
-                f"### {d.get('filename', '')}\n{d.get('patch') or ''}" for d in _seiten(lesen, f"{pr}/files")
-            )
-            if len(diff) > MAX_DIFF:
-                diff = diff[:MAX_DIFF] + "\n[… Diff gekürzt]"
-            teile += ["", f"Diff des PR {fund.repo}#{fund.pr}:", diff, "", "Review-Kommentare des PR:"]
-            for c in _seiten(lesen, f"{pr}/comments"):
-                ort = f" [{c.get('path', '')}:{c.get('line') or c.get('original_line') or ''}]"
-                teile.append(self._kommentar(c, ort))
-        return "\n".join(teile)
-
     # --- Fund (R37) ---
 
     def pr_offen(self, fund: FundStand) -> bool:
         return fund.pr is not None and self.w.gh_lesen.pr_lesen(fund.repo, fund.pr).get("state") == "open"
 
-    def fund_bestimmen(self, titel: str, ziel: str) -> FundStand:
-        """Bestehender FundStand gewinnt (R1); nach `erledigt` oder mit nicht mehr offenem PR ein neuer.
+    def fund_bestimmen(self, titel: str, ziel: str) -> FundStand | None:
+        """Bestehender FundStand gewinnt (R1); nach `erledigt` (oder `offen` mit geschlossenem PR) ein neuer.
 
         Der neue Stand (R37) hat kein PR und keine Sitzung, das Repo aus `ziel_bestimmen`, die
-        alten Versuche und `runde + 1`, also auch einen neuen Branch-Namen.
+        alten Versuche und `runde + 1`, also auch einen neuen Branch-Namen. R48: Steht der Fund auf
+        `pr` und ist der PR nicht mehr offen, `None`: erst räumt der Nachlauf ab.
         """
         alt = self.stand.funde.get(str(self.n))
-        if alt is not None and alt.zustand != "erledigt" and (alt.pr is None or self.pr_offen(alt)):
-            return alt
+        if alt is not None and alt.zustand != "erledigt":
+            if alt.pr is None or self.pr_offen(alt):
+                return alt
+            if alt.zustand == "pr":
+                return None
         fund = fund_neu(self.n, titel, ziel, self.konfig, runde=alt.runde + 1 if alt else 1,
                         versuche=alt.versuche if alt else None)
         self.stand.funde[str(self.n)] = fund
@@ -254,6 +199,8 @@ class _Lauf:
         labels = {x.get("name") if isinstance(x, dict) else x for x in roh_labels or [] if isinstance(roh_labels, list)}
         ziel, nur_einordnen = ziel_bestimmen(text, titel, self.konfig)
         fund = self.fund_bestimmen(titel, ziel)
+        if fund is None:  # R48: ungezählt, ohne Meldung; der Nachlauf im selben Durchgang räumt ab
+            return "wartet:pr_zu"
         # R45: auf dem Pin-Branch nur einordnen und nie pushen (der Pin-PR trägt nur den Gitlink)
         pin = fund.repo == self.konfig.issue_repo and ist_pin_branch(fund.branch)
         nur_einordnen = nur_einordnen or pin
@@ -273,12 +220,20 @@ class _Lauf:
             return self.fertig(fund, "fehler:worktree")
         except GitFehler:
             return self.fehlschlag(fund, "git")
+        try:
+            return self.mit_helfer(fund, wt, titel, text, labels, nur_einordnen=nur_einordnen, pin=pin)
+        finally:
+            if pin:  # R45: alle Ausgänge (Limit, Helferfehler, Aktion); Helfer-Commits werden nie gepusht
+                self.wt_aufraeumen(fund, wt, pin=True)
 
+    def mit_helfer(self, fund: FundStand, wt: Path, titel: str, text: str, labels: set[object], *,
+                   nur_einordnen: bool, pin: bool) -> str:
         oeffentlich = fund.repo != self.konfig.issue_repo
         hinweise = [HINWEIS_FEST] + [h for h, an in ((HINWEIS_OEFFENTLICH, oeffentlich),
                                                      (HINWEIS_NUR_EINORDNEN, nur_einordnen)) if an]
         rueckfrage = RUECKFRAGE_LABEL in labels
-        prompt = prompt_bauen(self.auftrag_texte(), self.material(titel, text, fund),
+        prompt = prompt_bauen(auftrag_texte(self.auftrag.kommentare),
+                              material_bauen(self.w.gh_lesen, self.konfig, self.n, titel, text, fund),
                               art="rueckfrage" if rueckfrage else "fund", hinweise=hinweise)
         erg: HelferErgebnis | None = None
         fehler: str | None = None
@@ -305,10 +260,13 @@ class _Lauf:
                               (ende - beginn).total_seconds(), jetzt=ende, nachtrag=True)
             except OSError as e:
                 LOG.warning("Budget-Nachtrag nicht buchbar (%s)", type(e).__name__)
-        if fehler == "helfer_antwort_fehler":  # R42: Abo-Limit o. Ä., kein Versuch, Kommentare bleiben offen
-            limit_pause(fund, ende)  # R46
-            _warten_melden("limit", self.n, self.konfig, self.stand, self.w, ende)
-            return "wartet:limit"
+        if fehler == "helfer_antwort_fehler":  # R42/R49: Abo-Limit, global 30 min, Kommentare bleiben offen
+            fund.limit_folge += 1
+            if fund.limit_folge < MAX_VERSUCHE:
+                limit_setzen(self.stand, ende)
+                _warten_melden("limit", self.n, self.konfig, self.stand, self.w, ende)
+                return "wartet:limit"
+            fund.sitzung, fehler = None, "helfer_limit"  # R49: beim 3. Mal ein gezählter Versuch
         if erg is None:
             return self.fehlschlag(fund, fehler or "helfer_unbekannt")
         fund.sitzung = erg.sitzung
@@ -317,9 +275,6 @@ class _Lauf:
                                labels=frozenset(x for x in labels if isinstance(x, str)))
         except GitHubFehler:  # zählt als Versuch, sonst wiederholte jeder Durchgang die volle Runde
             return self.fehlschlag(fund, "github")
-        finally:
-            if pin:
-                self.wt_aufraeumen(fund, wt, pin=True)
 
     def wt_aufraeumen(self, fund: FundStand, wt: Path, *, pin: bool = False) -> None:
         """R43: ohne PR und ohne Commits voraus Worktree und lokalen Branch entfernen (`sitzung` bleibt).
@@ -446,4 +401,8 @@ def _runde(auftrag: Auftrag, konfig: DebuggerKonfig, stand: DebuggerStand, klon:
     if grund is not None:
         _warten_melden(grund, auftrag.issue, konfig, stand, w, jetzt)
         return f"wartet:{grund}"
-    return _Lauf(auftrag, konfig, stand, klon, ordner, w).ausfuehren()
+    ergebnis = _Lauf(auftrag, konfig, stand, klon, ordner, w).ausfuehren()
+    fund = stand.funde.get(str(auftrag.issue))
+    if fund is not None and ergebnis != "wartet:limit":  # R49: nur `wartet:limit` in Folge zählt
+        fund.limit_folge = 0
+    return ergebnis

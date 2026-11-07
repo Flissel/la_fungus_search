@@ -28,6 +28,7 @@ import selbstbild.debugger.runde as runde_modul
 from selbstbild.debugger.helfer import HelferErgebnis, HelferFehler
 from selbstbild.debugger.runde import runde_ausfuehren
 from selbstbild.debugger.auftraege import Auftrag
+from selbstbild.debugger.nachlauf import nachlauf
 from selbstbild.debugger.stand import FundStand
 
 BRANCH_2 = f"debugger/{N}-doku-widerspruch-schedule-s-2"  # branch_name(N, TITEL, 2)
@@ -56,16 +57,23 @@ def test_erledigt_neue_runde_neuer_branch_neuer_pr(welt: Welt) -> None:
 
 
 def test_pr_geschlossen_aber_stand_pr_neuer_pr(welt: Welt) -> None:
+    """R48: Durchgang 1 wartet (ungezählt, still), der Nachlauf räumt ab; Durchgang 2 macht den neuen PR."""
     welt.stand.funde[str(N)] = FundStand(repo=ISSUE_REPO, branch=BRANCH, sitzung="alt", pr=480, zustand="pr")
     welt.daten["pr_lesen"] = {(ISSUE_REPO, 480): {"state": "closed", "merged": False}}
     welt.helfer.schritte = [fix("b.txt", "fix: neu")]
-    assert welt.runde(kom(1, "bitte fixen", nummer=480)) == "ok"
-    assert welt.lesen.namen("pr_lesen")[0] == ("pr_lesen", ISSUE_REPO, 480)
+    assert welt.runde(kom(1, "bitte fixen", nummer=480)) == "wartet:pr_zu"
+    assert welt.lesen.namen("pr_lesen") == [("pr_lesen", ISSUE_REPO, 480)]
+    assert welt.helfer.aufrufe == [] and welt.stand.verarbeitet == [] and welt.lab.namen("kommentieren") == []
     fund = welt.stand.funde[str(N)]
-    assert (fund.branch, fund.runde, fund.pr, fund.zustand, fund.sitzung) == (BRANCH_2, 2, 501, "pr", "s-1")
-    assert welt.helfer.aufrufe[0]["sitzung"] is None
-    assert [a[2] for a in welt.lab.namen("pr_anlegen")] == [BRANCH_2]
-    assert "Diff des PR" not in welt.helfer.aufrufe[0]["prompt"]  # als gäbe es keinen PR
+    assert (fund.branch, fund.pr, fund.zustand, fund.versuche) == (BRANCH, 480, "pr", {})  # unverändert
+    assert nachlauf(welt.konfig, welt.stand, welt.klon, welt.ordner, welt.w) == [
+        f"#{N}: {ISSUE_REPO}#480 ohne Merge geschlossen, aufgeräumt"]
+    assert welt.lab.namen("branch_loeschen") == [("branch_loeschen", ISSUE_REPO, BRANCH)]
+    assert welt.runde(kom(1, "bitte fixen")) == "ok"  # Durchgang 2
+    fund = welt.stand.funde[str(N)]
+    assert (fund.branch, fund.pr, fund.zustand) == (BRANCH, 501, "pr")
+    assert [a[2] for a in welt.lab.namen("pr_anlegen")] == [BRANCH] and welt.stand.verarbeitet == [1]
+    assert "Diff des PR" not in welt.helfer.aufrufe[0]["prompt"]  # der alte PR ist weg
 
 
 def test_offener_pr_bleibt_und_wird_vor_dem_push_geprueft(welt: Welt) -> None:
@@ -191,8 +199,9 @@ def test_antwort_fehler_wartet_limit_ungezaehlt(welt: Welt) -> None:
     for _ in range(2):
         assert welt.runde(kom(1)) == "wartet:limit"
     fund = welt.stand.funde[str(N)]
-    assert fund.versuche == {} and welt.stand.verarbeitet == []
-    assert fund.naechster_versuch == (welt.jetzt + timedelta(minutes=30)).isoformat()  # R46
+    assert fund.versuche == {} and welt.stand.verarbeitet == [] and fund.naechster_versuch is None
+    assert welt.stand.limit_bis == (welt.jetzt + timedelta(minutes=30)).isoformat()  # R49: global
+    assert fund.limit_folge == 2
     assert [k[3] for k in welt.lab.namen("kommentieren")] == [PRAEFIX + "Auftrag wartet (limit)."]
     assert "wartet:limit:2026-11-07" in welt.stand.gemeldet
 
@@ -285,3 +294,25 @@ def test_fester_hinweis_immer_im_prompt(welt: Welt) -> None:
     assert welt.runde(kom(1)) == "ok"
     prompt = welt.helfer.aufrufe[0]["prompt"]
     assert prompt.count(satz) == 1 and prompt.index(satz) < prompt.index("<<<AUFTRAG>>>")
+
+
+# ---------- R49: Limit dreimal in Folge zählt ----------
+
+def test_limit_dreimal_in_folge_zaehlt_und_verwirft_sitzung(welt: Welt) -> None:
+    welt.stand.funde[str(N)] = FundStand(repo=ISSUE_REPO, branch=BRANCH,
+                                         sitzung="0b9c6a3e-5f1d-4c2a-9e8b-7d6c5b4a3f21")
+    welt.helfer.schritte = [HelferFehler("antwort_fehler")]
+    assert [welt.runde(kom(1)) for _ in range(3)] == ["wartet:limit", "wartet:limit", "fehler:helfer_limit"]
+    fund = welt.stand.funde[str(N)]
+    assert fund.sitzung is None and fund.versuche == {"1": 1} and fund.limit_folge == 0
+    assert fund.naechster_versuch == (welt.jetzt + timedelta(minutes=10)).isoformat()  # normale Pause (R42)
+
+
+def test_limit_folge_setzt_bei_anderem_ergebnis_zurueck(welt: Welt) -> None:
+    welt.helfer.schritte = [HelferFehler("antwort_fehler")]
+    assert welt.runde(kom(1)) == "wartet:limit"
+    welt.helfer.schritte = [HelferFehler("antwort_kaputt")]
+    assert welt.runde(kom(1)) == "fehler:helfer_antwort_kaputt"
+    assert welt.stand.funde[str(N)].limit_folge == 0
+    welt.helfer.schritte = [HelferFehler("antwort_fehler")]
+    assert [welt.runde(kom(1)) for _ in range(2)] == ["wartet:limit", "wartet:limit"]  # wieder von vorn

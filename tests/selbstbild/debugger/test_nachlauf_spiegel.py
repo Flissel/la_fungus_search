@@ -196,3 +196,60 @@ def test_runde_auf_pin_branch_pusht_nie(welt: Welt) -> None:
     assert "boese.txt" not in git(welt.origin, "ls-tree", "-r", "--name-only", PIN_BRANCH)
     assert not welt.wt(ISSUE_REPO, PIN_BRANCH).exists()  # der fremde Commit bleibt nicht im Pin-Worktree liegen
     assert welt.stand.funde[str(N)].branch == PIN_BRANCH and welt.stand.funde[str(N)].pr == 412
+
+
+# ---------- R48: Merge und Kommentar im selben Fenster ----------
+
+def test_merge_und_kommentar_im_selben_fenster_pin_wird_gehoben(welt: Welt) -> None:
+    """Ein Durchgang: erst die Runde (wartet), dann der Nachlauf (hebt den Pin)."""
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    sha = welt.os_merge()
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
+    gesehen: list[Path] = []
+
+    def helfer(wt: Path, prompt: str, sitzung: str | None, frist_s: float) -> HelferErgebnis:
+        gesehen.append(wt)
+        return HelferErgebnis("s-2", "Antwort.", "antwort", None)
+
+    welt.helfer = helfer
+    k = Kommentar(id=41, repo=OS_REPO, nummer=77, autor="Flissel", text="noch etwas",
+                  erstellt="2026-11-07T11:58:00Z", review=False)
+    ergebnis = runde_ausfuehren(Auftrag(N, (k,)), welt.konfig, welt.stand, welt.klon, welt.ordner, welt.w)
+    assert ergebnis == "wartet:pr_zu"
+    assert gesehen == [] and welt.stand.verarbeitet == [] and welt.stand.funde[str(N)].pr == 77
+    assert welt.lauf() == [f"#{N}: Pin-PR #412 geöffnet"]  # Nachlauf im selben Durchgang
+    assert not welt.wt(OS_REPO, OS_BRANCH).exists() and not _zweig_da(welt.os_klon, OS_BRANCH)
+    fund = welt.stand.funde[str(N)]
+    assert (fund.repo, fund.branch, fund.pr, fund.zustand) == (ISSUE_REPO, PIN_BRANCH, 412, "pr")
+
+
+def test_pin_fundstand_behaelt_runde(welt: Welt) -> None:
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    welt.stand.funde[str(N)].runde = 3
+    sha = welt.os_merge()
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
+    assert welt.lauf() == [f"#{N}: Pin-PR #412 geöffnet"]
+    assert welt.stand.funde[str(N)].runde == 3
+
+
+def test_limit_auf_pin_branch_nach_helfer_commit_raeumt_auf(welt: Welt) -> None:
+    from selbstbild.debugger.helfer import HelferFehler
+
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    sha = welt.os_merge()
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
+    assert welt.lauf() == [f"#{N}: Pin-PR #412 geöffnet"]
+    welt.pr(ISSUE_REPO, 412)
+    pushes = list(welt.pushes)
+
+    def helfer(wt: Path, prompt: str, sitzung: str | None, frist_s: float) -> HelferErgebnis:
+        commit(wt, "boese.txt", "fix: mehr als der Pin")
+        raise HelferFehler("antwort_fehler")
+
+    welt.helfer = helfer
+    k = Kommentar(id=51, repo=ISSUE_REPO, nummer=412, autor="Flissel", text="bitte auch noch X",
+                  erstellt="2026-11-07T11:58:00Z", review=False)
+    ergebnis = runde_ausfuehren(Auftrag(N, (k,)), welt.konfig, welt.stand, welt.klon, welt.ordner, welt.w)
+    assert ergebnis == "wartet:limit"
+    assert welt.pushes == pushes and not welt.wt(ISSUE_REPO, PIN_BRANCH).exists()
+    assert "boese.txt" not in git(welt.origin, "ls-tree", "-r", "--name-only", PIN_BRANCH)

@@ -25,6 +25,7 @@ from selbstbild.debugger.klon import (
     GitFehler,
     debugger_zweig_pruefen,
     git_in_datei,
+    ist_pin_branch,
 )
 from selbstbild.funde.text import pruefen
 
@@ -245,14 +246,6 @@ def _objekte_pruefen(pfad: Path, sha: str, ohne: list[str], env: dict[str, str],
         inhalte.append(roh[start:start + groesse].decode("utf-8", errors="replace"))
         pos = start + groesse + 1
     return pruefen("\n".join(inhalte))
-
-
-_PIN_BRANCH = re.compile(r"debugger/\d+-pin(?:-\d+)?")
-
-
-def ist_pin_branch(branch: str) -> bool:
-    """R45: `debugger/<n>-pin`, auch mit Runden-Suffix `-<runde>` (das Muster von `pin_branch`)."""
-    return isinstance(branch, str) and _PIN_BRANCH.fullmatch(branch) is not None
 
 
 def spiegel_push(

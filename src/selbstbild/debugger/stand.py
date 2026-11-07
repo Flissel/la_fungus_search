@@ -22,6 +22,7 @@ class FundStand:
     versuche: dict[str, int] = field(default_factory=dict)
     runde: int = 1  # R37: zählt neue Anläufe nach `erledigt`; fehlt in alten Ständen
     naechster_versuch: str | None = None  # R42: ISO-Zeit; bis dahin überspringt der Durchgang den Fund
+    limit_folge: int = 0  # R49: `wartet:limit` in Folge; beim 3. Mal ein gezählter Versuch
 
 
 @dataclass
@@ -33,6 +34,7 @@ class DebuggerStand:
     verarbeitet: list[int] = field(default_factory=list)
     funde: dict[str, FundStand] = field(default_factory=dict)
     gemeldet: list[str] = field(default_factory=list)
+    limit_bis: str | None = None  # R49: Abo-Limit, global; bis dahin startet kein Helfer
 
     def verarbeitet_hinzu(self, ids: Iterable[int]) -> None:
         """Hängt Kommentar-Ids hinten an und behält nur die letzten `MAX_VERARBEITET`."""
@@ -57,14 +59,15 @@ def stand_laden(pfad: Path) -> DebuggerStand:
     try:
         roh = json.loads(text)
         funde = {str(k): FundStand(**v) for k, v in roh.get("funde", {}).items()}
-        start, seit = roh.get("start"), roh.get("seit")
+        start, seit, limit_bis = roh.get("start"), roh.get("seit"), roh.get("limit_bis")
         verarbeitet = [int(i) for i in roh.get("verarbeitet", [])][-MAX_VERARBEITET:]
         gemeldet = [str(g) for g in roh.get("gemeldet", [])]
-        if not all(x is None or isinstance(x, str) for x in (start, seit)):
+        if not all(x is None or isinstance(x, str) for x in (start, seit, limit_bis)):
             raise ValueError
     except (ValueError, TypeError, AttributeError):
         return DebuggerStand(gemeldet=["stand_kaputt"])
-    return DebuggerStand(start=start, seit=seit, verarbeitet=verarbeitet, funde=funde, gemeldet=gemeldet)
+    return DebuggerStand(start=start, seit=seit, verarbeitet=verarbeitet, funde=funde, gemeldet=gemeldet,
+                         limit_bis=limit_bis)
 
 
 def stand_speichern(pfad: Path, stand: DebuggerStand) -> None:

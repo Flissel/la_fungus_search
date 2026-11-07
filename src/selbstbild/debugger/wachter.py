@@ -29,7 +29,7 @@ from selbstbild.debugger.nachlauf import nachlauf
 from selbstbild.debugger.runde import Werkzeuge, pfad_norm, runde_ausfuehren, wt_pfad
 from selbstbild.debugger.spiegel import spiegel_bereit, spiegel_holen, spiegel_pfad, spiegel_push
 from selbstbild.debugger.stand import DebuggerStand, stand_laden, stand_speichern
-from selbstbild.debugger.versuche import gh_fehler_merken, gh_fehler_vergessen, gh_gesperrt, pausiert
+from selbstbild.debugger.versuche import gh_fehler_merken, gh_fehler_vergessen, gh_gesperrt, limit_aktiv, pausiert
 from selbstbild.funde.github import DEBUGGER_MARKE, GitHub, GitHubFehler
 from selbstbild.sperre import SperreBelegt, sperre
 
@@ -207,6 +207,9 @@ class _Durchgang:
         jetzt = w.uhr()
         bereit = [a for a in kandidaten if not pausiert(stand.funde.get(str(a.issue)), jetzt)  # R42
                   and not gh_gesperrt(stand, a.issue, jetzt)]  # Punkt 1
+        if bereit and limit_aktiv(stand, jetzt):  # R49: global kein Helfer; Nachlauf und `seit` wie sonst
+            LOG.info("Abo-Limit bis %s, keine Runde", stand.limit_bis)
+            bereit = []
         fehler = self.runde(bereit[0], stand) if bereit else None
         try:  # Punkt 1: der Nachlauf läuft auch nach einer Ausnahme der Runde
             w.claw_aufraeumen()  # R44: vor dem Nachlauf läuft nichts mehr als claw

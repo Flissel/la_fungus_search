@@ -113,6 +113,9 @@ class FakeGitHub:
     def label_entfernen(self, repo: str, nummer: int, name: str) -> None:
         self.aufrufe.append(("label_entfernen", repo, nummer, name))
 
+    def branch_loeschen(self, repo: str, branch: str) -> None:
+        self.aufrufe.append(("branch_loeschen", repo, branch))
+
     def pr_anlegen(self, repo: str, kopf: str, basis: str, titel: str, text: str) -> int:
         self.aufrufe.append(("pr_anlegen", repo, kopf, basis, titel, text))
         self._fehler("pr_anlegen")
