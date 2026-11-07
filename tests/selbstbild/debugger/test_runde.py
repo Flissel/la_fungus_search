@@ -16,7 +16,6 @@ from selbstbild.debugger.klon import GitFehler, branch_name, worktree_bereit
 from selbstbild.debugger.konfig import DebuggerKonfig
 from selbstbild.debugger.runde import (
     Werkzeuge,
-    push_standard,
     runde_ausfuehren,
     ziel_bestimmen,
 )
@@ -631,37 +630,48 @@ def test_ziel_bestimmen(text: str, titel: str, erwartet: tuple[str, bool]) -> No
     assert ziel_bestimmen(text, titel, konfig) == erwartet
 
 
-# ---------- push_standard ----------
+# ---------- R23: rohe Blobs und Merge-Commits ----------
 
-def test_push_standard_askpass_und_refspec(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEBUGGER_GIT_TOKEN", "geheim-wert")
-    gesehen: list[dict[str, Any]] = []
+def test_schluessel_in_binaer_markierter_datei_kein_push(welt: Welt) -> None:
+    def schritt(wt: Path) -> HelferErgebnis:
+        (wt / ".gitattributes").write_text("*.bin -diff\n", encoding="utf-8", newline="\n")
+        commit(wt, "werte.bin", f"TOKEN={TOKEN}\n", "fix: Werte ergänzt")
+        return HelferErgebnis("s-1", "Werte ergänzt.", "fix", None)
 
-    def lauf(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
-        gesehen.append({"argv": argv, **kw})
-        return subprocess.CompletedProcess(argv, 0, "", "")
-
-    skript = tmp_path / "askpass.sh"
-    push_standard(tmp_path, "debugger/1-x", askpass=skript, laufzeit=lauf)
-    (a,) = gesehen
-    assert a["argv"][-3:] == ["push", "origin", "HEAD:refs/heads/debugger/1-x"]
-    assert "geheim-wert" not in " ".join(a["argv"])
-    assert a["env"]["GIT_ASKPASS"] == str(skript)
-    assert a["env"]["GIT_TERMINAL_PROMPT"] == "0"
-    assert a["stdin"] == subprocess.DEVNULL and a["timeout"] > 0
+    welt.helfer.schritte = [schritt]
+    assert welt.runde(kom(1)) == "abgelehnt:schluessel"
+    assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
+    assert welt.lab.namen("kommentieren") == [("kommentieren", ISSUE_REPO, N, _halt_text())]
 
 
-def test_push_standard_env_askpass_und_fehler(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def lauf(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(argv, 128, "", "fatal: https://x:geheim@github.com")
+def test_schluessel_nur_im_merge_commit_kein_push(welt: Welt) -> None:
+    def schritt(wt: Path) -> HelferErgebnis:
+        zweig = git(wt, "symbolic-ref", "--short", "HEAD")
+        git(wt, "checkout", "-q", "-b", "seite")
+        commit(wt, "a.txt", "seite\n", "seite")
+        git(wt, "checkout", "-q", zweig)
+        commit(wt, "a.txt", "eigen\n", "fix: eigen")
+        konflikt = subprocess.run(["git", "-C", str(wt), "merge", "-q", "seite"], capture_output=True, text=True)
+        assert konflikt.returncode != 0
+        (wt / "a.txt").write_text(f"TOKEN={TOKEN}\n", encoding="utf-8", newline="\n")
+        git(wt, "add", "a.txt")
+        git(wt, "commit", "-q", "--no-edit")
+        return HelferErgebnis("s-1", "Zusammengeführt.", "fix", None)
 
-    monkeypatch.delenv("DEBUGGER_ASKPASS", raising=False)
-    with pytest.raises(RuntimeError, match="kein_askpass"):
-        push_standard(tmp_path, "debugger/1-x", laufzeit=lauf)
-    monkeypatch.setenv("DEBUGGER_ASKPASS", str(tmp_path / "a.sh"))
-    with pytest.raises(GitFehler) as fehler:
-        push_standard(tmp_path, "debugger/1-x", laufzeit=lauf)
-    assert "geheim" not in str(fehler.value)
-    for falsch in ("master", "main", "debugger/../master", "feature/x"):
-        with pytest.raises(ValueError):
-            push_standard(tmp_path, falsch, laufzeit=lauf)
+    welt.helfer.schritte = [schritt]
+    assert welt.runde(kom(1)) == "abgelehnt:schluessel"
+    assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
+    assert welt.lab.namen("kommentieren") == [("kommentieren", ISSUE_REPO, N, _halt_text())]
+
+
+def test_push_inhalt_zu_gross_haelt_zurueck(welt: Welt) -> None:
+    def schritt(wt: Path) -> HelferErgebnis:
+        (wt / "gross.txt").write_bytes(b"x" * 5_100_000)
+        commit(wt, "klein.txt", "k\n", "fix: groß")
+        return HelferErgebnis("s-1", "Groß.", "fix", None)
+
+    welt.helfer.schritte = [schritt]
+    assert welt.runde(kom(1)) == "abgelehnt:schluessel"
+    assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
+    assert welt.lab.namen("kommentieren") == [
+        ("kommentieren", ISSUE_REPO, N, PRAEFIX + "Antwort zurückgehalten (Schlüssel-Verdacht: zu_gross).")]

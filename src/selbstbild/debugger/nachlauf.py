@@ -15,12 +15,15 @@ from pathlib import Path
 from typing import Callable
 
 from selbstbild.debugger.klon import (
+    ZU_GROSS,
     GitFehler,
     KonfliktFehler,
+    PushZuGross,
     WorktreeFehler,
     aufraeumen,
     git_lauf,
     ist_vorfahr,
+    push_inhalt,
     voraus,
     worktree_bereit,
 )
@@ -31,7 +34,6 @@ from selbstbild.debugger.runde import (
     Werkzeuge,
     pfad_norm,
     pr_finden_oder_anlegen,
-    push_inhalt,
     repo_klon_pfad,
     wt_pfad,
     zurueckgehalten,
@@ -203,13 +205,16 @@ class _Nachlauf:
         titel = f"{PRAEFIX}vibemind-os auf {sha7} (#{n})"
         koerper = f"Fixes #{n}\n\n- Pin vibemind-os auf {sha} (gemergt in {fund.repo}#{os_pr})"
         neu = voraus(wt, branch, basis=basis)
-        inhalt = push_inhalt(wt, branch, basis) if neu > 0 else ""
-        for text in (titel, koerper, inhalt):
-            if (muster := pruefen(text)) is not None:
-                satz = zurueckgehalten(muster)
-                self.einmal(f"pin_wartet:{n}:schluessel", lambda: self.w.gh_lab.kommentieren(issue_repo, n, satz))
-                self.zeilen.append(f"#{n}: Pin zurückgehalten ({muster})")
-                return
+        try:
+            texte = (titel, koerper, push_inhalt(wt, branch, basis) if neu > 0 else "")
+            muster = next((m for m in map(pruefen, texte) if m is not None), None)
+        except PushZuGross:  # R23: fail-closed
+            muster = ZU_GROSS
+        if muster is not None:
+            satz = zurueckgehalten(muster)
+            self.einmal(f"pin_wartet:{n}:schluessel", lambda: self.w.gh_lab.kommentieren(issue_repo, n, satz))
+            self.zeilen.append(f"#{n}: Pin zurückgehalten ({muster})")
+            return
         # (6) Push, (7) PR, (8) FundStand ersetzen
         if neu > 0:
             self.w.push(wt, branch)

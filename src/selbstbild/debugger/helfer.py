@@ -150,8 +150,15 @@ def helfer_starten(
     frist_s: float,
     *,
     laeufer: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    praefix: Sequence[str] = (),
 ) -> HelferErgebnis:
-    """Startet `claude -p` im Worktree; Ausgabe über Temp-Datei, Env ohne Zugangsdaten."""
+    """Startet `claude -p` im Worktree; Ausgabe über Temp-Datei, Env ohne Zugangsdaten.
+
+    `praefix` steht vor der Kommandozeile (im Container `setpriv --reuid=1000 ... --`), damit
+    der Helfer als `claw` läuft und die Token-Datei des Wächters nicht lesen kann (R16).
+    """
+    if isinstance(praefix, str):
+        raise TypeError("praefix muss eine Folge von Strings sein")
     env = {
         k: v
         for k, v in os.environ.items()
@@ -162,7 +169,7 @@ def helfer_starten(
         try:
             with ziel.open("wb") as aus:
                 lauf = laeufer(
-                    helfer_argv(prompt, sitzung),
+                    [*praefix, *helfer_argv(prompt, sitzung)],
                     cwd=wt,
                     stdin=subprocess.DEVNULL,
                     stdout=aus,

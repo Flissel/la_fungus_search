@@ -189,3 +189,13 @@ def test_prompt_hinweise_zwischen_regel_und_auftrag() -> None:
     ohne = prompt_bauen(["bitte"], "material", art="fund")
     assert "öffentlich" not in ohne
     assert prompt_bauen(["bitte"], "material", art="fund", hinweise=()) == ohne
+
+
+def test_helfer_praefix(tmp_path: Path) -> None:
+    f = _Fake(_cli("fertig"))
+    praefix = ("setpriv", "--reuid=1000", "--regid=1000", "--init-groups", "--")
+    helfer_starten(tmp_path, "P", "abc", 30.0, laeufer=f, praefix=praefix)
+    assert f.argv == [*praefix, *helfer_argv("P", "abc")]
+    assert f.aufruf["cwd"] == tmp_path
+    helfer_starten(tmp_path, "P", None, 30.0, laeufer=f)
+    assert f.argv == helfer_argv("P", None)

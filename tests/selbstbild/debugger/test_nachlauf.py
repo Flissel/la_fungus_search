@@ -433,6 +433,23 @@ def test_pin_schluessel_verdacht_haelt_zurueck(welt: Welt, monkeypatch: pytest.M
     assert len(welt.lab.namen("kommentieren")) == 1
 
 
+def test_pin_zu_gross_haelt_zurueck(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    from selbstbild.debugger.klon import PushZuGross
+
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    sha = welt.os_merge()
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
+
+    def zu_gross(*args: object) -> str:
+        raise PushZuGross()
+
+    monkeypatch.setattr(nachlauf_modul, "push_inhalt", zu_gross)
+    assert welt.lauf() == [f"#{N}: Pin zurückgehalten (zu_gross)"]
+    satz = PRAEFIX + "Antwort zurückgehalten (Schlüssel-Verdacht: zu_gross)."
+    assert welt.lab.namen("kommentieren") == [("kommentieren", ISSUE_REPO, N, satz)]
+    assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
+
+
 ENTHALTEN = f"{PRAEFIX}Der Fix aus {OS_REPO}#77 ist in Vibemind_V1 schon enthalten."
 
 

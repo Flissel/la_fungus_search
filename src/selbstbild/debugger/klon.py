@@ -1,7 +1,10 @@
-"""Git-Arbeit des Debugger-Claw auf dem VM-Klon: nachziehen, Worktrees, aufraeumen.
+"""Git-Arbeit des Debugger-Claw auf dem VM-Klon: nachziehen, Worktrees, Push-Inhalt, aufraeumen.
 
-Alle Aufrufe laufen ohne Shell. Git-Fehler tragen nur Unterbefehl und
-Rueckgabecode, nie stderr (darin koennen URLs mit Token stehen).
+Alle Aufrufe laufen ohne Shell und ohne Token. Klon und Worktrees gehoeren dem Helfer-Nutzer
+(`claw`); jeder Git-Aufruf darin laeuft mit dem modulweiten Praefix (`git_praefix_setzen`,
+im Container `setpriv --reuid=1000 ...`), damit Hooks, Filter oder Konfiguration, die der
+Helfer ins geteilte `.git` schreibt, nie mit Rechten des Waechters laufen. Mit GitHub spricht
+nur `spiegel.py`. Git-Fehler tragen nur Unterbefehl und Rueckgabecode, nie stderr.
 """
 from __future__ import annotations
 
@@ -16,6 +19,12 @@ TITEL_PRAEFIX = "[selbstbild] "
 MAX_KURZ = 30
 GIT_TIMEOUT_S = 300
 TIMEOUT_CODE = -1
+MAX_PUSH_INHALT = 5_000_000
+ZU_GROSS = "zu_gross"
+
+_ZWEIG = re.compile(r"debugger/[A-Za-z0-9][A-Za-z0-9._/-]*")
+_ENV_GESPERRT = ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GIT_ASKPASS")
+_praefix: tuple[str, ...] = ()
 
 
 class KonfliktFehler(Exception):
@@ -36,24 +45,51 @@ class WorktreeFehler(ValueError):
     """`wt` ist kein registrierter Worktree des Klons auf dem erwarteten Zweig."""
 
 
+class PushZuGross(Exception):
+    """Was ein Push hochlaedt, ist fuer die Schluessel-Pruefung zu gross (fail-closed, R23)."""
+
+    def __init__(self) -> None:
+        super().__init__(ZU_GROSS)
+
+
+def git_praefix_setzen(praefix: Sequence[str]) -> None:
+    """Setzt das argv-Praefix fuer alle Git-Aufrufe in Klon und Worktrees (einmal beim Start)."""
+    global _praefix
+    if isinstance(praefix, str) or not all(isinstance(x, str) for x in praefix):
+        raise TypeError("praefix muss eine Folge von Strings sein")
+    _praefix = tuple(praefix)
+
+
+def git_praefix() -> tuple[str, ...]:
+    """Das aktuelle argv-Praefix (Standard leer)."""
+    return _praefix
+
+
+def _env() -> dict[str, str]:
+    """Umgebung fuer Klon-Git: ohne Zugangsdaten, ohne Prompt, ohne Replace-Objekte."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("DEBUGGER_") and k not in _ENV_GESPERRT}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"  # der Waechter sieht immer die echten Objekte
+    return env
+
+
 def git_lauf(
     ort: Path, *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
-    """Fuehrt `git -C <ort> ...` aus, ohne Eingabe und ohne Passwort-Abfrage.
+    """Fuehrt `<praefix> git -C <ort> ...` aus, ohne Eingabe und ohne Passwort-Abfrage.
 
-    Zeitueberschreitung wird zu GitFehler(code=TIMEOUT_CODE); bei check=True
-    gibt es nur einen schlanken Fehler (nie stderr).
+    Ausgabe als UTF-8 (Ersatzzeichen bei Fehlern). Zeitueberschreitung wird zu
+    GitFehler(code=TIMEOUT_CODE); bei check=True gibt es nur einen schlanken Fehler (nie stderr).
     """
-    env = dict(os.environ)
-    env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         erg = subprocess.run(
-            ["git", "-C", str(ort), *args],
+            [*_praefix, "git", "-C", str(ort), *args],
             check=False,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             stdin=subprocess.DEVNULL,
-            env=env,
+            env=_env(),
             timeout=GIT_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
@@ -61,6 +97,24 @@ def git_lauf(
     if check and erg.returncode != 0:
         raise GitFehler(args[0] if args else "?", erg.returncode)
     return erg
+
+
+def git_roh(ort: Path, *args: str, eingabe: bytes) -> bytes:
+    """Wie `git_lauf`, aber mit Bytes auf stdin und rohen Bytes als Ergebnis (immer check)."""
+    try:
+        erg = subprocess.run(
+            [*_praefix, "git", "-C", str(ort), *args],
+            check=False,
+            capture_output=True,
+            input=eingabe,
+            env=_env(),
+            timeout=GIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        raise GitFehler(args[0] if args else "?", TIMEOUT_CODE) from None
+    if erg.returncode != 0:
+        raise GitFehler(args[0] if args else "?", erg.returncode)
+    return bytes(erg.stdout)
 
 
 def ist_vorfahr(ort: Path, alt: str, neu: str) -> bool:
@@ -91,8 +145,9 @@ def _ref_da(ort: Path, ref: str) -> bool:
     return git_lauf(ort, "rev-parse", "--verify", "-q", ref, check=False).returncode == 0
 
 
-def _debugger_zweig_pruefen(branch: str) -> None:
-    if not branch.startswith(PRAEFIX):
+def debugger_zweig_pruefen(branch: str) -> None:
+    """Nur `debugger/...` ohne `..`, Leer- oder Sonderzeichen (wie github.py); sonst `ValueError`."""
+    if not isinstance(branch, str) or not _ZWEIG.fullmatch(branch) or ".." in branch or branch.endswith("/"):
         raise ValueError("kein_debugger_zweig")
 
 
@@ -138,7 +193,7 @@ def worktree_bereit(
     Existiert er und gibt es `origin/<branch>`, wird per ff-only nachgezogen;
     laufen beide Seiten auseinander, folgt KonfliktFehler und nichts aendert sich.
     """
-    _debugger_zweig_pruefen(branch)
+    debugger_zweig_pruefen(branch)
     if wt_ordner.exists():
         _worktree_pruefen(repo_klon, wt_ordner, branch)
     git_lauf(repo_klon, "fetch", "--prune", "origin")
@@ -179,10 +234,64 @@ def voraus(wt: Path, branch: str, *, basis: str = "master") -> int:
 
 def aufraeumen(repo_klon: Path, wt: Path, branch: str) -> None:
     """Entfernt Worktree und lokalen Zweig des Helfers (nur `debugger/*`)."""
-    _debugger_zweig_pruefen(branch)
+    debugger_zweig_pruefen(branch)
     if wt.exists():
         _worktree_pruefen(repo_klon, wt, branch)
         git_lauf(repo_klon, "worktree", "remove", "--force", str(wt))
     git_lauf(repo_klon, "worktree", "prune")
     if _ref_da(repo_klon, f"refs/heads/{branch}"):
         git_lauf(repo_klon, "branch", "-D", branch)
+
+
+def betreffzeilen(wt: Path, gegen: str) -> list[str]:
+    """Betreffzeilen von `<gegen>..HEAD`, aelteste zuerst."""
+    aus = git_lauf(wt, "log", "--format=%s", f"{gegen}..HEAD").stdout
+    return [z for z in reversed(aus.splitlines()) if z.strip()]
+
+
+def push_inhalt(wt: Path, branch: str, basis: str) -> str:
+    """Prueftext fuer alles, was ein Push nach `branch` hochlaedt (R21, R23).
+
+    Volle Commit-Texte (`%B`, auch Merge-Commits) von `<gegen>..HEAD` plus die rohen Inhalte
+    aller neuen Blobs (`rev-list --objects` + `cat-file --batch`, also ohne Diff, Textconv oder
+    Attribute), als UTF-8 mit Ersatzzeichen. Gegenseite ist `origin/<branch>`, sonst
+    `origin/<basis>`. Mehr als `MAX_PUSH_INHALT` Bytes: `PushZuGross` (fail-closed).
+    """
+    da = git_lauf(wt, "rev-parse", "--verify", "-q", f"refs/remotes/origin/{branch}", check=False)
+    gegen = f"origin/{branch}" if da.returncode == 0 else f"origin/{basis}"
+    texte = git_lauf(wt, "log", "--format=%B", f"{gegen}..HEAD").stdout
+    gesamt = len(texte.encode("utf-8"))
+    if gesamt > MAX_PUSH_INHALT:
+        raise PushZuGross()
+    objekte = git_lauf(wt, "rev-list", "--objects", "--no-object-names", "HEAD", f"^{gegen}").stdout
+    ids = [z.strip() for z in objekte.splitlines() if z.strip()]
+    if not ids:
+        return texte
+    blobs: list[str] = []
+    pruefung = git_roh(wt, "cat-file", "--batch-check", eingabe="".join(f"{i}\n" for i in ids).encode())
+    for zeile in pruefung.splitlines():
+        teile = zeile.decode("ascii", errors="replace").split()
+        if len(teile) != 3 or not teile[2].isdigit():
+            raise GitFehler("cat-file", 1)
+        if teile[1] == "blob":
+            blobs.append(teile[0])
+            gesamt += int(teile[2])
+    if gesamt > MAX_PUSH_INHALT:
+        raise PushZuGross()
+    if not blobs:
+        return texte
+    roh = git_roh(wt, "cat-file", "--batch", eingabe="".join(f"{b}\n" for b in blobs).encode())
+    inhalte: list[str] = []
+    pos = 0
+    for _ in blobs:
+        ende = roh.find(b"\n", pos)
+        kopf = roh[pos:ende].split() if ende >= 0 else []
+        if len(kopf) != 3 or kopf[1] != b"blob" or not kopf[2].isdigit():
+            raise GitFehler("cat-file", 1)
+        start = ende + 1
+        stopp = start + int(kopf[2])
+        if stopp > len(roh):
+            raise GitFehler("cat-file", 1)
+        inhalte.append(roh[start:stopp].decode("utf-8", errors="replace"))
+        pos = stopp + 1
+    return "\n".join([texte, *inhalte])

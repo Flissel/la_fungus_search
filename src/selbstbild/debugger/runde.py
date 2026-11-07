@@ -6,9 +6,7 @@ speichern muss der Aufrufer.
 """
 from __future__ import annotations
 
-import os
 import re
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,14 +16,16 @@ from selbstbild.debugger.auftraege import Auftrag, Kommentar
 from selbstbild.debugger.budget import budget_buchen, budget_pruefen
 from selbstbild.debugger.helfer import HelferErgebnis, HelferFehler, prompt_bauen
 from selbstbild.debugger.klon import (
-    GIT_TIMEOUT_S,
     PRAEFIX as BRANCH_PRAEFIX,
-    TIMEOUT_CODE,
     TITEL_PRAEFIX,
+    ZU_GROSS,
     GitFehler,
     KonfliktFehler,
+    PushZuGross,
     WorktreeFehler,
+    betreffzeilen,
     branch_name,
+    push_inhalt,
     voraus,
     worktree_bereit,
 )
@@ -53,7 +53,6 @@ _REPO_MARKE = re.compile(r"<!--\s*selbstbild:repo\s*=\s*([^\s>][^>]*?)\s*-->")
 _SAMMEL_MARKE = re.compile(r"<!--\s*selbstbild:sammel\s*=\s*[a-z_]+:([^\s>][^>]*?)\s*-->")
 _TITEL_KLAMMER = re.compile(r"\(([^()]+)\)\s*$")
 _TITEL_STRICH = re.compile(r"\s–\s(\S+)\s*$")
-_PUSH_BRANCH = re.compile(r"debugger/[A-Za-z0-9][A-Za-z0-9._/-]*")
 
 
 @dataclass
@@ -101,67 +100,6 @@ def ziel_bestimmen(issue_text: str, issue_titel: str, konfig: DebuggerKonfig) ->
         if pfad_norm(ort) == pfad:
             return repo, False
     return konfig.issue_repo, True
-
-
-# ---------- Git ----------
-
-def push_standard(
-    wt: Path,
-    branch: str,
-    *,
-    askpass: Path | None = None,
-    laufzeit: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> None:
-    """`git push origin HEAD:refs/heads/<branch>` mit `GIT_ASKPASS` (Token nur in der Umgebung).
-
-    Nur Branches `debugger/...`. Ohne `askpass` gilt `DEBUGGER_ASKPASS`; fehlt beides,
-    `RuntimeError("kein_askpass")`. Fehler nennen nur Unterbefehl und Code.
-    """
-    if not _PUSH_BRANCH.fullmatch(branch) or ".." in branch or branch.endswith("/"):
-        raise ValueError("kein_debugger_zweig")
-    skript = str(askpass) if askpass is not None else os.environ.get("DEBUGGER_ASKPASS", "")
-    if not skript:
-        raise RuntimeError("kein_askpass")
-    env = dict(os.environ)
-    env.update({"GIT_ASKPASS": skript, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"})
-    argv = ["git", "-C", str(wt), "-c", "credential.helper=", "push", "origin", f"HEAD:refs/heads/{branch}"]
-    try:
-        erg = laufzeit(argv, check=False, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                       env=env, timeout=GIT_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
-        raise GitFehler("push", TIMEOUT_CODE) from None
-    if erg.returncode != 0:
-        raise GitFehler("push", erg.returncode)
-
-
-def _git_text(wt: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """`git -C <wt> ...` als UTF-8-Text (ohne Shell, mit Timeout, ohne Prompt, nie stderr im Fehler)."""
-    env = dict(os.environ)
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    try:
-        erg = subprocess.run(
-            ["git", "-C", str(wt), *args], check=False, capture_output=True,
-            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=env, timeout=GIT_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired:
-        raise GitFehler(args[0], TIMEOUT_CODE) from None
-    if check and erg.returncode != 0:
-        raise GitFehler(args[0], erg.returncode)
-    return erg
-
-
-def _betreffzeilen(wt: Path, gegen: str) -> list[str]:
-    """Betreffzeilen von `<gegen>..HEAD`, älteste zuerst."""
-    aus = _git_text(wt, "log", "--format=%s", f"{gegen}..HEAD").stdout
-    return [z for z in reversed(aus.splitlines()) if z.strip()]
-
-
-def push_inhalt(wt: Path, branch: str, basis: str) -> str:
-    """Volles `git log -p` (Nachrichten und Diffs) dessen, was ein Push nach `branch` hochlädt (R21)."""
-    remote = f"refs/remotes/origin/{branch}"
-    da = _git_text(wt, "rev-parse", "--verify", "-q", remote, check=False).returncode == 0
-    gegen = f"origin/{branch}" if da else f"origin/{basis}"
-    return _git_text(wt, "log", "-p", "--no-color", "--no-ext-diff", "--no-textconv", f"{gegen}..HEAD").stdout
 
 
 # ---------- Runde ----------
@@ -413,8 +351,11 @@ class _Lauf:
         basis = self.konfig.basis
         try:
             neu = voraus(wt, fund.branch, basis=basis)
-            betreffe = _betreffzeilen(wt, f"origin/{basis}")
+            betreffe = betreffzeilen(wt, f"origin/{basis}")
             inhalt = push_inhalt(wt, fund.branch, basis) if neu > 0 else ""
+        except PushZuGross:  # R23: fail-closed, kein Push
+            self.halten(ZU_GROSS)
+            return self.fertig(fund)
         except GitFehler:
             return self.fehlschlag(fund, "git")
         if neu == 0 and (fund.pr is not None or not betreffe):
@@ -427,7 +368,7 @@ class _Lauf:
         else:  # öffentlich (R19): nur Betreffzeilen und Bezug, kein Gespräch, Titel aus ältestem Commit
             koerper = f"{liste}\n\nBezug: {self.konfig.issue_repo}#{self.n}"
             pr_titel = _kappen(PRAEFIX + betreffe[0])
-        for t in (pr_titel, koerper, grund, inhalt):  # R21: auch volle Nachrichten und Diffs vor dem Push
+        for t in (pr_titel, koerper, grund, inhalt):  # R21/R23: auch Commit-Texte und rohe Blobs vor dem Push
             if (muster := pruefen(t)) is not None:
                 self.halten(muster)
                 return self.fertig(fund)

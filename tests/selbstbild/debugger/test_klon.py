@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+from typing import Any, Iterator
 
 import pytest
 
@@ -338,3 +340,70 @@ def test_git_timeout_wird_gitfehler(
     assert gesehen["timeout"] == modul.GIT_TIMEOUT_S
     env = gesehen["env"]
     assert isinstance(env, dict) and env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+# ---------- Präfix (Task 9a) ----------
+
+@pytest.fixture
+def ohne_praefix() -> Iterator[None]:
+    from selbstbild.debugger import klon as modul
+
+    alt = modul.git_praefix()
+    modul.git_praefix_setzen(())
+    yield
+    modul.git_praefix_setzen(alt)
+
+
+def test_git_praefix_wird_vorangestellt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ohne_praefix: None
+) -> None:
+    from selbstbild.debugger import klon as modul
+
+    aufrufe: list[dict[str, Any]] = []
+
+    def fake(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[Any]:
+        aufrufe.append({"argv": argv, **kw})
+        return subprocess.CompletedProcess(argv, 0, b"" if "input" in kw else "", "")
+
+    for k in ("DEBUGGER_GIT_TOKEN", "DEBUGGER_ASKPASS", "GH_TOKEN", "GITHUB_TOKEN", "GIT_ASKPASS"):
+        monkeypatch.setenv(k, "geheim")
+    monkeypatch.setattr(modul.subprocess, "run", fake)
+    assert modul.git_praefix() == ()
+    modul.git_lauf(tmp_path, "status")
+    assert aufrufe[-1]["argv"] == ["git", "-C", str(tmp_path), "status"]
+    praefix = ["setpriv", "--reuid=1000", "--regid=1000", "--init-groups", "--"]
+    modul.git_praefix_setzen(praefix)
+    praefix.append("veraendert")  # der Präfix ist eine Kopie
+    assert modul.git_praefix() == ("setpriv", "--reuid=1000", "--regid=1000", "--init-groups", "--")
+    modul.git_lauf(tmp_path, "status")
+    modul.git_roh(tmp_path, "cat-file", "--batch", eingabe=b"x\n")
+    for a in aufrufe[1:]:
+        assert a["argv"][:6] == [*modul.git_praefix(), "git"]
+        env = a["env"]
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        for k in ("DEBUGGER_GIT_TOKEN", "DEBUGGER_ASKPASS", "GH_TOKEN", "GITHUB_TOKEN", "GIT_ASKPASS"):
+            assert k not in env
+    assert aufrufe[-1]["input"] == b"x\n"
+    with pytest.raises(TypeError):
+        modul.git_praefix_setzen("setpriv --reuid=1000")
+
+
+def test_git_praefix_echter_umweg(umgebung: Umgebung, ohne_praefix: None) -> None:
+    """Ein echter Präfix (Python-Umweg statt setpriv) trägt alle Klon-Aufrufe."""
+    from selbstbild.debugger import klon as modul
+
+    _, klon, zweit = umgebung
+    marke = klon.parent / "umweg.log"
+    code = (
+        "import subprocess, sys\n"
+        f"open({str(marke)!r}, 'a').write(sys.argv[1] + chr(10))\n"
+        "sys.exit(subprocess.call(sys.argv[1:]))"
+    )
+    modul.git_praefix_setzen([sys.executable, "-c", code])
+    commit(zweit, "b.txt", "b\n")
+    git(zweit, "push", "-q", "origin", "master")
+    assert nachziehen(klon, "master", []) is None
+    wt = worktree_bereit(klon, klon.parent / "wt" / "x-1", "debugger/1-x", "master")
+    assert (wt / "b.txt").exists() and voraus(wt, "debugger/1-x") == 0
+    zeilen = marke.read_text(encoding="utf-8").splitlines()
+    assert len(zeilen) >= 6 and set(zeilen) == {"git"}
