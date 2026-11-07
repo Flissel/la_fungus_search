@@ -5,16 +5,17 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 import pytest
 
 from selbstbild.debugger import nachlauf as nachlauf_modul
+from selbstbild.debugger.auftraege import Auftrag, Kommentar
 from selbstbild.debugger.helfer import HelferErgebnis
 from selbstbild.debugger.klon import worktree_bereit
 from selbstbild.debugger.konfig import DebuggerKonfig
 from selbstbild.debugger.nachlauf import nachlauf
-from selbstbild.debugger.runde import Werkzeuge
+from selbstbild.debugger.runde import Werkzeuge, runde_ausfuehren
 from selbstbild.debugger.stand import DebuggerStand, FundStand
 from selbstbild.funde.github import GitHub, GitHubFehler
 
@@ -80,7 +81,7 @@ class FakeGitHub:
         return [a for a in self.aufrufe if a[0] == name]
 
     def schreibend(self) -> list[tuple[Any, ...]]:
-        return [a for a in self.aufrufe if a[0] not in ("pr_lesen", "prs_zum_kopf")]
+        return [a for a in self.aufrufe if a[0] not in ("pr_lesen", "prs_zum_kopf", "api")]
 
     def pr_lesen(self, repo: str, nummer: int) -> dict[str, Any]:
         self.aufrufe.append(("pr_lesen", repo, nummer))
@@ -107,6 +108,16 @@ class FakeGitHub:
     def kommentieren(self, repo: str, nummer: int, text: str) -> None:
         self.aufrufe.append(("kommentieren", repo, nummer, text))
 
+    # nur für eine Runde nach dem Nachlauf
+    def reagieren(self, repo: str, kommentar_id: int, *, review: bool = False) -> None:
+        self.aufrufe.append(("reagieren", repo, kommentar_id, review))
+
+    def _api(self, methode: str, pfad: str, daten: dict[str, Any] | None = None) -> Any:
+        self.aufrufe.append(("api", methode, pfad))
+        if pfad == f"/repos/{ISSUE_REPO}/issues/{N}":
+            return {"number": N, "title": "[selbstbild] Port falsch (vibemind/vibemind-os)", "body": "", "labels": []}
+        return []
+
 
 def _kein_helfer(*args: object) -> HelferErgebnis:
     raise AssertionError("der Nachlauf ruft keinen Helfer")
@@ -126,6 +137,7 @@ class Welt:
     lab: FakeGitHub
     lesen: FakeGitHub
     pushes: list[tuple[Path, str]] = field(default_factory=list)
+    helfer: Callable[..., HelferErgebnis] = _kein_helfer
 
     def push(self, wt: Path, branch: str) -> None:
         self.pushes.append((wt, branch))
@@ -134,7 +146,7 @@ class Welt:
     @property
     def w(self) -> Werkzeuge:
         return Werkzeuge(
-            gh_lab=cast(GitHub, self.lab), gh_lesen=cast(GitHub, self.lesen), helfer=_kein_helfer,
+            gh_lab=cast(GitHub, self.lab), gh_lesen=cast(GitHub, self.lesen), helfer=self.helfer,
             frei_gb=lambda: 8.0, uhr=lambda: datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc), push=self.push,
         )
 
@@ -145,13 +157,13 @@ class Welt:
     def os_klon(self) -> Path:
         return self.klon / "vibemind-os"
 
-    def wt(self, repo: str, n: int = N, zusatz: str = "") -> Path:
-        return self.ordner / "wt" / f"{repo.split('/')[1]}-{n}{zusatz}"
+    def wt(self, repo: str, branch: str) -> Path:
+        return self.ordner / "wt" / f"{repo.split('/')[1]}-{branch.removeprefix('debugger/')}"
 
     def fund_mit_branch(self, repo: str, branch: str, n: int = N, pr: int = 501) -> FundStand:
         """Legt Worktree und entfernten Branch an wie eine frühere Fix-Runde."""
         repo_klon = self.klon if repo == ISSUE_REPO else self.os_klon
-        wt = worktree_bereit(repo_klon, self.wt(repo, n), branch, "master")
+        wt = worktree_bereit(repo_klon, self.wt(repo, branch), branch, "master")
         commit(wt, f"fix-{n}.txt", "fix: etwas")
         git(wt, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
         fund = FundStand(repo=repo, branch=branch, sitzung="s-1", pr=pr, zustand="pr", versuche={"7": 1})
@@ -171,6 +183,19 @@ class Welt:
         sha = commit(self.os_arbeit, "merge.txt", "Merge pull request #77")
         git(self.os_arbeit, "push", "-q", "origin", "master")
         return sha
+
+    def aussen_pin(self, sha: str) -> None:
+        """Setzt den Gitlink auf dem äußeren master (wie ein anderer, schon gemergter Pin)."""
+        ort = self.tmp / "aussen-pin"
+        if not ort.exists():
+            _arbeit(self.tmp, ort.name, self.origin)
+        git(ort, "pull", "-q", "--ff-only", "origin", "master")
+        git(ort, "update-index", "--cacheinfo", f"160000,{sha},vibemind-os")
+        git(ort, "commit", "-q", "-m", f"pin {sha[:7]}")
+        git(ort, "push", "-q", "origin", "master")
+
+    def kommentare(self) -> list[str]:
+        return [a[3] for a in self.lab.namen("kommentieren")]
 
 
 @pytest.fixture
@@ -224,7 +249,7 @@ def test_gemergt_issue_repo_erledigt_und_raeumt_auf(welt: Welt) -> None:
     fund = welt.stand.funde[str(N)]
     assert (fund.repo, fund.branch, fund.pr, fund.zustand, fund.sitzung) == (
         ISSUE_REPO, AUSSEN_BRANCH, 501, "erledigt", "s-1")
-    assert not welt.wt(ISSUE_REPO).exists()
+    assert not welt.wt(ISSUE_REPO, AUSSEN_BRANCH).exists()
     assert not _zweig_da(welt.klon, AUSSEN_BRANCH)
     assert welt.lab.namen("branch_loeschen") == [("branch_loeschen", ISSUE_REPO, AUSSEN_BRANCH)]
     assert welt.lab.namen("pr_anlegen") == [] and welt.pushes == []
@@ -239,11 +264,11 @@ def test_gemergt_vibemind_os_hebt_pin(welt: Welt) -> None:
     alt = _gitlink(welt.origin, "master")
     zeilen = welt.lauf()
     # vibemind-os-Branch aufgeräumt (lokal und entfernt)
-    assert not welt.wt(OS_REPO).exists()
+    assert not welt.wt(OS_REPO, OS_BRANCH).exists()
     assert not _zweig_da(welt.os_klon, OS_BRANCH)
     assert welt.lab.namen("branch_loeschen") == [("branch_loeschen", OS_REPO, OS_BRANCH)]
     # Pin-Branch im äußeren Repo: neuer Gitlink = Merge-Commit, eine Commit-Zeile
-    pin_wt = welt.wt(ISSUE_REPO, zusatz="-pin")
+    pin_wt = welt.wt(ISSUE_REPO, PIN_BRANCH)
     assert welt.pushes == [(pin_wt, PIN_BRANCH)]
     assert _gitlink(welt.origin, PIN_BRANCH) == sha != alt
     assert _gitlink(welt.origin, "master") == alt
@@ -277,11 +302,14 @@ def test_pin_nur_wenn_commit_auf_master(welt: Welt, art: str) -> None:
         sha = "1234567" * 5 + "89abc"
     welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
     vorher = FundStand(**vars(welt.stand.funde[str(N)]))
-    zeilen = welt.lauf()
-    assert welt.stand.funde[str(N)] == vorher
+    grund = "nicht_auf_basis" if art == "seitenzweig" else "kein_commit"
+    for _ in range(2):  # R26: wird jedes Mal erneut versucht, aber nur ein Kommentar
+        assert welt.lauf() == [f"#{N}: Pin wartet ({grund})"]
+        assert welt.stand.funde[str(N)] == vorher
+        assert not welt.wt(ISSUE_REPO, PIN_BRANCH).exists() and not _zweig_da(welt.klon, PIN_BRANCH)
+    assert welt.kommentare() == [f"{PRAEFIX}Pin für vibemind-os wartet ({grund})."]
     assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
     assert not _zweig_da(welt.origin, PIN_BRANCH)
-    assert zeilen == [f"#{N}: Pin-Prüfung fehlgeschlagen ({'nicht_auf_basis' if art == 'seitenzweig' else 'kein_commit'})"]
 
 
 def test_geschlossen_ohne_merge_raeumt_auf(welt: Welt) -> None:
@@ -291,7 +319,7 @@ def test_geschlossen_ohne_merge_raeumt_auf(welt: Welt) -> None:
     fund = welt.stand.funde[str(N)]
     assert (fund.repo, fund.branch, fund.pr, fund.zustand, fund.sitzung, fund.versuche) == (
         OS_REPO, OS_BRANCH, None, "offen", "s-1", {"7": 1})
-    assert not welt.wt(OS_REPO).exists()
+    assert not welt.wt(OS_REPO, OS_BRANCH).exists()
     assert not _zweig_da(welt.os_klon, OS_BRANCH)
     assert welt.lab.namen("branch_loeschen") == [("branch_loeschen", OS_REPO, OS_BRANCH)]
     assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
@@ -310,7 +338,7 @@ def test_fremder_branch_bleibt(welt: Welt) -> None:
     welt.pr(ISSUE_REPO, 700, merged=False, state="closed")
     zeilen = welt.lauf()
     assert welt.lab.namen("branch_loeschen") == [("branch_loeschen", ISSUE_REPO, AUSSEN_BRANCH)]
-    assert welt.wt(ISSUE_REPO, 999).exists() and _zweig_da(welt.klon, fremd.branch)
+    assert welt.wt(ISSUE_REPO, "debugger/999-fremd").exists() and _zweig_da(welt.klon, fremd.branch)
     assert _zweig_da(welt.klon, "feature/x") and _zweig_da(welt.klon, "master")
     assert welt.stand.funde["400"] == FundStand(repo=ISSUE_REPO, branch="feature/x", pr=700, zustand="pr")
     assert zeilen == [f"#{N}: erledigt ({ISSUE_REPO}#501 gemergt)", "#400: fehler ValueError"]
@@ -326,7 +354,7 @@ def test_offener_pr_nichts(welt: Welt) -> None:
     assert welt.lauf() == []
     assert welt.lab.aufrufe == []
     assert [a[1:] for a in welt.lesen.aufrufe] == [(ISSUE_REPO, 501)]
-    assert welt.wt(ISSUE_REPO).exists() and welt.stand.funde[str(N)].zustand == "pr"
+    assert welt.wt(ISSUE_REPO, AUSSEN_BRANCH).exists() and welt.stand.funde[str(N)].zustand == "pr"
 
 
 def test_fehler_bei_einem_fund_stoppt_andere_nicht(welt: Welt) -> None:
@@ -383,7 +411,7 @@ def test_pin_pr_gemergt_raeumt_pin_auf(welt: Welt) -> None:
     welt.lauf()
     welt.pr(ISSUE_REPO, 412, merged=True, state="closed", sha="f" * 40)
     assert welt.lauf() == [f"#{N}: erledigt ({ISSUE_REPO}#412 gemergt)"]
-    assert not welt.wt(ISSUE_REPO, zusatz="-pin").exists()
+    assert not welt.wt(ISSUE_REPO, PIN_BRANCH).exists()
     assert not _zweig_da(welt.klon, PIN_BRANCH)
     assert welt.lab.namen("branch_loeschen")[-1] == ("branch_loeschen", ISSUE_REPO, PIN_BRANCH)
     assert welt.stand.funde[str(N)].zustand == "erledigt"
@@ -405,12 +433,91 @@ def test_pin_schluessel_verdacht_haelt_zurueck(welt: Welt, monkeypatch: pytest.M
     assert len(welt.lab.namen("kommentieren")) == 1
 
 
+ENTHALTEN = f"{PRAEFIX}Der Fix aus {OS_REPO}#77 ist in Vibemind_V1 schon enthalten."
+
+
+def _schon_enthalten_pruefen(welt: Welt) -> None:
+    assert welt.lauf() == [f"#{N}: Fix schon in Vibemind_V1 enthalten, erledigt"]
+    assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
+    assert not _zweig_da(welt.origin, PIN_BRANCH)
+    fund = welt.stand.funde[str(N)]
+    assert (fund.repo, fund.branch, fund.pr, fund.zustand) == (OS_REPO, OS_BRANCH, 77, "erledigt")
+    assert not welt.wt(ISSUE_REPO, PIN_BRANCH).exists() and not _zweig_da(welt.klon, PIN_BRANCH)
+    assert welt.lab.namen("branch_loeschen") == [
+        ("branch_loeschen", OS_REPO, OS_BRANCH), ("branch_loeschen", ISSUE_REPO, PIN_BRANCH)]
+    assert welt.kommentare() == [ENTHALTEN]
+    assert welt.lauf() == []  # erledigt: kein weiterer Durchgang
+
+
 def test_pin_schon_auf_basis(welt: Welt) -> None:
     welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
     sha = git(welt.os_origin, "rev-parse", "master")  # schon im äußeren master gepinnt
     welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
     assert _gitlink(welt.origin, "master") == sha
-    assert welt.lauf() == [f"#{N}: Pin schon auf master"]
+    _schon_enthalten_pruefen(welt)
+
+
+# ---------- Fix-Runde 1 ----------
+
+def test_neuerer_pin_auf_basis_kein_rueckschritt(welt: Welt) -> None:
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    x = welt.os_merge()
+    y = commit(welt.os_arbeit, "spaeter.txt")
+    git(welt.os_arbeit, "push", "-q", "origin", "master")
+    welt.aussen_pin(y)  # äußerer master pinnt schon y, das x enthält
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=x)
+    _schon_enthalten_pruefen(welt)
+    assert _gitlink(welt.origin, "master") == y
+
+
+def test_pin_auseinander_nicht_linear(welt: Welt) -> None:
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    x = welt.os_merge()
+    git(welt.os_arbeit, "checkout", "-q", "-b", "seite", "HEAD~1")
+    z = commit(welt.os_arbeit, "seite.txt")
+    git(welt.os_arbeit, "push", "-q", "origin", "seite")
+    welt.aussen_pin(z)  # weder enthält x z noch z x
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=x)
+    vorher = FundStand(**vars(welt.stand.funde[str(N)]))
+    for _ in range(2):
+        assert welt.lauf() == [f"#{N}: Pin wartet (nicht_linear)"]
+    assert welt.stand.funde[str(N)] == vorher
+    assert welt.kommentare() == [f"{PRAEFIX}Pin für vibemind-os wartet (nicht_linear)."]
     assert welt.pushes == [] and welt.lab.namen("pr_anlegen") == []
-    assert welt.stand.funde[str(N)].zustand == "erledigt"
-    assert not welt.wt(ISSUE_REPO, zusatz="-pin").exists()
+    assert not _zweig_da(welt.origin, PIN_BRANCH) and not welt.wt(ISSUE_REPO, PIN_BRANCH).exists()
+    assert _gitlink(welt.origin, "master") == z
+
+
+def test_pin_pr_geschlossen_ohne_merge_erledigt(welt: Welt) -> None:
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    sha = welt.os_merge()
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
+    welt.lauf()
+    welt.pr(ISSUE_REPO, 412, merged=False, state="closed")
+    assert welt.lauf() == [f"#{N}: Pin-PR {ISSUE_REPO}#412 ohne Merge geschlossen, erledigt"]
+    fund = welt.stand.funde[str(N)]
+    assert (fund.repo, fund.branch, fund.pr, fund.zustand) == (ISSUE_REPO, PIN_BRANCH, 412, "erledigt")
+    assert not welt.wt(ISSUE_REPO, PIN_BRANCH).exists() and not _zweig_da(welt.klon, PIN_BRANCH)
+    assert welt.lab.namen("branch_loeschen")[-1] == ("branch_loeschen", ISSUE_REPO, PIN_BRANCH)
+    assert welt.lauf() == []
+
+
+def test_runde_nutzt_pin_worktree_des_nachlaufs(welt: Welt) -> None:
+    welt.fund_mit_branch(OS_REPO, OS_BRANCH, pr=77)
+    sha = welt.os_merge()
+    welt.pr(OS_REPO, 77, merged=True, state="closed", sha=sha)
+    welt.lauf()
+    pin_wt = welt.wt(ISSUE_REPO, PIN_BRANCH)
+    assert pin_wt.exists()
+    gesehen: list[Path] = []
+
+    def helfer(wt: Path, prompt: str, sitzung: str | None, frist_s: float) -> HelferErgebnis:
+        gesehen.append(wt)
+        return HelferErgebnis("s-2", "Antwort zum Pin.", "antwort", None)
+
+    welt.helfer = helfer
+    k = Kommentar(id=9, repo=ISSUE_REPO, nummer=412, autor="Flissel", text="passt das?",
+                  erstellt="2026-11-07T11:50:00Z", review=False)
+    assert runde_ausfuehren(Auftrag(N, (k,)), welt.konfig, welt.stand, welt.klon, welt.ordner, welt.w) == "ok"
+    assert gesehen == [pin_wt]
+    assert welt.lab.namen("kommentieren")[-1] == ("kommentieren", ISSUE_REPO, 412, PRAEFIX + "Antwort zum Pin.")

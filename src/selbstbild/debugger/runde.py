@@ -19,6 +19,7 @@ from selbstbild.debugger.budget import budget_buchen, budget_pruefen
 from selbstbild.debugger.helfer import HelferErgebnis, HelferFehler, prompt_bauen
 from selbstbild.debugger.klon import (
     GIT_TIMEOUT_S,
+    PRAEFIX as BRANCH_PRAEFIX,
     TIMEOUT_CODE,
     TITEL_PRAEFIX,
     GitFehler,
@@ -176,9 +177,13 @@ def repo_klon_pfad(konfig: DebuggerKonfig, klon: Path, repo: str) -> Path:
     return klon if ort == "." else klon / ort
 
 
-def wt_pfad(ordner: Path, repo: str, issue: int, zusatz: str = "") -> Path:
-    """Worktree eines Fundes außerhalb des Klons (R6): `ordner/wt/<repo_name>-<issue><zusatz>`."""
-    return ordner / "wt" / f"{repo.split('/')[1]}-{issue}{zusatz}"
+def wt_pfad(ordner: Path, repo: str, branch: str) -> Path:
+    """Worktree eines Branches außerhalb des Klons (R6): `ordner/wt/<repo_name>-<branch ohne debugger/>`.
+
+    Einzige Pfadregel für Runde und Nachlauf; Zeichen außerhalb `[A-Za-z0-9-]` werden zu `-`.
+    """
+    kurz = re.sub(r"[^A-Za-z0-9-]", "-", branch.removeprefix(BRANCH_PRAEFIX)) or "fund"
+    return ordner / "wt" / f"{repo.split('/')[1]}-{kurz}"
 
 
 def pr_finden_oder_anlegen(w: Werkzeuge, repo: str, kopf: str, basis: str, titel: str, koerper: str) -> int:
@@ -340,7 +345,7 @@ class _Lauf:
             self.melden(f"{PRAEFIX}Das Repo {fund.repo} ist nicht freigegeben, ich bearbeite den Auftrag nicht.")
             return self.fertig(fund, "abgelehnt:repo")
         repo_klon = repo_klon_pfad(self.konfig, self.klon, fund.repo)
-        wt = wt_pfad(self.ordner, fund.repo, self.n)
+        wt = wt_pfad(self.ordner, fund.repo, fund.branch)
         try:
             worktree_bereit(repo_klon, wt, fund.branch, self.konfig.basis)
         except KonfliktFehler:

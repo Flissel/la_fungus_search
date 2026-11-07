@@ -202,7 +202,7 @@ class Welt:
 
     @property
     def wt(self) -> Path:
-        return self.ordner / "wt" / f"Vibemind_V1-{N}"
+        return self.ordner / "wt" / f"Vibemind_V1-{BRANCH.removeprefix('debugger/')}"
 
     def budget_zeilen(self) -> int:
         dateien = list(self.ordner.glob("budget-*.jsonl"))
@@ -281,8 +281,8 @@ def test_fix_oeffentlich_ohne_gespraech(welt: Welt) -> None:
                text="<!-- selbstbild:repo=vibemind/vibemind-os -->\n\nISSUE_TEXT_DETAIL")
     welt.helfer.schritte = [fix("c.txt", "fix: Port aus Konfig lesen", text="HELFER_TEXT")]
     assert welt.runde(kom(1, "AUFTRAG_DETAIL bitte fixen")) == "ok"
-    wt_os = welt.ordner / "wt" / f"vibemind-os-{N}"
     branch = branch_name(N, "[selbstbild] Doku-Widerspruch: Port falsch (vibemind/vibemind-os)")
+    wt_os = welt.ordner / "wt" / f"vibemind-os-{branch.removeprefix('debugger/')}"
     assert welt.pushes == [(wt_os, branch)]
     assert git(welt.os_origin, "log", "--format=%s", "-1", branch) == "fix: Port aus Konfig lesen"
     (pr,) = welt.lab.namen("pr_anlegen")
@@ -502,7 +502,7 @@ def test_bestehender_fundstand_gewinnt(welt: Welt) -> None:
     welt.stand.funde[str(N)] = FundStand(repo=OS_REPO, branch=BRANCH)
     welt.helfer.schritte = [antwort("ok")]
     assert welt.runde(kom(1)) == "ok"
-    assert welt.helfer.aufrufe[0]["wt"] == welt.ordner / "wt" / f"vibemind-os-{N}"
+    assert welt.helfer.aufrufe[0]["wt"] == welt.ordner / "wt" / f"vibemind-os-{BRANCH.removeprefix('debugger/')}"
 
 
 # ---------- Fix-Runde 1 ----------
