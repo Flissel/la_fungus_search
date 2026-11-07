@@ -245,7 +245,7 @@ class _Nachlauf:
             raise ValueError("gitlink_falsch")
         # (5) Schlüssel-Prüfung wie in der Runde
         titel = f"{PRAEFIX}vibemind-os auf {sha7} (#{n})"
-        koerper = f"Fixes #{n}\n\n- Pin vibemind-os auf {sha} (gemergt in {fund.repo}#{os_pr})"
+        koerper = f"{PRAEFIX}Fixes #{n}\n\n- Pin vibemind-os auf {sha} (gemergt in {fund.repo}#{os_pr})"
         neu = voraus(wt, branch, basis=basis)
         try:
             texte = (titel, koerper, push_inhalt(wt, branch, basis) if neu > 0 else "")
@@ -266,7 +266,8 @@ class _Nachlauf:
                 self.warten(n, "push")
                 return
         nummer = pr_finden_oder_anlegen(self.w, issue_repo, branch, basis, titel, koerper)
-        self.stand.funde[str(n)] = FundStand(repo=issue_repo, branch=branch, sitzung=fund.sitzung, pr=nummer,
+        # Punkt 4: die Sitzung gehörte zum Worktree des Fixes, nicht zum Pin-Worktree
+        self.stand.funde[str(n)] = FundStand(repo=issue_repo, branch=branch, sitzung=None, pr=nummer,
                                              zustand="pr", versuche=fund.versuche)
         self.zeilen.append(f"#{n}: Pin-PR #{nummer} geöffnet")
 

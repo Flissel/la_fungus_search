@@ -284,11 +284,11 @@ def test_gemergt_vibemind_os_hebt_pin(welt: Welt) -> None:
     assert welt.lab.namen("pr_anlegen") == [(
         "pr_anlegen", ISSUE_REPO, PIN_BRANCH, "master",
         f"{PRAEFIX}vibemind-os auf {sha[:7]} (#{N})",
-        f"Fixes #{N}\n\n- Pin vibemind-os auf {sha} (gemergt in {OS_REPO}#77)",
+        f"{PRAEFIX}Fixes #{N}\n\n- Pin vibemind-os auf {sha} (gemergt in {OS_REPO}#77)",
     )]
     fund = welt.stand.funde[str(N)]
     assert (fund.repo, fund.branch, fund.pr, fund.zustand, fund.sitzung, fund.versuche) == (
-        ISSUE_REPO, PIN_BRANCH, 412, "pr", "s-1", {"7": 1})
+        ISSUE_REPO, PIN_BRANCH, 412, "pr", None, {"7": 1})  # Punkt 4: keine Sitzung im Pin-Worktree
     assert zeilen == [f"#{N}: Pin-PR #412 geöffnet"]
     assert welt.lab.namen("kommentieren") == []
     # zweiter Durchgang: Pin-PR offen, nichts passiert

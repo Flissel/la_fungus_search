@@ -1,9 +1,10 @@
 """Wächter des Debugger-Claw: ein Durchgang, die Schleife und die CLI `python -m selbstbild debugger`.
 
 Ein Durchgang: Sperre -> Stand -> (erster Start) -> Spiegel holen -> Klon nachziehen -> Kommentare
-lesen -> höchstens eine Runde -> Helfer-Prozesse beenden -> Nachlauf -> Lesemarke `seit` -> Stand
-speichern -> Prozesse des Helfer-Nutzers beenden. Der Token liegt nur in der Datei aus `DEBUGGER_TOKEN_DATEI`; der Wächter
-legt ihn nie in seine eigene Umgebung. Ausnahmen kommen nur mit ihrem Typ ins Log.
+lesen -> höchstens eine Runde (der erste Kandidat ohne Pause und ohne Tagessperre) -> Helfer-Prozesse
+beenden -> Nachlauf (auch nach einer Ausnahme der Runde) -> Lesemarke `seit` -> Stand speichern ->
+Prozesse des Helfer-Nutzers beenden. Der Token liegt nur in der Datei aus `DEBUGGER_TOKEN_DATEI`;
+der Wächter legt ihn nie in seine eigene Umgebung. Ausnahmen kommen nur mit ihrem Typ ins Log.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ from selbstbild.debugger.nachlauf import nachlauf
 from selbstbild.debugger.runde import Werkzeuge, pfad_norm, runde_ausfuehren, wt_pfad
 from selbstbild.debugger.spiegel import spiegel_bereit, spiegel_holen, spiegel_pfad, spiegel_push
 from selbstbild.debugger.stand import DebuggerStand, stand_laden, stand_speichern
+from selbstbild.debugger.versuche import gh_fehler_merken, gh_fehler_vergessen, gh_gesperrt, pausiert
 from selbstbild.funde.github import DEBUGGER_MARKE, GitHub, GitHubFehler
 from selbstbild.sperre import SperreBelegt, sperre
 
@@ -113,6 +115,31 @@ class TokenDateiFehlt(RuntimeError):
     """`DEBUGGER_TOKEN_DATEI` ist nicht gesetzt (Startfehler)."""
 
 
+class RootOhnePraefix(RuntimeError):
+    """Punkt 3: Der Wächter läuft als root, aber `DEBUGGER_PRAEFIX` ist leer (Helfer liefe als root)."""
+
+
+class AskpassFehlt(RuntimeError):
+    """Punkt 3: `DEBUGGER_ASKPASS` fehlt oder ist keine ausführbare Datei (`kein_askpass`)."""
+
+    def __init__(self) -> None:
+        super().__init__("kein_askpass")
+
+
+def _ist_root(name: str | None = None, geteuid: Callable[[], int] | None = None) -> bool:
+    """POSIX mit effektiver uid 0; unter Windows nie. Parameter nur für Tests."""
+    if (name or os.name) == "nt":
+        return False
+    euid = geteuid or getattr(os, "geteuid", None)
+    return euid is not None and euid() == 0
+
+
+def _askpass_pruefen() -> None:
+    roh = os.environ.get("DEBUGGER_ASKPASS", "").strip()
+    if not roh or not os.path.isfile(roh) or not os.access(roh, os.X_OK):
+        raise AskpassFehlt()
+
+
 class _Durchgang:
     """Ein Durchgang unter der Sperre; `lauf` speichert den Stand, sobald er geladen ist."""
 
@@ -174,18 +201,41 @@ class _Durchgang:
         issues = {i["number"] for i in w.gh_lesen.issues(k.issue_repo)
                   if isinstance(i.get("number"), int) and not isinstance(i.get("number"), bool)}
         pr_zu_issue = {(f.repo, f.pr): int(n) for n, f in stand.funde.items() if f.pr is not None and n.isdigit()}
-        # R4: alle Kandidaten (keine laufende Runde); ausgeführt wird nur der erste Auftrag
+        # R4: alle Kandidaten (keine laufende Runde); ausgeführt wird nur der erste, der nicht wartet
         kandidaten = auftraege_bilden(kommentare, stand, k, selbstbild_issues=issues, pr_zu_issue=pr_zu_issue,
                                       laufend=set())
-        if kandidaten:
-            erster = kandidaten[0]
-            ergebnis = runde_ausfuehren(erster, k, stand, self.klon, self.ordner, w)
-            LOG.info("Runde #%d: %s", erster.issue, ergebnis)
-        w.claw_aufraeumen()  # R44: vor dem Nachlauf läuft nichts mehr als claw
-        for zeile in nachlauf(k, stand, self.klon, self.ordner, w):
-            LOG.info("Nachlauf %s", zeile)
-        stand.seit = _iso(self.neue_marke(stand, beginn, kandidaten))
+        jetzt = w.uhr()
+        bereit = [a for a in kandidaten if not pausiert(stand.funde.get(str(a.issue)), jetzt)  # R42
+                  and not gh_gesperrt(stand, a.issue, jetzt)]  # Punkt 1
+        fehler = self.runde(bereit[0], stand) if bereit else None
+        try:  # Punkt 1: der Nachlauf läuft auch nach einer Ausnahme der Runde
+            w.claw_aufraeumen()  # R44: vor dem Nachlauf läuft nichts mehr als claw
+            for zeile in nachlauf(k, stand, self.klon, self.ordner, w):
+                LOG.info("Nachlauf %s", zeile)
+        except Exception as e:
+            LOG.error("Nachlauf abgebrochen (%s)", type(e).__name__)
+            fehler = fehler or e
+        if fehler is not None:
+            raise fehler
+        stand.seit = _iso(self.neue_marke(stand, beginn, kandidaten))  # auch übersprungene halten `seit`
         return 0
+
+    def runde(self, auftrag: Auftrag, stand: DebuggerStand) -> Exception | None:
+        """Eine Runde; ihre Ausnahme kommt zurück statt hoch, damit der Nachlauf trotzdem läuft.
+
+        Ein ungezählter `GitHubFehler` wird je Issue und Tag gezählt (Punkt 1), Erfolg löscht den Zähler.
+        """
+        try:
+            ergebnis = runde_ausfuehren(auftrag, self.konfig, stand, self.klon, self.ordner, self.w)
+        except GitHubFehler as e:
+            gh_fehler_merken(stand, auftrag.issue, self.w.uhr())
+            return e
+        except Exception as e:
+            LOG.error("Runde #%d abgebrochen (%s)", auftrag.issue, type(e).__name__)
+            return e
+        gh_fehler_vergessen(stand, auftrag.issue)
+        LOG.info("Runde #%d: %s", auftrag.issue, ergebnis)
+        return None
 
     def klon_melden(self, stand: DebuggerStand, grund: str | None) -> bool:
         """Nachziehen-Grund je Grund einmal ins Log und nach `gemeldet`; ist er weg, der Eintrag auch."""
@@ -277,12 +327,18 @@ def werkzeuge_standard(konfig: DebuggerKonfig, ordner: Path, spiegel_ordner: Pat
     `push` findet das Repo zum Worktree über dieselbe Pfadregel wie Runde und Nachlauf (`wt_pfad`)
     und pusht über den Spiegel (Pin-Push mit `nur_gitlink`, R39); `holen` legt je Repo den Spiegel
     an und holt ihn von GitHub; `claw_aufraeumen` ist `claw_prozesse_beenden` (R44).
+
+    Start fail-closed (Punkt 3): ohne Token-Datei `TokenDateiFehlt`, ohne ausführbares
+    `DEBUGGER_ASKPASS` `AskpassFehlt`, als root ohne `DEBUGGER_PRAEFIX` `RootOhnePraefix`.
     """
     roh = os.environ.get("DEBUGGER_TOKEN_DATEI", "").strip()
     if not roh:
         raise TokenDateiFehlt()
     token_datei = Path(roh)
+    _askpass_pruefen()
     praefix = tuple(os.environ.get("DEBUGGER_PRAEFIX", "").split())
+    if not praefix and _ist_root():
+        raise RootOhnePraefix()
     git_praefix_setzen(praefix)
     repos = tuple(konfig.repos)
 

@@ -303,6 +303,15 @@ class GitHub:
         self._api("POST", f"/repos/{_repo(repo)}/issues/{_nummer(nummer)}/labels",
                   {"labels": [_label(x) for x in labels]})
 
+    def label_entfernen(self, repo: str, nummer: int, name: str) -> None:
+        """Nimmt ein Label von einem Issue/PR; ein 404 (Label nicht dran) zaehlt als erledigt."""
+        pfad = f"/repos/{_repo(repo)}/issues/{_nummer(nummer)}/labels/{quote(_label(name), safe='')}"
+        try:
+            self._api("DELETE", pfad)
+        except GitHubFehler as f:
+            if f.art != "http_404":
+                raise
+
     def pr_anlegen(self, repo: str, kopf: str, basis: str, titel: str, text: str) -> int:
         """Legt einen PR an. Nur fuer Branches `debugger/...`; der Text traegt `self.marke`."""
         r, k = _repo(repo), _debugger_branch(kopf)

@@ -11,9 +11,10 @@ services:
     restart: unless-stopped
     mem_limit: 3g
     pids_limit: 512
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
     environment:
       DEBUGGER_TOKEN_DATEI: /run/secrets/lab_token
-      DEBUGGER_PRAEFIX: "setpriv --reuid=1000 --regid=1000 --init-groups -- env HOME=/home/claw"
+      DEBUGGER_PRAEFIX: "setpriv --reuid=1000 --regid=1000 --init-groups --no-new-privs -- env HOME=/home/claw"
       DEBUGGER_CLAW_UID: "1000"
       CLAUDE_CONFIG_DIR: /home/claw/.claude
       GIT_AUTHOR_NAME: Vibemind-LAB

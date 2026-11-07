@@ -358,6 +358,10 @@ def token_umgebung(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     datei = tmp_path / "lab_token"
     datei.write_text(TOKEN + "\n", encoding="utf-8")
     monkeypatch.setenv("DEBUGGER_TOKEN_DATEI", str(datei))
+    askpass = tmp_path / "askpass.sh"  # Punkt 3: ohne ausführbares Askpass kein Start
+    askpass.write_text("#!/bin/sh\n", encoding="utf-8")
+    askpass.chmod(0o755)
+    monkeypatch.setenv("DEBUGGER_ASKPASS", str(askpass))
     monkeypatch.setattr(klon_modul, "_praefix", ())
     return datei
 

@@ -163,3 +163,23 @@ def test_branch_loeschen_anderer_fehler_bleibt() -> None:
     with pytest.raises(GitHubFehler) as e:
         gh.branch_loeschen("o/r", "debugger/315-x")
     assert e.value.art == "http_403" and "geheim" not in str(e.value)
+
+
+# ---------- Final-Fix Punkt 7 ----------
+
+def test_label_entfernen() -> None:
+    gh, fake = _gh(lambda m, p, d: "[]")
+    gh.label_entfernen("o/r", 5, "antwort:weg")
+    assert fake.aufrufe == [("DELETE", "/repos/o/r/issues/5/labels/antwort%3Aweg", None)]
+
+
+def test_label_entfernen_404_ok_anderer_fehler_bleibt() -> None:
+    gh, fake = _gh(lambda m, p, d: b"gh: Label does not exist (HTTP 404)")
+    gh.label_entfernen("o/r", 5, "antwort:weg")  # kein Fehler
+    assert len(fake.aufrufe) == 1
+    gh, _ = _gh(lambda m, p, d: b"gh: Forbidden (HTTP 403) geheim")
+    with pytest.raises(GitHubFehler) as e:
+        gh.label_entfernen("o/r", 5, "antwort:weg")
+    assert e.value.art == "http_403" and "geheim" not in str(e.value)
+    with pytest.raises(GitHubFehler):
+        gh.label_entfernen("o/r", 5, "")

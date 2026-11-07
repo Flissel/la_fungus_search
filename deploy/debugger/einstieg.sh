@@ -4,6 +4,10 @@
 set -eu
 umask 022
 
+# Der Wächter startet den Helfer und alle claw-Prozesse mit dem Präfix aus compose.yml:
+# `setpriv --reuid=1000 --regid=1000 --init-groups --no-new-privs -- env HOME=/home/claw`
+# (`--no-new-privs`: kein Rechtegewinn über setuid-Programme).
+#
 # R35: Die Token-Datei muss da sein, und claw darf sie nicht lesen können (fail-closed). Unter
 # rootful Docker behält ein Secret aus `secrets: file:` den Host-Besitzer, oft uid 1000 = claw.
 TOKEN_DATEI="${DEBUGGER_TOKEN_DATEI:-/run/secrets/lab_token}"

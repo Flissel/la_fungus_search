@@ -31,6 +31,7 @@ from selbstbild.debugger.klon import (
 from selbstbild.debugger.konfig import DebuggerKonfig
 from selbstbild.debugger.spiegel import ZurueckgehaltenFehler, ist_pin_branch
 from selbstbild.debugger.stand import DebuggerStand, FundStand
+from selbstbild.debugger.versuche import MAX_VERSUCHE, einmal_reagieren, reagiert_aufraeumen, versuch_zaehlen
 from selbstbild.debugger.ziel import fund_neu, pfad_norm, repo_klon_pfad, wt_pfad, ziel_bestimmen
 from selbstbild.funde.github import GitHub, GitHubFehler
 from selbstbild.funde.text import pruefen
@@ -47,13 +48,14 @@ MAX_SEITEN = 10
 SEITE = 100
 RUECKFRAGE_LABEL = "selbstbild:rueckfrage"
 MAX_DIFF = 60_000
-MAX_VERSUCHE = 3
 MAX_GEMELDET = 200
 NUR_EINORDNEN_TEXT = PRAEFIX + "Fixes in diesem Repo sind nicht freigegeben, ich kann nur einordnen."
 HINWEIS_OEFFENTLICH = (
     "Dieses Repo ist öffentlich. Commit-Texte beschreiben nur die Code-Änderung, ohne Inhalte aus dem Issue."
 )
 HINWEIS_NUR_EINORDNEN = "Fixes in diesem Repo sind nicht freigegeben. Ändere keine Dateien, ordne nur ein."
+HINWEIS_FEST = ("Arbeite nur in diesem Worktree und seinem Branch. Keine Einträge in WORKBOARD.md, keine Commits "
+                "auf master, kein Push.")  # Punkt 10: immer, als erster Hinweis
 PIN_TEXT = PRAEFIX + ("Der Pin-PR enthält nur die Submodul-Aktualisierung. Für einen weiteren Fix bitte nach dem "
                       "Merge kommentieren.")
 
@@ -167,19 +169,16 @@ class _Lauf:
         if fund is not None:
             for i in self.ids:
                 fund.versuche.pop(str(i), None)
+            fund.naechster_versuch = None  # R42: Erfolg hebt die Pause auf
         if ergebnis == "ok" and self.zurueckgehalten:
             return "abgelehnt:schluessel"
         return ergebnis
 
     def fehlschlag(self, fund: FundStand, art: str) -> str:
-        """Zählt einen Versuch je Kommentar; ab 3 Versuchen gilt ein Kommentar als verarbeitet."""
-        for i in self.ids:
-            fund.versuche[str(i)] = fund.versuche.get(str(i), 0) + 1
-        aufgegeben = [i for i in self.ids if fund.versuche[str(i)] >= MAX_VERSUCHE]
+        """Zählt einen Versuch je Kommentar (mit Pause, R42); ab 3 Versuchen gilt ein Kommentar als verarbeitet."""
+        aufgegeben = versuch_zaehlen(fund, self.ids, self.w.uhr())
         if aufgegeben:
             self.stand.verarbeitet_hinzu(aufgegeben)
-            for i in aufgegeben:
-                fund.versuche.pop(str(i), None)
             text = f"{PRAEFIX}Aufgegeben nach {MAX_VERSUCHE} Versuchen ({art})."
         else:
             text = f"{PRAEFIX}Runde fehlgeschlagen ({art}), ich versuche es erneut."
@@ -276,48 +275,66 @@ class _Lauf:
             return self.fehlschlag(fund, "git")
 
         oeffentlich = fund.repo != self.konfig.issue_repo
-        hinweise = [h for h, an in ((HINWEIS_OEFFENTLICH, oeffentlich), (HINWEIS_NUR_EINORDNEN, nur_einordnen)) if an]
+        hinweise = [HINWEIS_FEST] + [h for h, an in ((HINWEIS_OEFFENTLICH, oeffentlich),
+                                                     (HINWEIS_NUR_EINORDNEN, nur_einordnen)) if an]
         rueckfrage = RUECKFRAGE_LABEL in labels
         prompt = prompt_bauen(self.auftrag_texte(), self.material(titel, text, fund),
                               art="rueckfrage" if rueckfrage else "fund", hinweise=hinweise)
         erg: HelferErgebnis | None = None
         fehler: str | None = None
         beginn = self.w.uhr()
+        try:  # R41: vor dem Helfer buchen; geht das nicht, startet er nicht (fail-closed, ungezählt)
+            budget_buchen(self.ordner, "laeuft", 0.0, jetzt=beginn)
+        except OSError as e:
+            LOG.warning("Budget nicht buchbar (%s), keine Runde", type(e).__name__)
+            return "fehler:budget"
         try:
             try:
                 erg = self.w.helfer(wt, prompt, fund.sitzung, self.konfig.frist_s)
             except HelferFehler as e:
                 fehler = f"helfer_{e.art}"
-                if e.art != "frist":  # evtl. verbrauchte/kaputte Sitzung: nächster Versuch beginnt neu
+                if e.art not in ("frist", "antwort_fehler"):  # evtl. kaputte Sitzung: nächster Versuch neu
                     fund.sitzung = None
             except OSError:
                 fehler = "helfer_start"
         finally:
             self.w.claw_aufraeumen()  # R44: nichts vom Helfer läuft weiter, bevor gepusht wird
             ende = self.w.uhr()
-            budget_buchen(self.ordner, fehler or ("ok" if erg is not None else "abbruch"),
-                          (ende - beginn).total_seconds(), jetzt=ende)
+            try:  # R41: das Ergebnis als Nachtrag, der nicht zählt
+                budget_buchen(self.ordner, fehler or ("ok" if erg is not None else "abbruch"),
+                              (ende - beginn).total_seconds(), jetzt=ende, nachtrag=True)
+            except OSError as e:
+                LOG.warning("Budget-Nachtrag nicht buchbar (%s)", type(e).__name__)
+        if fehler == "helfer_antwort_fehler":  # R42: Abo-Limit o. Ä., kein Versuch, Kommentare bleiben offen
+            _warten_melden("limit", self.n, self.konfig, self.stand, self.w, ende)
+            return "wartet:limit"
         if erg is None:
             return self.fehlschlag(fund, fehler or "helfer_unbekannt")
         fund.sitzung = erg.sitzung
         try:
-            return self.aktion(erg, fund, wt, titel, nur_einordnen=nur_einordnen, rueckfrage=rueckfrage, pin=pin)
+            return self.aktion(erg, fund, wt, titel, nur_einordnen=nur_einordnen, rueckfrage=rueckfrage, pin=pin,
+                               labels=frozenset(x for x in labels if isinstance(x, str)))
         except GitHubFehler:  # zählt als Versuch, sonst wiederholte jeder Durchgang die volle Runde
             return self.fehlschlag(fund, "github")
         finally:
             if pin:
-                self.pin_verwerfen(fund, wt)
+                self.wt_aufraeumen(fund, wt, pin=True)
 
-    def pin_verwerfen(self, fund: FundStand, wt: Path) -> None:
-        """R45: Commits des Helfers im Pin-Worktree werden nie gepusht; der Worktree wird entfernt."""
+    def wt_aufraeumen(self, fund: FundStand, wt: Path, *, pin: bool = False) -> None:
+        """R43: ohne PR und ohne Commits voraus Worktree und lokalen Branch entfernen (`sitzung` bleibt).
+
+        R45 (`pin=True`): umgekehrt, Commits des Helfers im Pin-Worktree werden nie gepusht, also weg.
+        """
+        if fund.pr is not None and not pin:
+            return
         try:
-            if voraus(wt, fund.branch, basis=self.konfig.basis) > 0:
+            if (voraus(wt, fund.branch, basis=self.konfig.basis) > 0) == pin:
                 aufraeumen(repo_klon_pfad(self.konfig, self.klon, fund.repo), wt, fund.branch)
         except (GitFehler, WorktreeFehler, ValueError, OSError) as e:
-            LOG.warning("Pin-Worktree nicht aufgeräumt (%s)", type(e).__name__)
+            LOG.warning("Worktree nicht aufgeräumt (%s)", type(e).__name__)
 
     def aktion(self, erg: HelferErgebnis, fund: FundStand, wt: Path, titel: str, *,
-               nur_einordnen: bool, rueckfrage: bool, pin: bool = False) -> str:
+               nur_einordnen: bool, rueckfrage: bool, pin: bool, labels: frozenset[str]) -> str:
         issue_repo = self.konfig.issue_repo
         grund = _begruendung(erg.text)
         if erg.aktion == "fix" and pin:
@@ -334,9 +351,14 @@ class _Lauf:
             else:
                 self.w.gh_lab.schliessen(issue_repo, self.n, kommentar, grund="not_planned")
         elif erg.aktion == "rueckfrage" and rueckfrage and erg.antwort:
-            self.w.gh_lab.labels_setzen(issue_repo, self.n, [f"antwort:{erg.antwort}"])
+            neu = f"antwort:{erg.antwort}"
+            for alt in sorted(x for x in labels if x.startswith("antwort:") and x != neu):  # Punkt 7
+                self.w.gh_lab.label_entfernen(issue_repo, self.n, alt)
+            self.w.gh_lab.labels_setzen(issue_repo, self.n, [neu])
         else:
             self.antworten(fund, PRAEFIX + grund)
+        if not pin:
+            self.wt_aufraeumen(fund, wt)  # R43
         return self.fertig(fund)
 
     def fix(self, grund: str, fund: FundStand, wt: Path, titel: str) -> str:
@@ -353,13 +375,14 @@ class _Lauf:
             return self.fehlschlag(fund, "git")
         if neu == 0 and (fund.pr is not None or not betreffe):
             self.antworten(fund, PRAEFIX + grund)
+            self.wt_aufraeumen(fund, wt)  # R43
             return self.fertig(fund)
         liste = "\n".join(f"- {b}" for b in betreffe)
         if fund.repo == self.konfig.issue_repo:
-            koerper = f"Fixes #{self.n}\n\n{liste}"
+            koerper = f"{PRAEFIX}Fixes #{self.n}\n\n{liste}"
             pr_titel = _kappen(PRAEFIX + titel.removeprefix(TITEL_PRAEFIX))
         else:  # öffentlich (R19): nur Betreffzeilen und Bezug, kein Gespräch, Titel aus ältestem Commit
-            koerper = f"{liste}\n\nBezug: {self.konfig.issue_repo}#{self.n}"
+            koerper = f"{PRAEFIX}{liste}\n\nBezug: {self.konfig.issue_repo}#{self.n}"
             pr_titel = _kappen(PRAEFIX + betreffe[0])
         for t in (pr_titel, koerper, grund, inhalt):  # R21/R23: auch Commit-Texte und rohe Blobs vor dem Push
             if (muster := pruefen(t)) is not None:
@@ -401,11 +424,18 @@ def runde_ausfuehren(auftrag: Auftrag, konfig: DebuggerKonfig, stand: DebuggerSt
                      ordner: Path, w: Werkzeuge) -> str:
     """Führt einen Auftrag aus: `"ok" | "wartet:<grund>" | "fehler:<art>" | "abgelehnt:<grund>"`.
 
-    Bestätigt jeden Kommentar (`eyes`), prüft Not-Aus, Tagesgrenze und Speicher, bereitet den
+    Bestätigt jeden Kommentar einmal (`eyes`, Punkt 2), prüft Not-Aus, Tagesgrenze und Speicher, bereitet den
     Worktree vor, ruft den Helfer und führt dessen Aktion aus. `stand` wird nur im Speicher geändert.
     """
-    for k in auftrag.kommentare:
-        w.gh_lab.reagieren(k.repo, k.id, review=k.review)
+    einmal_reagieren(stand, auftrag.kommentare, lambda k: w.gh_lab.reagieren(k.repo, k.id, review=k.review))
+    try:
+        return _runde(auftrag, konfig, stand, klon, ordner, w)
+    finally:
+        reagiert_aufraeumen(stand)
+
+
+def _runde(auftrag: Auftrag, konfig: DebuggerKonfig, stand: DebuggerStand, klon: Path, ordner: Path,
+           w: Werkzeuge) -> str:
     jetzt = w.uhr()
     grund = budget_pruefen(ordner, konfig.tagesgrenze, jetzt=jetzt)
     if grund is None:

@@ -55,6 +55,7 @@ def test_pin_push_mit_nur_gitlink_und_basis_aus_spiegel(welt: Welt) -> None:
     assert welt.lauf() == [f"#{N}: Pin-PR #412 geöffnet"]
     assert welt.push_kw == [{"nur_gitlink": ("vibemind-os", sha)}]
     assert git(welt.origin, "rev-parse", f"{PIN_BRANCH}^") == basis
+    assert welt.stand.funde[str(N)].sitzung is None  # Punkt 4
 
 
 def test_pin_pruefung_im_spiegel_nicht_im_klon(welt: Welt) -> None:

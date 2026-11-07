@@ -21,6 +21,7 @@ class FundStand:
     zustand: str = "offen"  # "offen" | "pr" | "erledigt"
     versuche: dict[str, int] = field(default_factory=dict)
     runde: int = 1  # R37: zählt neue Anläufe nach `erledigt`; fehlt in alten Ständen
+    naechster_versuch: str | None = None  # R42: ISO-Zeit; bis dahin überspringt der Durchgang den Fund
 
 
 @dataclass

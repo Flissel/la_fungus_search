@@ -79,14 +79,14 @@ Alle `docker compose`-Befehle laufen in `~/debugger-claw/la_fungus/deploy/debugg
       Der zweite legt die Spiegel an und holt sie von GitHub. Danach endet er mit Exit 1, weil der Klon
       noch fehlt. Das ist hier erwartet.
    2. Den Klon als claw aus dem Spiegel ziehen (`<basis>` ist `basis` aus der Konfiguration, Standard `master`):
-      `docker compose run --rm debugger setpriv --reuid=1000 --regid=1000 --init-groups -- env HOME=/home/claw git clone -b <basis> /data/spiegel/Flissel__Vibemind_V1.git /data/klon`
+      `docker compose run --rm debugger setpriv --reuid=1000 --regid=1000 --init-groups --no-new-privs -- env HOME=/home/claw git clone -b <basis> /data/spiegel/Flissel__Vibemind_V1.git /data/klon`
    3. Das Submodul auf den Spiegel umstellen und holen, ebenfalls als claw (Präfix wie oben):
       `... git -C /data/klon config submodule.vibemind-os.url /data/spiegel/Flissel__vibemind-os.git`
       und danach `... git -C /data/klon submodule update --init vibemind-os`.
 7. **Claude-Anmeldung als claw.**
-   `docker compose run --rm debugger setpriv --reuid=1000 --regid=1000 --init-groups -- env HOME=/home/claw claude`
+   `docker compose run --rm debugger setpriv --reuid=1000 --regid=1000 --init-groups --no-new-privs -- env HOME=/home/claw claude`
    starten, mit dem Abo anmelden, dann beenden. Der Login liegt im Volume `claude`.
-8. **Starten.** `docker compose up -d`. Logs zeigt `docker compose logs -f debugger`.
+8. **Starten.** `docker compose up -d`. Logs zeigt `docker compose logs -f debugger` (json-file, höchstens 3 Dateien zu 10 MB).
 9. **Rückweg.** `docker compose down`. Die Volumes bleiben, auch Stand und Login.
 
 ## Betrieb

@@ -1,6 +1,7 @@
 """Tests für eine Debugger-Runde: Fake-GitHub, Fake-Helfer, echte temporäre Git-Repos."""
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -109,6 +110,9 @@ class FakeGitHub:
     def labels_setzen(self, repo: str, nummer: int, labels: list[str]) -> None:
         self.aufrufe.append(("labels_setzen", repo, nummer, list(labels)))
 
+    def label_entfernen(self, repo: str, nummer: int, name: str) -> None:
+        self.aufrufe.append(("label_entfernen", repo, nummer, name))
+
     def pr_anlegen(self, repo: str, kopf: str, basis: str, titel: str, text: str) -> int:
         self.aufrufe.append(("pr_anlegen", repo, kopf, basis, titel, text))
         self._fehler("pr_anlegen")
@@ -212,8 +216,10 @@ class Welt:
         return self.ordner / "wt" / f"Vibemind_V1-{BRANCH.removeprefix('debugger/')}"
 
     def budget_zeilen(self) -> int:
-        dateien = list(self.ordner.glob("budget-*.jsonl"))
-        return sum(len(d.read_text(encoding="utf-8").splitlines()) for d in dateien)
+        """Gezählte Budget-Zeilen (R41: nur die vorab gebuchten `laeuft`-Zeilen, keine Nachträge)."""
+        zeilen = [json.loads(z) for d in self.ordner.glob("budget-*.jsonl")
+                  for z in d.read_text(encoding="utf-8").splitlines()]
+        return sum(1 for z in zeilen if z["ergebnis"] == "laeuft" and "nachtrag" not in z)
 
 
 def kom(i: int, text: str = "bitte prüfen", *, repo: str = ISSUE_REPO, nummer: int = N, review: bool = False,
@@ -272,7 +278,7 @@ def test_fix_oeffnet_pr_mit_fixes(welt: Welt) -> None:
     assert welt.lab.namen("pr_anlegen") == [(
         "pr_anlegen", ISSUE_REPO, BRANCH, "master",
         PRAEFIX + "Doku-Widerspruch: Schedule stimmt nicht (vibemind)",
-        f"Fixes #{N}\n\n- fix: Schedule korrigiert",
+        f"{PRAEFIX}Fixes #{N}\n\n- fix: Schedule korrigiert",
     )]
     fund = welt.stand.funde[str(N)]
     assert (fund.pr, fund.zustand) == (501, "pr")
@@ -294,7 +300,7 @@ def test_fix_oeffentlich_ohne_gespraech(welt: Welt) -> None:
     assert git(welt.os_origin, "log", "--format=%s", "-1", branch) == "fix: Port aus Konfig lesen"
     (pr,) = welt.lab.namen("pr_anlegen")
     assert pr[1:4] == (OS_REPO, branch, "master")
-    assert pr[5] == f"- fix: Port aus Konfig lesen\n\nBezug: {ISSUE_REPO}#{N}"
+    assert pr[5] == f"{PRAEFIX}- fix: Port aus Konfig lesen\n\nBezug: {ISSUE_REPO}#{N}"
     assert pr[4] == PRAEFIX + "fix: Port aus Konfig lesen"  # R19: kein Issue-Titel im öffentlichen PR
     assert "Port falsch" not in pr[4] and "Doku-Widerspruch" not in pr[4]
     for geheim in ("ISSUE_TEXT_DETAIL", "KOMMENTAR_DETAIL", "AUFTRAG_DETAIL", "HELFER_TEXT", "Fixes"):
@@ -371,7 +377,7 @@ def test_wartet_speicher_meldet_einmal_je_tag(welt: Welt) -> None:
     assert welt.lab.namen("kommentieren") == [meldung, meldung]
     assert welt.stand.verarbeitet == []
     assert welt.helfer.aufrufe == [] and welt.budget_zeilen() == 0
-    assert len(welt.lab.namen("reagieren")) == 3
+    assert len(welt.lab.namen("reagieren")) == 1  # Punkt 2: nur einmal je Kommentar
     assert "wartet:speicher:2026-11-07" in welt.stand.gemeldet
 
 

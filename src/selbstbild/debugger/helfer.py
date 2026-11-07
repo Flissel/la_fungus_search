@@ -13,13 +13,15 @@ from typing import Any, Callable, Sequence
 from selbstbild.debugger.klon import gruppe_toeten
 
 _NACH_KILL_S = 5.0
+MAX_AUSGABE = 5_000_000  # Punkt 11: 5 MB (dezimal) Helfer-Ausgabe, darüber `antwort_gross`
+_UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 ERLAUBT = (
     "Read,Edit,Write,Glob,Grep,Bash(git status:*),Bash(git diff:*),Bash(git log:*),"
     "Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(python -m pytest:*),Bash(pytest:*)"
 )
 VERBOTEN = (
-    "WebFetch,WebSearch,Bash(git push:*),Bash(git reset:*),Bash(git checkout:*),"
+    "WebFetch,WebSearch,Bash(git push:*),Bash(git commit --amend:*),Bash(git reset:*),Bash(git checkout:*),"
     "Bash(git clean:*),Bash(git stash:*),Bash(rm:*),Bash(curl:*),Bash(wget:*),"
     "Read(**/.env*),Read(**/*token*),Read(**/*secret*)"
 )
@@ -104,12 +106,12 @@ def prompt_bauen(
 
 
 def helfer_argv(prompt: str, sitzung: str | None) -> list[str]:
-    """Kommandozeile für `claude -p`; mit `sitzung` wird fortgesetzt."""
+    """Kommandozeile für `claude -p`; nur eine `sitzung` in UUID-Form wird fortgesetzt (Punkt 4), sonst neu."""
     argv = [
         "claude", "-p", prompt, "--output-format", "json", "--permission-mode",
         "acceptEdits", "--allowedTools", ERLAUBT, "--disallowedTools", VERBOTEN,
     ]
-    if sitzung:
+    if isinstance(sitzung, str) and _UUID.fullmatch(sitzung):
         argv += ["--resume", sitzung]
     return argv
 
@@ -202,6 +204,18 @@ def helfer_starten(
                 )
         except subprocess.TimeoutExpired:
             raise HelferFehler("frist") from None
+        if ziel.stat().st_size > MAX_AUSGABE:  # Punkt 11: vor jedem Lesen
+            raise HelferFehler("antwort_gross")
+        ausgabe = ziel.read_text(encoding="utf-8", errors="replace")
         if lauf.returncode != 0:
-            raise HelferFehler(f"exit_{lauf.returncode}")
-        return ergebnis_lesen(ziel.read_text(encoding="utf-8", errors="replace"))
+            raise HelferFehler("antwort_fehler" if _ist_fehler_json(ausgabe) else f"exit_{lauf.returncode}")
+        return ergebnis_lesen(ausgabe)
+
+
+def _ist_fehler_json(ausgabe: str) -> bool:
+    """R42: Exit ≠ 0 mit lesbarem JSON-Ergebnis, in dem `is_error` wahr ist (z. B. Abo-Limit)."""
+    try:
+        roh: Any = json.loads(ausgabe.strip())
+    except ValueError:
+        return False
+    return isinstance(roh, dict) and roh.get("is_error") is True

@@ -76,8 +76,24 @@ def test_argv_neu() -> None:
     ]
 
 
+UUID = "0b9c6a3e-5f1d-4c2a-9e8b-7d6c5b4a3f21"
+
+
 def test_argv_resume() -> None:
-    assert helfer_argv("P", "abc")[-2:] == ["--resume", "abc"]
+    assert helfer_argv("P", UUID)[-2:] == ["--resume", UUID]
+
+
+@pytest.mark.parametrize("sitzung", ["abc", "s-1", "--dangerously-skip-permissions", UUID + "x", " " + UUID, ""])
+def test_argv_ungueltige_sitzung_ohne_resume(sitzung: str) -> None:
+    """Punkt 4: nur eine UUID wird fortgesetzt; alles andere startet neu."""
+    assert helfer_argv("P", sitzung) == helfer_argv("P", None)
+    assert "--resume" not in helfer_argv("P", sitzung)
+
+
+def test_verboten_enthaelt_amend_und_push() -> None:
+    verboten, erlaubt = VERBOTEN.split(","), ERLAUBT.split(",")
+    assert "Bash(git commit --amend:*)" in verboten and "Bash(git push:*)" in verboten
+    assert not set(verboten) & set(erlaubt)
 
 
 def test_ergebnis_fix() -> None:
@@ -210,3 +226,26 @@ def test_helfer_timeout_trotz_enkel(tmp_path: Path, enkel: Any) -> None:
     dauer = time.monotonic() - beginn
     assert ei.value.art == "frist" and dauer < 15, dauer
     enkel.tot_pruefen()
+
+
+# ---------- R42 und Punkt 11 ----------
+
+def test_exit_mit_is_error_ist_antwort_fehler(tmp_path: Path) -> None:
+    roh = json.dumps({"type": "result", "is_error": True, "result": "Limit erreicht", "session_id": "s"})
+    with pytest.raises(HelferFehler) as ei:
+        helfer_starten(tmp_path, "P", None, 1.0, laeufer=_Fake(roh, rc=1))
+    assert ei.value.art == "antwort_fehler" and "Limit" not in str(ei.value)
+    for kaputt in ("kein json", "[1, 2]", json.dumps({"result": "x"})):
+        with pytest.raises(HelferFehler) as ei:
+            helfer_starten(tmp_path, "P", None, 1.0, laeufer=_Fake(kaputt, rc=1))
+        assert ei.value.art == "exit_1"
+
+
+@pytest.mark.parametrize("rc", [0, 1])
+def test_ausgabe_ueber_5mb_ist_antwort_gross(tmp_path: Path, rc: int) -> None:
+    gross = _cli("x" * 5_000_100)
+    with pytest.raises(HelferFehler) as ei:
+        helfer_starten(tmp_path, "P", None, 1.0, laeufer=_Fake(gross, rc=rc))
+    assert ei.value.art == "antwort_gross"
+    knapp = _cli("x" * 4_900_000)
+    assert helfer_starten(tmp_path, "P", None, 1.0, laeufer=_Fake(knapp)).text.startswith("xxx")
