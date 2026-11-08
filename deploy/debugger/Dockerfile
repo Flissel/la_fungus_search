@@ -3,21 +3,12 @@
 # Kontext kommt, regelt `Dockerfile.dockerignore` neben dieser Datei (BuildKit), nur für diesen Build.
 FROM python:3.11-slim-bookworm
 
-ARG GH_VERSION=2.83.*
 ARG CLAUDE_CODE_VERSION=2.1.268
 
-# git, setpriv (util-linux), pkill (procps), Node für Claude Code; curl nur für die gh-Quelle.
+# git, setpriv (util-linux), pkill (procps), Node für Claude Code. Kein gh: Der Wächter spricht die
+# GitHub-API selbst (Token-Datei), und der Helfer darf gh nicht nutzen (nicht in ERLAUBT).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git util-linux procps ca-certificates curl nodejs npm \
- && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
- && chmod 0644 /usr/share/keyrings/githubcli-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-      > /etc/apt/sources.list.d/github-cli.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends "gh=${GH_VERSION}" \
- && apt-get purge -y curl \
- && apt-get autoremove -y \
+ && apt-get install -y --no-install-recommends git util-linux procps ca-certificates nodejs npm \
  && rm -rf /var/lib/apt/lists/*
 
 # bookworm bringt Node 18 (18.19). --engine-strict: verlangt claude-code eine neuere Node-Version,
@@ -46,6 +37,7 @@ RUN chmod 0755 /usr/local/bin/debugger-askpass /usr/local/bin/debugger-einstieg
 ENV DEBUGGER_ASKPASS=/usr/local/bin/debugger-askpass \
     PYTHONUNBUFFERED=1
 
-# Der Wächter läuft als root (rootless Docker: root im Container ist kein root auf dem Host).
+# Der Wächter läuft als root. Unter rootless Docker ist das kein root auf dem Host; unter rootful
+# Docker (VM .65) muss die Token-Datei auf dem Host root:root 0400 sein, sonst bricht der Einstieg ab.
 ENTRYPOINT ["/usr/local/bin/debugger-einstieg"]
 CMD ["python", "-m", "selbstbild", "debugger", "schleife", "/data/konfig", "--klon", "/data/klon", "--ordner", "/data/stand", "--spiegel", "/data/spiegel"]
