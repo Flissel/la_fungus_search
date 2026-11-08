@@ -40,8 +40,9 @@ _REGEL = (
 )
 _ART_TEXT = {
     "rueckfrage": (
-        "Der User beantwortet eine Goldsatz-Rückfrage; setze `antwort` auf genau einen "
-        "der Werte weg|bleibt|benutzt."
+        "Der User beantwortet eine Goldsatz-Rückfrage; setze `aktion` auf `rueckfrage` und "
+        "`antwort` auf genau einen der Werte weg|bleibt|benutzt. Das Label setzt der Wächter "
+        "aus diesem Block."
     ),
     "fund": (
         "Wähle `aktion`: `antwort` (du antwortest nur), `fix` (du hast Dateien auf dem "

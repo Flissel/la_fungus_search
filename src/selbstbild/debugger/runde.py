@@ -306,7 +306,7 @@ class _Lauf:
                 self.halten(muster)
             else:
                 self.w.gh_lab.schliessen(issue_repo, self.n, kommentar, grund="not_planned")
-        elif erg.aktion == "rueckfrage" and rueckfrage and erg.antwort:
+        elif erg.aktion in ("rueckfrage", "antwort") and rueckfrage and erg.antwort:  # Abnahme 3
             neu = f"antwort:{erg.antwort}"
             for alt in sorted(x for x in labels if x.startswith("antwort:") and x != neu):  # Punkt 7
                 self.w.gh_lab.label_entfernen(issue_repo, self.n, alt)

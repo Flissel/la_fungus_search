@@ -44,7 +44,9 @@ def test_prompt_trennt_auftrag_und_material() -> None:
 
 
 def test_prompt_art_und_unbekannt() -> None:
-    assert "weg|bleibt|benutzt" in prompt_bauen(["x"], "m", art="rueckfrage")
+    r = prompt_bauen(["x"], "m", art="rueckfrage")
+    assert "weg|bleibt|benutzt" in r
+    assert "`aktion` auf `rueckfrage`" in r  # Abnahme 3: sonst wählte der Helfer `antwort`
     f = prompt_bauen(["x"], "m", art="fund")
     for wort in ("antwort", "fix", "absichtlich", "rueckfrage"):
         assert wort in f

@@ -360,6 +360,15 @@ def test_rueckfrage_nur_label_bleibt_offen(welt: Welt) -> None:
     assert welt.stand.verarbeitet == [1]
 
 
+def test_rueckfrage_label_auch_bei_aktion_antwort(welt: Welt) -> None:
+    """Abnahme 3 (08.11.): Der Helfer gab `aktion: antwort` mit `antwort: bleibt` zurück; das Label fehlte."""
+    welt.issue(titel="[selbstbild] Rückfrage: Goldsatz", text="Frage", labels=("selbstbild", "selbstbild:rueckfrage"))
+    welt.helfer.schritte = [antwort("bleibt so", "antwort", "bleibt")]
+    assert welt.runde(kom(1, "bleibt")) == "ok"
+    assert welt.lab.namen("labels_setzen") == [("labels_setzen", ISSUE_REPO, N, ["antwort:bleibt"])]
+    assert welt.lab.namen("kommentieren") == []
+
+
 def test_rueckfrage_ohne_label_wird_antwort(welt: Welt) -> None:
     welt.helfer.schritte = [antwort("weg damit", "rueckfrage", "weg")]
     assert welt.runde(kom(1, "weg")) == "ok"
