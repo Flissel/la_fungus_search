@@ -31,6 +31,7 @@ from typing import Any
 import yaml
 
 from ..doku.schluessel import sieht_aus_wie_schluessel
+from ..freigabe_eingang import FreigabeEingang
 from ..doku.schreibvorgang import git, kopf, kopf_pruefen
 from .github import LABEL, LABEL_FARBE, LABEL_TEXT, GitHub, GitHubFehler
 from .goldsatz_tor import _tot_eintraege, antworten_uebernehmen, unklare_eintraege
@@ -285,7 +286,7 @@ def _link(gh: GitHub | None, repo: str, nummer: int) -> str:
 
 def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None, repo: str, *, senden: bool,
                            noch_tot: frozenset[str], commit: str, stand: dict[str, Any],
-                           oeffentlich: bool = False) -> RueckfrageBericht:
+                           oeffentlich: bool = False, freigabe: FreigabeEingang | None = None) -> RueckfrageBericht:
     """Gleicht die `unklar`-Eintraege des Goldsatzes mit den Rueckfrage-Issues ab (siehe Moduldoku).
 
     `oeffentlich`: die Konfiguration des Ziels (`Ziel.oeffentlich`). Code-Ausschnitte nur, wenn sie das nicht sagt UND
@@ -293,6 +294,8 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
 
     `noch_tot`: Symbole, die die gespeicherte Analyse noch als toten Code fuehrt (jede Stufe).
     `commit`: SHA des vermessenen Stands (nur fuer den Erledigt-Kommentar, 7 Zeichen).
+    `freigabe`: Freigabe-Eingang von sales-claw; neue Rueckfragen werden gemeldet, beantwortete und erledigte
+    abgehakt (nur mit `senden`; der Client wirft nie).
     `stand`: veraenderliches Teil-Dict (`auto-stand.json["rueckfrage"]`); hier gepflegt: `kommentiert` und
     `gemeldet` (je eine sortierte Liste von Issue-Nummern). Mit `senden=False` bleibt es unveraendert.
     Mit `senden=False` wird nichts geschrieben und nichts committet; der Bericht zeigt, was geschehen wuerde.
@@ -310,6 +313,10 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
     def merken(schluessel: str, menge: set[int]) -> None:
         if senden:
             stand[schluessel] = sorted(menge)
+
+    def abhaken(nr: int) -> None:
+        if senden and freigabe is not None:
+            freigabe.schliessen(f"{repo}#{nr}", "erledigt")
 
     def schreiben(methode: str, *args: Any) -> bool:
         """Ein Schreibaufruf (nur mit `senden`); False nach einem Fehler, der dann in `b.fehler` steht."""
@@ -384,12 +391,14 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
                 if not schreiben("schliessen", nr, _uebernommen_text(antwort, SCHON)):
                     return b
                 b.uebernommen.append(nr)
+                abhaken(nr)
             else:
                 urteil_jetzt = zustand.get(symbol, ("?", False))[0]
                 text = f"Im Goldsatz inzwischen anders beurteilt ({urteil_jetzt}), Rückfrage erledigt."
                 if not schreiben("schliessen", nr, text):
                     return b
                 b.erledigt.append(nr)
+                abhaken(nr)
         elif len(gesetzt) > 1:
             if nr not in kommentiert:
                 if not schreiben("kommentieren", nr, DOPPELT_TEXT):
@@ -406,6 +415,7 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
             gemeldet.add(nr)  # nie als "ohne Antwort geschlossen" melden
             merken("gemeldet", gemeldet)
             b.erledigt.append(nr)
+            abhaken(nr)
 
     if noch_tot_leer:
         b.notizen.append("noch_tot leer: keine Rückfrage als erledigt geschlossen")
@@ -432,6 +442,7 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
                 if not schreiben("schliessen" if offen else "kommentieren", nr, text):
                     return b
                 b.uebernommen.append(nr)
+                abhaken(nr)
 
     # 4. Ohne Antwort-Label geschlossen und noch unklar: einmal melden, nie wieder oeffnen
     for nr, issue, symbol in eigene:
@@ -441,6 +452,7 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
             b.geschlossen_ohne_antwort.append(nr)
             gemeldet.add(nr)
             merken("gemeldet", gemeldet)
+            abhaken(nr)
 
     # 5. Neue Rueckfragen (nach dem Uebernehmen neu gelesen: beantwortete sind nicht mehr `unklar`)
     try:
@@ -492,6 +504,8 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
             return b
         b.neu.append(nr)
         b.links[nr] = _link(gh, repo, nr)
+        if freigabe is not None:
+            freigabe.eintragen("selbstbild_rueckfrage", f"{repo}#{nr}", titel, b.links[nr])
     if not senden:
         b.notizen.append("trocken: nichts geschrieben, nichts committet")
     return b

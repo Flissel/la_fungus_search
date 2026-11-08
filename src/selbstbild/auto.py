@@ -49,6 +49,8 @@ from .auto_text import (ERINNERN_AB_TAGEN, ERSATZ_TEXT, MAX_TEXT, TEXT_KOPF, eri
 from .doku.konfig import aus_regeln
 from .doku.schluessel import sieht_aus_wie_schluessel
 from .doku.schreibvorgang import kopf, kopf_pruefen
+from .freigabe_abholer import freigabe_aus_umgebung
+from .freigabe_eingang import FreigabeEingang
 from .funde.bericht import SENDE_SPERRE, _aussen_name, atomar_schreiben, bericht_ordner_standard, goldsatz_standard
 from .funde.github import GitHub, GitHubFehler
 from .funde.rueckfrage import _MARKE, ANTWORTEN, RueckfrageBericht, rueckfragen_abgleichen
@@ -88,6 +90,7 @@ class Werkzeuge:
     goldsatz: Path | None = None  # Vorgabe: goldsatz_standard(<aussen>)
     stand_basis: Path | None = None  # Basis des Issue-Stands von `sync` (Vorgabe: stand_basis())
     uhr: Callable[[], float] = time.monotonic  # Sekunden, fuer die Gesamtfrist (R15)
+    freigabe: FreigabeEingang | None = None  # Freigabe-Eingang (sales-claw); nur mit Umgebung, nie bei `--trocken`
 
 
 def kind_standard(argv: list[str], log: Path, timeout_s: float) -> int:
@@ -140,7 +143,8 @@ def standard_werkzeuge(wurzel: Path) -> Werkzeuge:
     wurzel = Path(wurzel)
     return Werkzeuge(kind=kind_standard, frei_gb=frei_gb_standard,
                      telegram=lambda text: telegram_standard(wurzel, text), gh_fabrik=GitHub,
-                     jetzt=datetime.now, ordner=bericht_ordner_standard(wurzel))
+                     jetzt=datetime.now, ordner=bericht_ordner_standard(wurzel),
+                     freigabe=freigabe_aus_umgebung())
 
 
 # ---------- Bausteine ----------
@@ -532,7 +536,8 @@ class _Lauf:
             return uebersprungen
         teil = self.stand["rueckfrage"] if not self.trocken else dict(self.stand["rueckfrage"])
         rb = rueckfragen_abgleichen(self.wurzel, gold, gh, repo, senden=not self.trocken, noch_tot=noch_tot,
-                                    commit=commit, stand=teil, oeffentlich=ziel.oeffentlich)
+                                    commit=commit, stand=teil, oeffentlich=ziel.oeffentlich,
+                                    freigabe=None if self.trocken else self.w.freigabe)
         self.ergebnis = "unterbrochen:nach_rueckfragen"  # bleibt nur stehen, wenn der Prozess hart abbricht
         self.schreiben()  # sofort sichern: ein spaeterer Absturz wiederholt keine Kommentare
         self.geschlossen |= {*rb.uebernommen, *rb.erledigt}

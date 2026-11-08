@@ -486,3 +486,59 @@ def test_yaml_kaputt_nach_uebernehmen_datei_zurueck_wartet(gold: Any, git_repo: 
         assert g.read_bytes() == roh and git_repo.git("rev-parse", "HEAD") == vorher
         assert git_repo.git("status", "--porcelain") == ""
         assert fake.issues[n]["state"] == "open" and _kommentare(fake, n) == []
+
+
+# ---------- Freigabe-Eingang (Task 9) ----------
+
+class FakeFreigabe:
+    def __init__(self) -> None:
+        self.eintraege: list[tuple[str, str, str, str | None]] = []
+        self.geschlossen: list[tuple[str, str]] = []
+
+    def eintragen(self, art: str, quelle_ref: str, titel: str, link: str | None = None,
+                  details: dict[str, Any] | None = None) -> str:
+        self.eintraege.append((art, quelle_ref, titel, link))
+        return "fg-aaaaaaaaaa"
+
+    def schliessen(self, quelle_ref: str, status: str = "erledigt") -> int:
+        self.geschlossen.append((quelle_ref, status))
+        return 1
+
+
+def test_neue_rueckfrage_wird_gemeldet(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    fake, fg = FakeGh(), FakeFreigabe()
+    b = _lauf(fake, g, tmp_path, freigabe=fg)
+    assert len(b.neu) == 1
+    nr = b.neu[0]
+    assert fg.eintraege == [("selbstbild_rueckfrage", f"{REPO}#{nr}",
+                             "[selbstbild] Rückfrage: f0 (vibemind/pkg/a.py)",
+                             f"https://github.com/{REPO}/issues/{nr}")]
+    assert fg.geschlossen == []
+
+
+def test_beantwortete_rueckfrage_wird_geschlossen(gold: Any, git_repo: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    fake, fg = FakeGh(), FakeFreigabe()
+    n = _rf(fake, _sym(0), ("antwort:bleibt",))
+    b = _lauf(fake, g, tmp_path, freigabe=fg)
+    assert b.uebernommen == [n]
+    assert fg.geschlossen == [(f"{REPO}#{n}", "erledigt")]
+
+
+def test_nicht_mehr_tot_und_ohne_antwort_geschlossen_werden_abgehakt(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar"), (_sym(1), "unklar")])
+    fake, fg = FakeGh(), FakeFreigabe()
+    n0 = _rf(fake, _sym(0))
+    n1 = _rf(fake, _sym(1), state="closed")
+    b = _lauf(fake, g, tmp_path, noch_tot=frozenset({_sym(1)}), freigabe=fg)
+    assert b.erledigt == [n0] and b.geschlossen_ohne_antwort == [n1]
+    assert sorted(fg.geschlossen) == sorted([(f"{REPO}#{n0}", "erledigt"), (f"{REPO}#{n1}", "erledigt")])
+
+
+def test_trocken_meldet_nichts(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar"), (_sym(1), "unklar")])
+    fake, fg = FakeGh(), FakeFreigabe()
+    n1 = _rf(fake, _sym(1), ("antwort:weg",))
+    _lauf(fake, g, tmp_path, senden=False, freigabe=fg)
+    assert fg.eintraege == [] and fg.geschlossen == [] and n1

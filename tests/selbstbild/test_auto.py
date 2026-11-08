@@ -96,9 +96,10 @@ class Umg:
                         stand_setzen: dict[str, Any] | None = None) -> None:
         def fake(wurzel: Path, goldsatz_pfad: Path, gh: Any, repo: str, *, senden: bool,
                  noch_tot: frozenset[str], commit: str, stand: dict[str, Any],
-                 oeffentlich: bool = False) -> RueckfrageBericht:
+                 oeffentlich: bool = False, freigabe: Any = None) -> RueckfrageBericht:
             self.rueckfragen.append({"senden": senden, "noch_tot": noch_tot, "commit": commit, "repo": repo,
-                                     "gold": goldsatz_pfad, "gh": gh, "oeffentlich": oeffentlich})
+                                     "gold": goldsatz_pfad, "gh": gh, "oeffentlich": oeffentlich,
+                                     "freigabe": freigabe})
             if stand_setzen and senden:
                 stand.update(stand_setzen)
             return bericht if bericht is not None else RueckfrageBericht()
@@ -372,6 +373,20 @@ def test_trocken_sendet_nicht_und_schreibt_keinen_stand(u: Umg, monkeypatch: pyt
     assert "2 neu" in out
 
 
+@pytest.mark.parametrize("trocken", [False, True])
+def test_freigabe_geht_nur_ohne_trocken_an_die_rueckfragen(u: Umg, monkeypatch: pytest.MonkeyPatch,
+                                                           trocken: bool) -> None:
+    u.gold.parent.mkdir(parents=True)
+    u.gold.write_text("tot: []\n", encoding="utf-8")
+    u.analyse(monkeypatch)
+    u.rueckfrage_fake(monkeypatch)
+    u.funde = _funde_json({"anlegen": 0}, modus="trocken" if trocken else "senden")
+    w = u.werkzeuge()
+    w.freigabe = object()  # type: ignore[assignment]
+    assert auto.lauf(u.wurzel, trocken=trocken, werkzeuge=w) == 0
+    assert [r["freigabe"] for r in u.rueckfragen] == [None if trocken else w.freigabe]
+
+
 def test_montag_erinnerung_ohne_aenderung(u: Umg) -> None:
     alt = (MONTAG - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
     frisch = (MONTAG - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -520,7 +535,7 @@ def test_antwort_uebernommen_mit_commit_und_tor_aendert_sich_nicht_durch_eigenes
 
     def fake(wurzel: Path, goldsatz_pfad: Path, gh: Any, repo: str, *, senden: bool,
              noch_tot: frozenset[str], commit: str, stand: dict[str, Any],
-             oeffentlich: bool = False) -> RueckfrageBericht:
+             oeffentlich: bool = False, freigabe: Any = None) -> RueckfrageBericht:
         u.rueckfragen.append({})
         u.gold.write_text("tot: [] # neu\n", encoding="utf-8")  # wie der Goldsatz-Commit
         u.gh.bestand[0]["state"] = "closed"
