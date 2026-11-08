@@ -166,10 +166,11 @@ def antwort(text: str, aktion: str = "antwort", wert: str | None = None, sitzung
     return lambda wt: HelferErgebnis(sitzung, text, aktion, wert)
 
 
-def fix(datei: str, betreff: str, text: str = "Behoben, Tests grün.", sitzung: str = "s-1") -> Schritt:
+def fix(datei: str, betreff: str, text: str = "Behoben, Tests grün.", sitzung: str = "s-1",
+        tests: str | None = None) -> Schritt:
     def schritt(wt: Path) -> HelferErgebnis:
         commit(wt, datei, f"{datei}\n", betreff)
-        return HelferErgebnis(sitzung, text, "fix", None)
+        return HelferErgebnis(sitzung, text, "fix", None, tests)
     return schritt
 
 
@@ -290,6 +291,27 @@ def test_fix_oeffnet_pr_mit_fixes(welt: Welt) -> None:
     assert f"{ISSUE_REPO}#501" in k[3]
     assert "öffentlich" not in welt.helfer.aufrufe[0]["prompt"]
     assert welt.stand.verarbeitet == [1]
+
+
+def test_fix_oeffentlich_mit_testzeile(welt: Welt) -> None:
+    """A2 (Abnahme 08.11.): Die Testzeile des Helfers steht im öffentlichen PR, das Gespräch nicht."""
+    welt.issue(titel="[selbstbild] Doku-Widerspruch: Port falsch (vibemind/vibemind-os)",
+               text="<!-- selbstbild:repo=vibemind/vibemind-os -->\n\nISSUE_TEXT_DETAIL")
+    welt.helfer.schritte = [fix("c.txt", "fix: Port aus Konfig lesen", text="HELFER_TEXT",
+                                tests="pytest tests/x: 4 passed")]
+    assert welt.runde(kom(1, "bitte fixen")) == "ok"
+    (pr,) = welt.lab.namen("pr_anlegen")
+    assert pr[5] == (f"{PRAEFIX}- fix: Port aus Konfig lesen\n\nTests: pytest tests/x: 4 passed\n\n"
+                     f"Bezug: {ISSUE_REPO}#{N}")
+    assert "HELFER_TEXT" not in pr[5] and "ISSUE_TEXT_DETAIL" not in pr[5]
+
+
+def test_fix_testzeile_mit_schluessel_haelt(welt: Welt) -> None:
+    welt.issue(titel="[selbstbild] Doku-Widerspruch: Port falsch (vibemind/vibemind-os)",
+               text="<!-- selbstbild:repo=vibemind/vibemind-os -->")
+    welt.helfer.schritte = [fix("c.txt", "fix: Port", tests="ok ghp_" + "a" * 36)]
+    assert welt.runde(kom(1, "bitte fixen")) == "abgelehnt:schluessel"
+    assert welt.lab.namen("pr_anlegen") == [] and welt.pushes == []
 
 
 def test_fix_oeffentlich_ohne_gespraech(welt: Welt) -> None:

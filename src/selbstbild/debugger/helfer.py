@@ -48,14 +48,17 @@ _ART_TEXT = {
         "Wähle `aktion`: `antwort` (du antwortest nur), `fix` (du hast Dateien auf dem "
         "aktuellen Branch geändert und committet; ausgeführte Tests und ihr Ergebnis "
         "gehören in deinen Text), `absichtlich` (der Fund ist gewollt, kein Fehler), "
-        "`rueckfrage` (nur bei Rückfrage-Issues). `antwort` bleibt null."
+        "`rueckfrage` (nur bei Rückfrage-Issues). `antwort` bleibt null. Bei `fix` setze "
+        '`"tests"` auf eine Zeile mit Befehl und Ergebnis der Tests; sie steht so im PR-Text, '
+        "also ohne Inhalte aus Issue oder Gespräch."
     ),
 }
 _SCHLUSS = (
     "Schließe deine Antwort mit genau einem Block ab:\n"
-    '```json\n{"aktion": "...", "antwort": null}\n```\n'
-    '(`antwort` ist null oder "weg"|"bleibt"|"benutzt".)'
+    '```json\n{"aktion": "...", "antwort": null, "tests": null}\n```\n'
+    '(`antwort` ist null oder "weg"|"bleibt"|"benutzt"; `tests` ist null oder eine Zeile.)'
 )
+MAX_TESTZEILE = 300  # A2: Zeichen der Testzeile im PR
 
 
 class HelferFehler(Exception):
@@ -74,6 +77,17 @@ class HelferErgebnis:
     text: str
     aktion: str
     antwort: str | None
+    tests: str | None = None  # A2: eine Zeile für den PR-Text
+
+
+def _testzeile(wert: object) -> str | None:
+    """Eine Zeile ohne Steuerzeichen, höchstens `MAX_TESTZEILE` Zeichen; sonst `None`."""
+    if not isinstance(wert, str):
+        return None
+    zeile = " ".join(wert.split())
+    if not zeile:
+        return None
+    return zeile if len(zeile) <= MAX_TESTZEILE else zeile[: MAX_TESTZEILE - 1] + "…"
 
 
 def _entschaerfen(text: str) -> str:
@@ -138,16 +152,17 @@ def ergebnis_lesen(cli_ausgabe: str) -> HelferErgebnis:
         return HelferErgebnis(sitzung, result.strip(), "antwort", None)
     letzter = treffer[-1]
     text = (result[: letzter.start()] + result[letzter.end():]).strip()
-    aktion, antwort = "antwort", None
+    aktion, antwort, tests = "antwort", None, None
     try:
         daten: Any = json.loads(letzter.group(1))
         if isinstance(daten, dict):
             a, w = daten.get("aktion"), daten.get("antwort")
             if a in _AKTIONEN and (w is None or w in _ANTWORTEN):
                 aktion, antwort = a, w
+                tests = _testzeile(daten.get("tests"))
     except ValueError:
         pass
-    return HelferErgebnis(sitzung, text, aktion, antwort)
+    return HelferErgebnis(sitzung, text, aktion, antwort, tests)
 
 
 def _starten(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:

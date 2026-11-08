@@ -104,6 +104,26 @@ def test_ergebnis_fix() -> None:
     assert e == HelferErgebnis(sitzung="s-1", text="Ich habe gefixt.", aktion="fix", antwort=None)
 
 
+def test_ergebnis_testzeile_eine_zeile_gekappt() -> None:
+    """A2: `tests` wird eine Zeile ohne Steuerzeichen, höchstens 300 Zeichen."""
+    roh = json.dumps({"aktion": "fix", "antwort": None, "tests": " 4 passed\n\t2 vorbestehend " + "x" * 400})
+    e = ergebnis_lesen(_cli(f"ok\n```json\n{roh}\n```"))
+    assert e.tests is not None and e.tests.startswith("4 passed 2 vorbestehend xxx")
+    assert len(e.tests) == 300 and e.tests.endswith("…") and "\n" not in e.tests
+
+
+@pytest.mark.parametrize("wert", [None, 3, "", "   ", ["a"]])
+def test_ergebnis_testzeile_ungueltig_ist_none(wert: object) -> None:
+    roh = json.dumps({"aktion": "fix", "antwort": None, "tests": wert})
+    e = ergebnis_lesen(_cli(f"ok\n```json\n{roh}\n```"))
+    assert (e.aktion, e.tests) == ("fix", None)
+
+
+def test_prompt_nennt_testzeile() -> None:
+    f = prompt_bauen(["x"], "m", art="fund")
+    assert '"tests"' in f and "PR-Text" in f
+
+
 def test_ergebnis_rueckfrage_bleibt() -> None:
     text = 'ok\n```json\n{"aktion": "rueckfrage", "antwort": "bleibt"}\n```'
     e = ergebnis_lesen(_cli(text))

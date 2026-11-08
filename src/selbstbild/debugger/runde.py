@@ -298,7 +298,7 @@ class _Lauf:
         elif erg.aktion == "fix" and nur_einordnen:
             self.antworten(fund, f"{NUR_EINORDNEN_TEXT}\n\n{grund}")
         elif erg.aktion == "fix":
-            return self.fix(grund, fund, wt, titel)
+            return self.fix(grund, fund, wt, titel, erg.tests)
         elif erg.aktion == "absichtlich":
             kommentar = PRAEFIX + grund
             muster = pruefen(kommentar)
@@ -317,7 +317,7 @@ class _Lauf:
             self.wt_aufraeumen(fund, wt)  # R43
         return self.fertig(fund)
 
-    def fix(self, grund: str, fund: FundStand, wt: Path, titel: str) -> str:
+    def fix(self, grund: str, fund: FundStand, wt: Path, titel: str, tests: str | None = None) -> str:
         """Push und PR; ohne neue Commits (und mit PR oder ohne Commits vor der Basis) nur Antwort."""
         basis = self.konfig.basis
         try:
@@ -334,6 +334,8 @@ class _Lauf:
             self.wt_aufraeumen(fund, wt)  # R43
             return self.fertig(fund)
         liste = "\n".join(f"- {b}" for b in betreffe)
+        if tests:  # A2: eine gekappte Zeile des Helfers, wie alles hier vor dem Senden geprüft
+            liste += f"\n\nTests: {tests}"
         if fund.repo == self.konfig.issue_repo:
             koerper = f"{PRAEFIX}Fixes #{self.n}\n\n{liste}"
             pr_titel = _kappen(PRAEFIX + titel.removeprefix(TITEL_PRAEFIX))

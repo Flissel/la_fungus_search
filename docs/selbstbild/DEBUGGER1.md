@@ -50,17 +50,22 @@ Selbstbild-Issue gilt als Auftrag, auch ein Schließ-Kommentar. Das hat an #319 
 - **Token:** Ein fine-grained Token von Vibemind-LAB sieht das private `Flissel/Vibemind_V1` nicht (404).
   Nötig ist ein klassischer Token mit Scope `repo`.
 
-## Offene Funde (Entscheidung des Users)
+## Funde aus der Abnahme
 
-- **A1 Zielrepo bei Sammel-Issues:** `ziel_bestimmen` verlangt, dass der Pfad nach dem Wurzelnamen genau einem
-  Repo-Pfad entspricht. Ein Sammel-Issue wie `vibemind/vibemind-os/spaces/video/vibevideo_deepfake` landet deshalb
-  im äußeren Repo und nur zum Einordnen. Dort fehlt im Worktree das Submodul, und der Helfer sieht den Code nicht.
-  So geschehen an #306: Er hat es offen gesagt und aus den Fund-Daten eingeordnet. Vorschlag: der längste
-  Präfix-Treffer an einer Segmentgrenze.
-- **A2 Testergebnis im PR:** Spec 7.2 verlangt das Testergebnis im PR. Spec 5.1 und R17 legen das Gespräch bei
-  PRs im öffentlichen `vibemind-os` ins private Issue. Der PR-Text enthält deshalb nur `Bezug: …#313`, und das
-  Testergebnis steht im Issue. Zu entscheiden ist, ob der Wächter eine knappe Testzeile ohne private Inhalte in
-  den öffentlichen PR schreiben soll.
+- **A1 Zielrepo bei Sammel-Issues: kein Fehler.** #306 (`vibemind/vibemind-os/spaces/video/vibevideo_deepfake`)
+  lief nur zum Einordnen und im äußeren Repo. Erst schien das ein Fehler von `ziel_bestimmen`, das einen genauen
+  Repo-Pfad verlangt. `spaces/video/vibevideo_deepfake` ist aber selbst ein Submodul von vibemind-os, also ein
+  eigenes Repo, das nicht freigegeben ist. Dasselbe gilt für alle Sammel-Pfade #290–#308 (voice, shared,
+  coding-engine, learning, sales-claw, captain_cook, swe_desgine, vibevideo, laura, clawcode, la-fungus-search),
+  soweit sie nicht genau ein Repo treffen. Ein Präfix-Treffer hätte sie fälschlich vibemind-os zugeordnet. Deshalb
+  gibt es keine Änderung. Die Grenze bleibt: Bei solchen Issues sieht der Helfer den Code des inneren Submoduls nicht,
+  denn der Klon holt verschachtelte Submodule nicht. Er sagt das in seiner Antwort.
+- **A2 Testergebnis im PR: behoben (nach 8b16f46).** Spec 7.2 verlangt das Testergebnis im PR. Bei öffentlichen
+  Repos bleibt das Gespräch im privaten Issue (Spec 5.1, R17). Neu gibt der Helfer im Schlussblock eine Zeile
+  `"tests"` zurück. Der Wächter macht daraus eine Zeile mit höchstens 300 Zeichen und schreibt sie beim Anlegen des PR als
+  `Tests: …` in den PR-Text. Wie der übrige Text läuft sie vorher durch die Schlüsselprüfung. Ein Treffer ergibt
+  `abgelehnt:schluessel`, dann gibt es keinen Push und keinen PR. Bei einer Nachbesserung bleibt der PR-Text
+  unverändert, und die Antwort geht wie bisher ins Issue.
 
 ## Bekannte Grenzen
 
