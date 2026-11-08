@@ -113,14 +113,23 @@ Alle `docker compose`-Befehle laufen in `~/debugger-claw/la_fungus/deploy/debugg
 
 ## Freigabe-Eingang (optional)
 
-Der Wächter kann jeden neuen Fix-PR dem Freigabe-Eingang von sales-claw melden (`/api/freigaben/*`) und
-gemergte oder geschlossene PRs dort wieder abhaken. Ohne Konfiguration bleibt das aus; sonst ändert sich nichts.
+Der Wächter meldet jeden Fix mit PR dem Freigabe-Eingang von sales-claw (`/api/freigaben/*`) und hakt
+gemergte oder geschlossene PRs dort wieder ab. Gemeldet wird bei jedem Fix mit PR; der Server dedupliziert
+über die Quelle. Ein Eintrag, den der Betreiber auf `verworfen` gesetzt hat, während der PR offen bleibt,
+kommt mit dem nächsten Push wieder. Ohne Konfiguration bleibt das aus; sonst ändert sich nichts.
 
-- **Schlüssel:** Der Dienst-Schlüssel der Herkunft `debugger-claw` liegt auf dem Host in
-  `~/debugger-claw/freigabe/schluessel` (eine Zeile, `chmod 400`). Compose mountet den **Ordner**
-  `~/debugger-claw/freigabe` read-only nach `/run/freigabe`, damit ein fehlender Ordner den Start nicht
-  stört. Der Schlüssel gibt nur das Recht, Einträge der Art `debugger_pr` anzulegen und zu schließen.
-  Er wird nie geloggt.
+- **Schlüssel (wie `lab_token`):** Der Dienst-Schlüssel der Herkunft `debugger-claw` darf für claw (uid 1000)
+  nicht lesbar sein. Auf dem Host einen **root-eigenen Ordner mit 0700** anlegen und den Schlüssel root-eigen
+  mit 0400 hineinschreiben, über stdin und nie als Argument:
+  `sudo install -d -o root -g root -m 0700 ~/debugger-claw/freigabe` und
+  `sudo install -o root -g root -m 0400 /dev/stdin ~/debugger-claw/freigabe/schluessel` (Schlüssel
+  einfügen, Enter, Strg+D). Compose mountet den **Ordner** read-only nach `/run/freigabe`, damit ein
+  fehlender Ordner den Start nicht stört. Der Schlüssel gibt nur das Recht, Einträge der Art `debugger_pr`
+  anzulegen und zu schließen. Er wird nie geloggt.
+- **Prüfung im Code (fail-closed):** `werkzeuge_standard` lässt den Eingang aus und loggt nur den Grund
+  (`besitzer_nicht_root`, `rechte_group_other`, `nicht_lesbar`), wenn die Datei nicht root-eigen ist oder
+  Rechte für group/other hat. Unter Windows entfällt die Prüfung. Unter rootless Docker erscheint die Datei im
+  Container root-eigen.
 - **Adresse:** In `.env` neben `compose.yml` `FREIGABE_URL=<Basis der Sales-UI>` setzen (der Debugger-Claw auf
   der VM erreicht sales-claw auf derselben VM). Leer oder fehlend heißt aus. `FREIGABE_SCHLUESSEL_DATEI` setzt
   Compose fest auf `/run/freigabe/schluessel`.
@@ -133,6 +142,10 @@ gemergte oder geschlossene PRs dort wieder abhaken. Ohne Konfiguration bleibt da
 - Das Netz im Container ist offen. Der Helfer (claw) kann Repo-Inhalte lesen und ins Netz schicken. An den
   Token kommt er nicht: die Datei gehört root (0400), und der Token steht nur in der Umgebung der
   Push-/Fetch-Prozesse von root.
+- Der Freigabe-Schlüssel (`freigabe/schluessel`) gilt genauso: Gehört er unter rootful Docker uid 1000 oder ist
+  er für group/other lesbar, kann der Helfer ihn lesen und im Namen von `debugger-claw` Einträge anlegen oder
+  schließen. Der Code lässt den Eingang dann aus (siehe oben); die Ordner- und Dateirechte auf dem Host
+  bleiben Aufgabe des Betreibers.
 - Gelesen werden Issue-Kommentare und Review-Zeilenkommentare. Review-Zusammenfassungen (der Text beim
   Absenden eines Reviews) liest der Wächter in Plan 1 nicht.
 - Die Container-Dateien laufen nicht in der CI. Auf der VM .65 (rootful Docker) gebaut und geprüft am

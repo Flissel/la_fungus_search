@@ -141,6 +141,26 @@ def _askpass_pruefen() -> None:
         raise AskpassFehlt()
 
 
+def _freigabe_schluessel_problem(pfad: Path, name: str | None = None,
+                                 stat: Callable[[Path], os.stat_result] | None = None) -> str | None:
+    """Grund (ohne Inhalt), warum die Schlüsseldatei dem Helfer (uid 1000) lesbar sein könnte, sonst `None`.
+
+    Wie die Token-Prüfung im Einstieg: nur root-eigen und ohne Rechte für group/other gilt als sicher.
+    Unter Windows (Tests, PC) gibt es keine Prüfung. Parameter nur für Tests.
+    """
+    if (name or os.name) == "nt":
+        return None
+    try:
+        st = (stat or os.stat)(pfad)
+    except OSError:
+        return "nicht_lesbar"
+    if st.st_uid != 0:
+        return "besitzer_nicht_root"
+    if st.st_mode & 0o077:
+        return "rechte_group_other"
+    return None
+
+
 class _Durchgang:
     """Ein Durchgang unter der Sperre; `lauf` speichert den Stand, sobald er geladen ist."""
 
@@ -368,7 +388,11 @@ def werkzeuge_standard(konfig: DebuggerKonfig, ordner: Path, spiegel_ordner: Pat
     freigabe_datei = os.environ.get("FREIGABE_SCHLUESSEL_DATEI", "").strip()
     freigabe = None
     if freigabe_url and freigabe_datei and Path(freigabe_datei).is_file():
-        freigabe = FreigabeEingang(freigabe_url, Path(freigabe_datei))
+        grund = _freigabe_schluessel_problem(Path(freigabe_datei))
+        if grund is None:
+            freigabe = FreigabeEingang(freigabe_url, Path(freigabe_datei))
+        else:  # fail-closed: der Helfer könnte den Schlüssel lesen
+            LOG.error("Freigabe-Eingang aus: Schlüsseldatei nicht sicher (%s)", grund)
 
     return Werkzeuge(
         gh_lab=GitHub(konfig.helfer_konto, marke=DEBUGGER_MARKE, token_datei=token_datei),

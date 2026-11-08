@@ -497,8 +497,46 @@ def test_werkzeuge_standard_freigabe_aus_umgebung(tmp_path: Path, token_umgebung
     monkeypatch.setenv("FREIGABE_SCHLUESSEL_DATEI", str(schluessel))  # Datei fehlt noch
     assert werkzeuge_standard(konfig, tmp_path / "stand", tmp_path / "spiegel").freigabe is None
     schluessel.write_text("k", encoding="utf-8")
+    monkeypatch.setattr(wachter, "_freigabe_schluessel_problem", lambda pfad: None)  # Besitzer-Prüfung: eigener Test
     monkeypatch.setenv("FREIGABE_URL", "")  # leer = aus
     assert werkzeuge_standard(konfig, tmp_path / "stand", tmp_path / "spiegel").freigabe is None
     monkeypatch.setenv("FREIGABE_URL", "https://host:1")
     f = werkzeuge_standard(konfig, tmp_path / "stand", tmp_path / "spiegel").freigabe
     assert isinstance(f, FreigabeEingang)
+
+
+def test_freigabe_schluessel_problem(tmp_path: Path) -> None:
+    class St:
+        def __init__(self, uid: int, mode: int) -> None:
+            self.st_uid, self.st_mode = uid, mode
+
+    def fake(uid: int, mode: int) -> Any:
+        return lambda p: St(uid, mode)
+
+    p = tmp_path / "k"
+    assert wachter._freigabe_schluessel_problem(p, "posix", fake(0, 0o100400)) is None
+    assert wachter._freigabe_schluessel_problem(p, "posix", fake(1000, 0o100400)) == "besitzer_nicht_root"
+    assert wachter._freigabe_schluessel_problem(p, "posix", fake(0, 0o100440)) == "rechte_group_other"
+    assert wachter._freigabe_schluessel_problem(p, "posix", fake(0, 0o100604)) == "rechte_group_other"
+    assert wachter._freigabe_schluessel_problem(p, "nt", fake(1000, 0o100777)) is None  # Windows: keine Prüfung
+
+    def kaputt(_: Path) -> Any:
+        raise OSError("x")
+
+    assert wachter._freigabe_schluessel_problem(p, "posix", kaputt) == "nicht_lesbar"
+
+
+def test_werkzeuge_standard_freigabe_aus_bei_lesbarem_schluessel(
+        tmp_path: Path, token_umgebung: Path, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture) -> None:
+    konfig = DebuggerKonfig(issue_repo=ISSUE_REPO, repos={ISSUE_REPO: "."})
+    schluessel = tmp_path / "fg_schluessel"
+    schluessel.write_text("GEHEIMER-INHALT", encoding="utf-8")
+    monkeypatch.setenv("FREIGABE_URL", "https://host:1")
+    monkeypatch.setenv("FREIGABE_SCHLUESSEL_DATEI", str(schluessel))
+    monkeypatch.setattr(wachter, "_freigabe_schluessel_problem", lambda pfad: "besitzer_nicht_root")
+    with caplog.at_level(logging.ERROR):
+        assert werkzeuge_standard(konfig, tmp_path / "stand", tmp_path / "spiegel").freigabe is None
+    assert "besitzer_nicht_root" in caplog.text and "GEHEIMER" not in caplog.text
+    monkeypatch.setattr(wachter, "_freigabe_schluessel_problem", lambda pfad: None)
+    assert isinstance(werkzeuge_standard(konfig, tmp_path / "stand", tmp_path / "spiegel").freigabe, FreigabeEingang)

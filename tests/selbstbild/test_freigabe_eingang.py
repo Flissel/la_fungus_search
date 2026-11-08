@@ -140,3 +140,32 @@ def test_ergebnis(datei: Path) -> None:
     assert o.aufrufe[0][0].full_url == "https://host:1/api/freigaben/auftraege/7"
     assert json.loads(o.aufrufe[0][0].data) == {"ok": True}
     assert json.loads(o.aufrufe[1][0].data) == {"ok": False, "fehler": "label_fehlt"}
+
+
+def test_nicht_serialisierbare_details_ohne_ausnahme(datei: Path) -> None:
+    from datetime import datetime
+
+    c, o = _client(datei, [])
+    assert c.eintragen("debugger_pr", "o/r#1", "T", details={"t": datetime.now()}) is None
+    zyklus: dict[str, Any] = {}
+    zyklus["selbst"] = zyklus
+    assert c.eintragen("debugger_pr", "o/r#1", "T", details=zyklus) is None
+    assert o.aufrufe == []
+
+
+def test_auftrag_id_wird_quotiert(datei: Path) -> None:
+    c, o = _client(datei, [_Antwort({"ok": True})])
+    c.ergebnis("a/../b?x", True)
+    assert o.aufrufe[0][0].full_url == "https://host:1/api/freigaben/auftraege/a%2F..%2Fb%3Fx"
+
+
+def test_http_fehler_wird_geschlossen(datei: Path) -> None:
+    geschlossen: list[bool] = []
+
+    class Fehler(urllib.error.HTTPError):
+        def close(self) -> None:
+            geschlossen.append(True)
+
+    c, _ = _client(datei, [Fehler("u", 401, "x", {}, io.BytesIO(b"{}"))])  # type: ignore[arg-type]
+    assert c.eintragen("debugger_pr", "o/r#1", "T") is None
+    assert geschlossen

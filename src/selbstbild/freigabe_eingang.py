@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
@@ -48,6 +49,7 @@ class FreigabeEingang:
             with self._oeffnen(req, timeout=TIMEOUT_S) as antwort:
                 return json.loads(antwort.read())
         except urllib.error.HTTPError as e:
+            e.close()
             LOG.warning("Freigabe-Eingang %s %s: HTTP %d", methode, pfad.split("/")[1] if "/" in pfad else pfad, e.code)
         except Exception as e:
             LOG.warning("Freigabe-Eingang %s %s: %s", methode, pfad.split("/")[1] if "/" in pfad else pfad,
@@ -57,11 +59,15 @@ class FreigabeEingang:
     def eintragen(self, art: str, quelle_ref: str, titel: str, link: str | None = None,
                   details: dict[str, Any] | None = None) -> str | None:
         """Meldet einen Eintrag; gibt die Kennung zurück. Bei Schlüsselmuster in Titel/Details wird nichts gesendet."""
-        texte = [titel, link or "", json.dumps(details, ensure_ascii=False) if details else ""]
-        for t in texte:
-            if (muster := pruefen(t)) is not None:
-                LOG.warning("Freigabe-Eingang eintrag: nicht gesendet (Schlüssel-Verdacht: %s)", muster)
-                return None
+        try:
+            texte = [titel, link or "", json.dumps(details, ensure_ascii=False, default=str) if details else ""]
+            for t in texte:
+                if (muster := pruefen(t)) is not None:
+                    LOG.warning("Freigabe-Eingang eintrag: nicht gesendet (Schlüssel-Verdacht: %s)", muster)
+                    return None
+        except Exception as e:  # z. B. zyklische Details: nie eine Ausnahme nach außen
+            LOG.warning("Freigabe-Eingang eintrag: nicht prüfbar (%s)", type(e).__name__)
+            return None
         rumpf: dict[str, Any] = {"art": art, "quelle_ref": quelle_ref, "titel": titel}
         if link is not None:
             rumpf["link"] = link
@@ -91,5 +97,5 @@ class FreigabeEingang:
         rumpf: dict[str, Any] = {"ok": ok}
         if fehler is not None:
             rumpf["fehler"] = fehler
-        antwort = self._anfrage("POST", f"/auftraege/{auftrag_id}", rumpf)
+        antwort = self._anfrage("POST", f"/auftraege/{urllib.parse.quote(auftrag_id, safe='')}", rumpf)
         return isinstance(antwort, dict) and antwort.get("ok") is True
