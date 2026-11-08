@@ -36,8 +36,12 @@ Alle `docker compose`-Befehle laufen in `~/debugger-claw/la_fungus/deploy/debugg
    `README.md`, `src/` und die Skripte aus `deploy/debugger/` und installiert la_fungus per `pip install`.
 2. **Vibemind-LAB einladen.** Vibemind-LAB in `Flissel/Vibemind_V1` und `Flissel/vibemind-os` mit
    Write einladen (nie Admin). Die Einladung als Vibemind-LAB annehmen.
-3. **Token ablegen.** Als Vibemind-LAB einen klassischen Token mit Scope `repo` erzeugen und auf der VM als
-   `~/debugger-claw/secrets/lab_token` ablegen, dann `chmod 400 ~/debugger-claw/secrets/lab_token`.
+3. **Token ablegen.** Als Vibemind-LAB einen **klassischen** Token mit Scope `repo` erzeugen. Ein
+   fine-grained Token reicht nicht: Er sieht private Repos eines fremden Kontos nicht, in denen
+   Vibemind-LAB nur Mitarbeiter ist (`Flissel/Vibemind_V1` antwortet 404). Auf der VM als
+   `~/debugger-claw/secrets/lab_token` ablegen, unter rootful Docker root-eigen:
+   `sudo install -o root -g root -m 0400 /dev/stdin ~/debugger-claw/secrets/lab_token` (Token einfügen,
+   Enter, Strg+D). Unter rootless Docker genügt `chmod 400`.
 4. **Konfiguration.** `~/debugger-claw/konfig/selbstbild.yaml` anlegen. Sie liegt bewusst nicht im Klon,
    denn `origin/master` hat kein `selbstbild.yaml`:
 
@@ -60,18 +64,14 @@ Alle `docker compose`-Befehle laufen in `~/debugger-claw/la_fungus/deploy/debugg
    Kontext kommt nur, was `Dockerfile.dockerignore` erlaubt: `pyproject.toml`, `README.md`, `src/` und
    die zwei Skripte. Nie dabei sind `.git`, `.venv*`, `.env`, `__pycache__` und Testdaten.
 
-   **Node:** Das Image beruht auf `python:3.11-slim-bookworm`. bookworm bringt Node.js 18 (18.19).
-   Claude Code verlangt Node ≥ 18, das reicht also. Zur Sicherheit installiert der Build mit
-   `npm install -g --engine-strict`: Verlangt `@anthropic-ai/claude-code@2.1.268` doch eine neuere
-   Version, bricht der Build ab, statt ein kaputtes Image zu bauen. Dann im Dockerfile `nodejs npm`
-   aus der apt-Zeile nehmen und Node aus dem offiziellen NodeSource-Repo holen, mit gepinnter
-   Hauptversion. Dafür `gnupg` zusätzlich installieren und `curl` erst danach entfernen:
+   **Node:** Das Image beruht auf `python:3.11-slim-bookworm`. bookworms Node 18 reicht
+   `@anthropic-ai/claude-code@2.1.268` nicht (der Build mit `npm install -g --engine-strict` bricht
+   dann ab). Node kommt deshalb aus NodeSource, Hauptversion gepinnt (`NODE_MAJOR=22`).
 
-   ```sh
-   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
-   echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
-   apt-get update && apt-get install -y nodejs
-   ```
+   **gh:** Der Wächter ruft `gh api` auf (Token je Aufruf über `GH_TOKEN`). gh kommt als Release-`.deb`
+   mit fester Version und SHA-256-Prüfsumme (`GH_VERSION`, `GH_SHA256`), nur für amd64. Das apt-Repo
+   von cli.github.com führt nur die neueste Version, ein Versions-Pin dort bricht. Für ein Update
+   beide Werte aus `gh_<version>_checksums.txt` des Releases übernehmen.
 6. **Spiegel und Klon einmalig einrichten.**
    1. Zweimal einen Durchgang starten:
       `docker compose run --rm debugger python -m selbstbild debugger durchgang /data/konfig --klon /data/klon --ordner /data/stand --spiegel /data/spiegel`.
@@ -118,5 +118,7 @@ Alle `docker compose`-Befehle laufen in `~/debugger-claw/la_fungus/deploy/debugg
   Push-/Fetch-Prozesse von root.
 - Gelesen werden Issue-Kommentare und Review-Zeilenkommentare. Review-Zusammenfassungen (der Text beim
   Absenden eines Reviews) liest der Wächter in Plan 1 nicht.
-- Die Container-Dateien sind nicht automatisch getestet (am PC gibt es kein Docker). Geprüft ist nur die
-  Syntax der Skripte.
+- Die Container-Dateien laufen nicht in der CI. Auf der VM .65 (rootful Docker) gebaut und geprüft am
+  08.11.2026: `tests/selbstbild/debugger` im Image als claw grün, Spiegel und Klon eingerichtet.
+  `tests/selbstbild/debugger/test_image.py` prüft nur, dass das Dockerfile die aufgerufenen Programme
+  installiert.
