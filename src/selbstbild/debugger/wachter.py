@@ -26,10 +26,11 @@ from selbstbild.debugger.helfer import helfer_starten
 from selbstbild.debugger.klon import git_praefix_setzen, nachziehen
 from selbstbild.debugger.konfig import DebuggerKonfig, konfig_laden
 from selbstbild.debugger.nachlauf import nachlauf
-from selbstbild.debugger.runde import Werkzeuge, pfad_norm, runde_ausfuehren, wt_pfad
+from selbstbild.debugger.runde import Werkzeuge, pfad_norm, pr_eintraege_abgleichen, runde_ausfuehren, wt_pfad
 from selbstbild.debugger.spiegel import spiegel_bereit, spiegel_holen, spiegel_pfad, spiegel_push
 from selbstbild.debugger.stand import DebuggerStand, stand_laden, stand_speichern
 from selbstbild.debugger.versuche import gh_fehler_merken, gh_fehler_vergessen, gh_gesperrt, limit_aktiv, pausiert
+from selbstbild.freigabe_eingang import FreigabeEingang
 from selbstbild.funde.github import DEBUGGER_MARKE, GitHub, GitHubFehler
 from selbstbild.sperre import SperreBelegt, sperre
 
@@ -218,6 +219,10 @@ class _Durchgang:
         except Exception as e:
             LOG.error("Nachlauf abgebrochen (%s)", type(e).__name__)
             fehler = fehler or e
+        try:  # Freigabe-Eingang: gemergte/geschlossene PRs abhaken; nie ein Grund, den Durchgang zu brechen
+            pr_eintraege_abgleichen(w)
+        except Exception as e:
+            LOG.warning("Freigabe-Abgleich fehlgeschlagen (%s)", type(e).__name__)
         if fehler is not None:
             raise fehler
         stand.seit = _iso(self.neue_marke(stand, beginn, kandidaten))  # auch übersprungene halten `seit`
@@ -359,6 +364,12 @@ def werkzeuge_standard(konfig: DebuggerKonfig, ordner: Path, spiegel_ordner: Pat
         spiegel_push(spiegel_pfad(spiegel_ordner, repo), wt, branch, repo, token_datei, basis=konfig.basis,
                      nur_gitlink=nur_gitlink)
 
+    freigabe_url = os.environ.get("FREIGABE_URL", "").strip()
+    freigabe_datei = os.environ.get("FREIGABE_SCHLUESSEL_DATEI", "").strip()
+    freigabe = None
+    if freigabe_url and freigabe_datei and Path(freigabe_datei).is_file():
+        freigabe = FreigabeEingang(freigabe_url, Path(freigabe_datei))
+
     return Werkzeuge(
         gh_lab=GitHub(konfig.helfer_konto, marke=DEBUGGER_MARKE, token_datei=token_datei),
         gh_lesen=GitHub(konfig.helfer_konto, marke=None, token_datei=token_datei),
@@ -369,6 +380,7 @@ def werkzeuge_standard(konfig: DebuggerKonfig, ordner: Path, spiegel_ordner: Pat
         holen=holen,
         claw_aufraeumen=claw_prozesse_beenden,
         spiegel=spiegel_ordner,
+        freigabe=freigabe,
     )
 
 

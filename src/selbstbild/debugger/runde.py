@@ -7,6 +7,7 @@ speichern muss der Aufrufer.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,10 +37,11 @@ from selbstbild.debugger.versuche import (MAX_VERSUCHE, einmal_reagieren, limit_
                                           versuch_zaehlen)
 from selbstbild.debugger.ziel import fund_neu, pfad_norm, repo_klon_pfad, wt_pfad, ziel_bestimmen
 from selbstbild.funde.github import GitHub, GitHubFehler
+from selbstbild.freigabe_eingang import FreigabeEingang
 from selbstbild.funde.text import pruefen
 
 # pfad_norm, repo_klon_pfad, wt_pfad und ziel_bestimmen stehen in ziel.py; hier für Nachlauf und Wächter
-__all__ = ["Werkzeuge", "pfad_norm", "pr_finden_oder_anlegen", "repo_klon_pfad", "runde_ausfuehren", "wt_pfad",
+__all__ = ["Werkzeuge", "pfad_norm", "pr_eintraege_abgleichen", "pr_finden_oder_anlegen", "repo_klon_pfad", "runde_ausfuehren", "wt_pfad",
            "ziel_bestimmen", "zurueckgehalten"]
 
 LOG = logging.getLogger("selbstbild.debugger")
@@ -75,6 +77,7 @@ class Werkzeuge:
     holen: Callable[[], None] = _nichts  # R27: Spiegel von GitHub holen, vor `nachziehen`
     claw_aufraeumen: Callable[[], None] = _nichts  # R44: Prozesse des Helfer-Nutzers beenden
     spiegel: Path | None = None  # Ordner der root-eigenen Spiegel (R39: Pin-Prüfungen)
+    freigabe: FreigabeEingang | None = None  # Freigabe-Eingang von sales-claw; `None` = aus
 
 
 # ---------- Runde ----------
@@ -317,6 +320,16 @@ class _Lauf:
             self.wt_aufraeumen(fund, wt)  # R43
         return self.fertig(fund)
 
+    def freigabe_melden(self, repo: str, nummer: int, pr_titel: str, tests: str | None) -> None:
+        """Meldet den PR dem Freigabe-Eingang (idempotent beim Server); ein Fehler stört die Runde nie."""
+        if self.w.freigabe is None:
+            return
+        try:
+            self.w.freigabe.eintragen("debugger_pr", f"{repo}#{nummer}", pr_titel,
+                                      f"https://github.com/{repo}/pull/{nummer}", {"tests": tests} if tests else {})
+        except Exception as e:
+            LOG.warning("Freigabe-Eingang: PR nicht gemeldet (%s)", type(e).__name__)
+
     def fix(self, grund: str, fund: FundStand, wt: Path, titel: str, tests: str | None = None) -> str:
         """Push und PR; ohne neue Commits (und mit PR oder ohne Commits vor der Basis) nur Antwort."""
         basis = self.konfig.basis
@@ -360,9 +373,36 @@ class _Lauf:
         if fund.pr is None:
             fund.pr = pr_finden_oder_anlegen(self.w, fund.repo, fund.branch, self.konfig.basis, pr_titel, koerper)
         fund.zustand = "pr"
+        self.freigabe_melden(fund.repo, fund.pr, pr_titel, tests)
         zusatz = f"PR: {fund.repo}#{fund.pr}" if neuer_pr else f"Neuer Stand im PR {fund.repo}#{fund.pr}."
         self.antworten(fund, f"{PRAEFIX}{grund}\n\n{zusatz}")
         return self.fertig(fund)
+
+
+_PR_REF = re.compile(r"([\w.-]+/[\w.-]+)#(\d+)")
+
+
+def pr_eintraege_abgleichen(w: Werkzeuge) -> None:
+    """Schließt offene `debugger_pr`-Einträge, deren PR gemergt oder zu ist. Fehlertolerant: wirft nie."""
+    if w.freigabe is None:
+        return
+    try:
+        offene = w.freigabe.offene()
+        for eintrag in offene or []:
+            try:
+                if eintrag.get("art") != "debugger_pr":
+                    continue
+                ref = eintrag.get("quelle_ref")
+                m = _PR_REF.fullmatch(ref) if isinstance(ref, str) else None
+                if m is None:
+                    continue
+                pr = w.gh_lesen.pr_lesen(m.group(1), int(m.group(2)))
+                if pr.get("merged") is True or pr.get("state") == "closed":
+                    w.freigabe.schliessen(ref, "erledigt")
+            except Exception as e:  # ein PR darf die übrigen nicht aufhalten
+                LOG.warning("Freigabe-Abgleich: Eintrag übersprungen (%s)", type(e).__name__)
+    except Exception as e:
+        LOG.warning("Freigabe-Abgleich abgebrochen (%s)", type(e).__name__)
 
 
 def _warten_melden(grund: str, issue: int, konfig: DebuggerKonfig, stand: DebuggerStand, w: Werkzeuge,

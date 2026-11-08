@@ -17,6 +17,7 @@ from selbstbild.debugger.klon import GitFehler, branch_name, worktree_bereit
 from selbstbild.debugger.konfig import DebuggerKonfig
 from selbstbild.debugger.runde import (
     Werkzeuge,
+    pr_eintraege_abgleichen,
     runde_ausfuehren,
     ziel_bestimmen,
 )
@@ -192,6 +193,7 @@ class Welt:
     pushes: list[tuple[Path, str]] = field(default_factory=list)
     push_fehler: bool = False
     push_halt: str | None = None
+    freigabe: Any = None
 
     def push(self, wt: Path, branch: str) -> None:
         self.pushes.append((wt, branch))
@@ -206,6 +208,7 @@ class Welt:
         return Werkzeuge(
             gh_lab=cast(GitHub, self.lab), gh_lesen=cast(GitHub, self.lesen), helfer=self.helfer,
             frei_gb=lambda: self.frei, uhr=lambda: self.jetzt, push=self.push,
+            freigabe=self.freigabe,
         )
 
     def runde(self, *kommentare: Kommentar) -> str:
@@ -304,6 +307,103 @@ def test_fix_oeffentlich_mit_testzeile(welt: Welt) -> None:
     assert pr[5] == (f"{PRAEFIX}- fix: Port aus Konfig lesen\n\nTests: pytest tests/x: 4 passed\n\n"
                      f"Bezug: {ISSUE_REPO}#{N}")
     assert "HELFER_TEXT" not in pr[5] and "ISSUE_TEXT_DETAIL" not in pr[5]
+
+
+class FakeFreigabe:
+    def __init__(self, offene: list[dict[str, Any]] | None = None) -> None:
+        self.eintraege: list[tuple[Any, ...]] = []
+        self.geschlossen: list[tuple[str, str]] = []
+        self._offene = offene
+
+    def eintragen(self, art: str, quelle_ref: str, titel: str, link: str | None = None,
+                  details: dict[str, Any] | None = None) -> str | None:
+        self.eintraege.append((art, quelle_ref, titel, link, details))
+        return "fg-abcdefghij"
+
+    def schliessen(self, quelle_ref: str, status: str = "erledigt") -> int | None:
+        self.geschlossen.append((quelle_ref, status))
+        return 1
+
+    def offene(self) -> list[dict[str, Any]] | None:
+        return self._offene
+
+
+def test_fix_meldet_pr(welt: Welt) -> None:
+    welt.issue(titel="[selbstbild] Doku-Widerspruch: Port falsch (vibemind/vibemind-os)",
+               text="<!-- selbstbild:repo=vibemind/vibemind-os -->")
+    welt.freigabe = FakeFreigabe()
+    welt.helfer.schritte = [fix("c.txt", "fix: Port aus Konfig lesen", tests="pytest tests/x: 4 passed")]
+    assert welt.runde(kom(1, "bitte fixen")) == "ok"
+    ((art, ref, titel, link, details),) = welt.freigabe.eintraege
+    assert (art, ref) == ("debugger_pr", f"{OS_REPO}#501")
+    assert titel.startswith(PRAEFIX) and link == f"https://github.com/{OS_REPO}/pull/501"
+    assert details == {"tests": "pytest tests/x: 4 passed"}
+
+
+def test_fix_meldet_pr_ohne_tests_leere_details(welt: Welt) -> None:
+    welt.freigabe = FakeFreigabe()
+    welt.helfer.schritte = [fix("b.txt", "fix: Schedule korrigiert")]
+    assert welt.runde(kom(1, "bitte fixen")) == "ok"
+    assert welt.freigabe.eintraege[0][4] == {}
+
+
+def test_fix_ohne_freigabe_unveraendert(welt: Welt) -> None:
+    assert welt.freigabe is None
+    welt.helfer.schritte = [fix("b.txt", "fix: Schedule korrigiert")]
+    assert welt.runde(kom(1, "bitte fixen")) == "ok"
+    assert welt.stand.funde[str(N)].pr == 501
+
+
+def test_fix_freigabe_ausnahme_bricht_nicht(welt: Welt) -> None:
+    class Kaputt(FakeFreigabe):
+        def eintragen(self, *a: Any, **k: Any) -> str | None:
+            raise RuntimeError("boom")
+
+    welt.freigabe = Kaputt()
+    welt.helfer.schritte = [fix("b.txt", "fix: Schedule korrigiert")]
+    assert welt.runde(kom(1, "bitte fixen")) == "ok"
+
+
+def _offen(ref: str) -> dict[str, Any]:
+    return {"kennung": "fg-abcdefghij", "art": "debugger_pr", "quelle_ref": ref, "details": {},
+            "rowboat_stand": "ungesichtet", "vermerk": None}
+
+
+def test_gemergter_pr_wird_geschlossen(welt: Welt) -> None:
+    welt.freigabe = FakeFreigabe([_offen(f"{OS_REPO}#7"), _offen(f"{OS_REPO}#8")])
+    welt.daten["pr_lesen"] = {(OS_REPO, 7): {"state": "closed", "merged": True},
+                              (OS_REPO, 8): {"state": "closed", "merged": False}}
+    pr_eintraege_abgleichen(welt.w)
+    assert welt.freigabe.geschlossen == [(f"{OS_REPO}#7", "erledigt"), (f"{OS_REPO}#8", "erledigt")]
+
+
+def test_offener_pr_bleibt(welt: Welt) -> None:
+    welt.freigabe = FakeFreigabe([_offen(f"{OS_REPO}#7")])
+    welt.daten["pr_lesen"] = {(OS_REPO, 7): {"state": "open", "merged": False}}
+    pr_eintraege_abgleichen(welt.w)
+    assert welt.freigabe.geschlossen == []
+
+
+def test_abgleich_ueberspringt_fehler(welt: Welt) -> None:
+    welt.freigabe = FakeFreigabe([_offen("kaputt"), _offen(f"{OS_REPO}#7"), _offen(f"{OS_REPO}#8")])
+    welt.daten["pr_lesen"] = {(OS_REPO, 8): {"state": "closed", "merged": True}}
+    orig = welt.lesen.pr_lesen
+
+    def pr_lesen(repo: str, nummer: int) -> dict[str, Any]:
+        if nummer == 7:
+            raise GitHubFehler("http_500")
+        return orig(repo, nummer)
+
+    welt.lesen.pr_lesen = pr_lesen  # type: ignore[method-assign]
+    pr_eintraege_abgleichen(welt.w)
+    assert welt.freigabe.geschlossen == [(f"{OS_REPO}#8", "erledigt")]
+
+
+def test_abgleich_ohne_freigabe_oder_ohne_antwort(welt: Welt) -> None:
+    pr_eintraege_abgleichen(welt.w)  # freigabe=None
+    welt.freigabe = FakeFreigabe(None)  # offene() -> None
+    pr_eintraege_abgleichen(welt.w)
+    assert welt.freigabe.geschlossen == [] and welt.lesen.namen("pr_lesen") == []
 
 
 def test_fix_testzeile_mit_schluessel_haelt(welt: Welt) -> None:

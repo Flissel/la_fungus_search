@@ -21,6 +21,7 @@ from selbstbild.debugger.runde import Werkzeuge, wt_pfad
 from selbstbild.debugger.spiegel import spiegel_pfad
 from selbstbild.debugger.stand import DebuggerStand, stand_laden, stand_speichern
 from selbstbild.debugger.wachter import STAND_DATEI, durchgang, schleife, werkzeuge_standard
+from selbstbild.freigabe_eingang import FreigabeEingang
 from selbstbild.funde.github import DEBUGGER_MARKE, GitHub, GitHubFehler
 
 ISSUE_REPO = "Flissel/Vibemind_V1"
@@ -124,6 +125,7 @@ class Welt:
     jetzt: datetime = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
     frei: float | None = 8.0
     geholt: int = 0
+    freigabe: Any = None
 
     def holen(self) -> None:
         self.geholt += 1
@@ -133,6 +135,7 @@ class Welt:
         return Werkzeuge(
             gh_lab=cast(GitHub, self.lab), gh_lesen=cast(GitHub, self.lesen), helfer=self.helfer,
             frei_gb=lambda: self.frei, uhr=lambda: self.jetzt, push=lambda wt, branch: None, holen=self.holen,
+            freigabe=self.freigabe,
         )
 
     def durchgang(self, **kw: Any) -> int:
@@ -458,3 +461,44 @@ def test_schleife_baut_werkzeuge_je_durchgang(welt: Welt, caplog: pytest.LogCapt
     assert len(gebaut) == 2 and geschlafen == [7, 7]
     assert welt.stand().start == "2026-11-07T12:00:00Z"  # zweiter Durchgang lief (erster Start)
     assert "RuntimeError" in caplog.text and "GEHEIM" not in caplog.text
+
+
+class _Freigabe:
+    def __init__(self) -> None:
+        self.offene_aufrufe = 0
+
+    def offene(self) -> list[dict[str, Any]] | None:
+        self.offene_aufrufe += 1
+        return []
+
+
+def test_durchgang_gleicht_pr_eintraege_ab(welt: Welt) -> None:
+    welt.freigabe = _Freigabe()
+    assert welt.durchgang() == 0
+    assert welt.freigabe.offene_aufrufe == 1
+
+
+def test_abgleich_fehler_bricht_durchgang_nicht(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(w: Werkzeuge) -> None:
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(wachter, "pr_eintraege_abgleichen", boom)
+    assert welt.durchgang() == 0
+
+
+def test_werkzeuge_standard_freigabe_aus_umgebung(tmp_path: Path, token_umgebung: Path,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    konfig = DebuggerKonfig(issue_repo=ISSUE_REPO, repos={ISSUE_REPO: "."})
+    monkeypatch.delenv("FREIGABE_URL", raising=False)
+    monkeypatch.delenv("FREIGABE_SCHLUESSEL_DATEI", raising=False)
+    assert werkzeuge_standard(konfig, tmp_path / "stand", tmp_path / "spiegel").freigabe is None
+    schluessel = tmp_path / "fg_schluessel"
+    monkeypatch.setenv("FREIGABE_URL", "https://host:1")
+    monkeypatch.setenv("FREIGABE_SCHLUESSEL_DATEI", str(schluessel))  # Datei fehlt noch
+    assert werkzeuge_standard(konfig, tmp_path / "stand", tmp_path / "spiegel").freigabe is None
+    schluessel.write_text("k", encoding="utf-8")
+    monkeypatch.setenv("FREIGABE_URL", "")  # leer = aus
+    assert werkzeuge_standard(konfig, tmp_path / "stand", tmp_path / "spiegel").freigabe is None
+    monkeypatch.setenv("FREIGABE_URL", "https://host:1")
+    f = werkzeuge_standard(konfig, tmp_path / "stand", tmp_path / "spiegel").freigabe
+    assert isinstance(f, FreigabeEingang)

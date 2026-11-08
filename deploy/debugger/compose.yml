@@ -1,6 +1,7 @@
 # Debugger-Claw auf der VM (rootless Docker). Werte aus `.env` neben dieser Datei (siehe README.md):
 #   DEBUGGER_HEIM       Ordner mit secrets/lab_token und konfig/selbstbild.yaml, z. B. /home/<nutzer>/debugger-claw
 #   DEBUGGER_GIT_EMAIL  Commit-Adresse von Vibemind-LAB (noreply-Adresse des Kontos)
+#   FREIGABE_URL        optional: Basis-URL der Sales-UI für den Freigabe-Eingang (leer = aus)
 services:
   debugger:
     build:
@@ -21,6 +22,8 @@ services:
       GIT_COMMITTER_NAME: Vibemind-LAB
       GIT_AUTHOR_EMAIL: ${DEBUGGER_GIT_EMAIL:?DEBUGGER_GIT_EMAIL in .env setzen}
       GIT_COMMITTER_EMAIL: ${DEBUGGER_GIT_EMAIL:?DEBUGGER_GIT_EMAIL in .env setzen}
+      FREIGABE_URL: ${FREIGABE_URL:-}
+      FREIGABE_SCHLUESSEL_DATEI: /run/freigabe/schluessel
     secrets:
       - lab_token
     volumes:
@@ -29,6 +32,7 @@ services:
       - spiegel:/data/spiegel
       - claude:/home/claw/.claude
       - ${DEBUGGER_HEIM:?DEBUGGER_HEIM in .env setzen}/konfig:/data/konfig:ro
+      - ${DEBUGGER_HEIM}/freigabe:/run/freigabe:ro  # Ordner statt Datei: fehlt er, bleibt der Eingang aus
     command: ["python", "-m", "selbstbild", "debugger", "schleife", "/data/konfig",
               "--klon", "/data/klon", "--ordner", "/data/stand", "--spiegel", "/data/spiegel"]
 

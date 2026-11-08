@@ -111,6 +111,23 @@ Alle `docker compose`-Befehle laufen in `~/debugger-claw/la_fungus/deploy/debugg
 - Nach jedem Durchgang beendet der Wächter alle Prozesse von uid 1000 (`pkill -KILL -U 1000`, R32).
   `init: true` räumt verwaiste Kindprozesse ab, `pids_limit` begrenzt ihre Zahl.
 
+## Freigabe-Eingang (optional)
+
+Der Wächter kann jeden neuen Fix-PR dem Freigabe-Eingang von sales-claw melden (`/api/freigaben/*`) und
+gemergte oder geschlossene PRs dort wieder abhaken. Ohne Konfiguration bleibt das aus; sonst ändert sich nichts.
+
+- **Schlüssel:** Der Dienst-Schlüssel der Herkunft `debugger-claw` liegt auf dem Host in
+  `~/debugger-claw/freigabe/schluessel` (eine Zeile, `chmod 400`). Compose mountet den **Ordner**
+  `~/debugger-claw/freigabe` read-only nach `/run/freigabe`, damit ein fehlender Ordner den Start nicht
+  stört. Der Schlüssel gibt nur das Recht, Einträge der Art `debugger_pr` anzulegen und zu schließen.
+  Er wird nie geloggt.
+- **Adresse:** In `.env` neben `compose.yml` `FREIGABE_URL=<Basis der Sales-UI>` setzen (der Debugger-Claw auf
+  der VM erreicht sales-claw auf derselben VM). Leer oder fehlend heißt aus. `FREIGABE_SCHLUESSEL_DATEI` setzt
+  Compose fest auf `/run/freigabe/schluessel`.
+- **Aus ist der Standard:** Fehlt `FREIGABE_URL` oder die Schlüsseldatei, läuft der Wächter ohne Eingang.
+  Jeder Fehler beim Melden (Netz, HTTP, JSON) landet nur als Fehlertyp im Log und hält keine Runde auf.
+- Vor dem Senden laufen Titel, Link und Details durch dieselbe Schlüsselmuster-Prüfung wie jeder Text an GitHub.
+
 ## Bekannte Grenzen
 
 - Das Netz im Container ist offen. Der Helfer (claw) kann Repo-Inhalte lesen und ins Netz schicken. An den
