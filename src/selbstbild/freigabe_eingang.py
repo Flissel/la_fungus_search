@@ -7,8 +7,10 @@ Geloggt wird nie der Schlüssel, der Dateiinhalt, ein Treffer des Schlüsselmust
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -24,9 +26,26 @@ TIMEOUT_S = 10
 _PFAD = "/api/freigaben"
 
 
+@functools.lru_cache(maxsize=1)
+def _tls_kontext() -> ssl.SSLContext:
+    """Systemspeicher plus certifi, falls installiert. Windows-Python 3.11/OpenSSL 1.1.1 kennt ISRG Root X2
+    nur als Zwischenzertifikat und baut die Let's-Encrypt-Kette sonst über die abgelaufene Querzertifizierung."""
+    kontext = ssl.create_default_context()
+    try:
+        import certifi
+    except ImportError:
+        return kontext
+    kontext.load_verify_locations(cafile=certifi.where())
+    return kontext
+
+
+def _oeffnen_mit_tls(req: urllib.request.Request, timeout: float | None = None) -> Any:
+    return urllib.request.urlopen(req, timeout=timeout, context=_tls_kontext())
+
+
 class FreigabeEingang:
     def __init__(self, url: str, schluessel_datei: Path, *,
-                 oeffnen: Callable[..., Any] = urllib.request.urlopen) -> None:
+                 oeffnen: Callable[..., Any] = _oeffnen_mit_tls) -> None:
         self.url = url.rstrip("/")
         self.schluessel_datei = Path(schluessel_datei)
         self._oeffnen = oeffnen

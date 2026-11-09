@@ -169,3 +169,24 @@ def test_http_fehler_wird_geschlossen(datei: Path) -> None:
     c, _ = _client(datei, [Fehler("u", 401, "x", {}, io.BytesIO(b"{}"))])  # type: ignore[arg-type]
     assert c.eintragen("debugger_pr", "o/r#1", "T") is None
     assert geschlossen
+
+
+def test_standard_oeffner_vertraut_auch_certifi(datei: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows-Python 3.11/OpenSSL 1.1.1 kennt ISRG Root X2 nur als Zwischenzertifikat; certifi ergänzt die Wurzel."""
+    import ssl
+    import urllib.request
+
+    pytest.importorskip("certifi")
+    gesehen: dict[str, Any] = {}
+
+    def falsch_oeffnen(req: Any, timeout: float | None = None, context: Any = None) -> _Antwort:
+        gesehen["context"] = context
+        return _Antwort({"eintraege": []})
+
+    monkeypatch.setattr(urllib.request, "urlopen", falsch_oeffnen)
+    assert FreigabeEingang("https://host:1/", datei).offene() == []
+    kontext = gesehen["context"]
+    assert isinstance(kontext, ssl.SSLContext)
+    assert kontext.verify_mode == ssl.CERT_REQUIRED and kontext.check_hostname
+    namen = {wert for c in kontext.get_ca_certs() for teil in c["subject"] for (k, wert) in teil if k == "commonName"}
+    assert "ISRG Root X2" in namen
