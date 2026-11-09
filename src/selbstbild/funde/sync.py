@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from ..doku.stand import repo_schluessel
-from ..regeln import Regeln
+from ..regeln import REGELDATEI, Regeln, regeln_laden
 from ..speicher import stand_basis
 from .github import GitHub, GitHubFehler
 from .sammeln import UNLESBAR_PRAEFIX
@@ -94,6 +94,14 @@ class Ziel:
 
     def zustaendig(self, code_repo: str) -> bool:
         return (self.nur is None or code_repo in self.nur) and code_repo not in self.ausser
+
+
+def rueckfrage_ziel(wurzel: Path, aussen: str) -> Ziel | None:
+    """Das Issue-Ziel der Rueckfragen fuer das Code-Repo `aussen`: das erste zustaendige Ziel (erst danach prueft der
+    Aufrufer, ob es ein Konto hat). Gemeinsame Regel von `auto` und dem Freigabe-Abholer."""
+    datei = Path(wurzel) / REGELDATEI
+    regeln = regeln_laden(datei.read_text(encoding="utf-8") if datei.is_file() else None)
+    return next((z for z in ziele_aus_regeln(regeln) if z.zustaendig(aussen)), None)
 
 
 def ziele_aus_regeln(regeln: Regeln) -> list[Ziel]:

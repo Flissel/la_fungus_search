@@ -19,11 +19,10 @@ from pathlib import Path
 from typing import Any
 
 from selbstbild.freigabe_eingang import FreigabeEingang
-from selbstbild.funde.github import GitHub
+from selbstbild.funde.github import GitHub, GitHubFehler
 from selbstbild.funde.rueckfrage import ANTWORTEN
 from selbstbild.funde.sammeln import _aussen_name
-from selbstbild.funde.sync import ziele_aus_regeln
-from selbstbild.regeln import REGELDATEI, regeln_laden
+from selbstbild.funde.sync import rueckfrage_ziel
 
 __all__ = ["abholen", "freigabe_aus_umgebung", "main"]
 
@@ -36,7 +35,12 @@ def freigabe_aus_umgebung(env: Mapping[str, str] | None = None) -> FreigabeEinga
     e = os.environ if env is None else env
     url = e.get("FREIGABE_URL", "").strip()
     datei = e.get("FREIGABE_SCHLUESSEL_DATEI", "").strip()
-    if not url or not datei or not Path(datei).is_file():
+    if not url or not datei:
+        return None
+    try:
+        if not Path(datei).is_file():
+            return None
+    except OSError:  # z. B. PermissionError: nie den ganzen Lauf abbrechen
         return None
     return FreigabeEingang(url, Path(datei))
 
@@ -83,8 +87,9 @@ def abholen(freigabe: FreigabeEingang, gh: GitHub, repo: str) -> int:
             if freigabe.ergebnis(auftrag_id, True):
                 getan += 1
         except Exception as e:  # noqa: BLE001 -- nur der Typname geht zurück (Meldungen können Schlüssel tragen)
-            LOG.warning("Auftrag fehlgeschlagen (%s)", type(e).__name__)
-            freigabe.ergebnis(auftrag_id, False, type(e).__name__)
+            art = e.art if isinstance(e, GitHubFehler) else type(e).__name__  # `art` ist schluesselfrei (GitHubFehler)
+            LOG.warning("Auftrag fehlgeschlagen (%s)", art)
+            freigabe.ergebnis(auftrag_id, False, art)
     return getan
 
 
@@ -96,18 +101,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(name)s %(message)s")
     freigabe = freigabe_aus_umgebung()
     if freigabe is None:
-        LOG.info("Abholer aus: FREIGABE_URL oder FREIGABE_SCHLUESSEL_DATEI fehlt")
+        # alle 2 Minuten, das Log wird nie rotiert: nur sichtbar, wenn die Umgebung halb gesetzt ist
+        halb = bool(os.environ.get("FREIGABE_URL", "").strip()) != bool(
+            os.environ.get("FREIGABE_SCHLUESSEL_DATEI", "").strip())
+        LOG.log(logging.INFO if halb else logging.DEBUG,
+                "Abholer aus: FREIGABE_URL oder FREIGABE_SCHLUESSEL_DATEI fehlt oder Datei nicht lesbar")
         return 0
     wurzel = Path(args.wurzel)
-    datei = wurzel / REGELDATEI
-    regeln = regeln_laden(datei.read_text(encoding="utf-8") if datei.is_file() else None)
-    aussen = _aussen_name(wurzel)
-    ziel = next((z for z in ziele_aus_regeln(regeln) if z.zustaendig(aussen) and z.konto), None)
-    if ziel is None or ziel.konto is None:
-        LOG.info("Abholer aus: kein Issue-Ziel mit Konto")
+    ziel = rueckfrage_ziel(wurzel, _aussen_name(wurzel))  # dieselbe Regel wie `auto`: erst das Ziel, dann das Konto
+    if ziel is None or not ziel.konto:
+        LOG.debug("Abholer aus: kein Issue-Ziel mit Konto")
         return 0
     n = abholen(freigabe, GitHub(ziel.konto), ziel.repo)
-    LOG.info("Abholer: %d Auftrag/Aufträge ausgeführt", n)
+    if n:
+        LOG.info("Abholer: %d Auftrag/Aufträge ausgeführt", n)
     return 0
 
 

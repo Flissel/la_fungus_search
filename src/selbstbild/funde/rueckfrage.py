@@ -314,9 +314,18 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
         if senden:
             stand[schluessel] = sorted(menge)
 
+    abgehakt = _zahlen(stand.get("abgehakt"))  # Rueckfragen, deren Eintrag im Freigabe-Eingang sicher zu ist
+
+    versucht: set[int] = set()
+
     def abhaken(nr: int) -> None:
-        if senden and freigabe is not None:
-            freigabe.schliessen(f"{repo}#{nr}", "erledigt")
+        """Eintrag schliessen; nur ein Erfolg (nicht `None`) merkt sich die Nummer, sonst versucht es der naechste Lauf."""
+        if not senden or freigabe is None or nr in abgehakt or nr in versucht:
+            return
+        versucht.add(nr)  # je Lauf hoechstens ein Versuch
+        if freigabe.schliessen(f"{repo}#{nr}", "erledigt") is not None:
+            abgehakt.add(nr)
+            merken("abgehakt", abgehakt)
 
     def schreiben(methode: str, *args: Any) -> bool:
         """Ein Schreibaufruf (nur mit `senden`); False nach einem Fehler, der dann in `b.fehler` steht."""
@@ -506,6 +515,18 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
         b.links[nr] = _link(gh, repo, nr)
         if freigabe is not None:
             freigabe.eintragen("selbstbild_rueckfrage", f"{repo}#{nr}", titel, b.links[nr])
+    # 6. Freigabe-Eingang abgleichen (idempotent, damit ein Ausfall des Eingangs spaeter nachgeholt wird): offene
+    #    Rueckfragen ohne Antwort-Label eintragen (der Server entdoppelt), geschlossene abhaken. Nur der Bestand von oben.
+    if senden and freigabe is not None:
+        im_lauf = {*b.uebernommen, *b.erledigt, *b.geschlossen_ohne_antwort}
+        for nr, issue, _ in eigene:
+            if issue.get("state") != "open":
+                abhaken(nr)
+            elif nr not in im_lauf and not (_labels(issue) & ANTWORTEN.keys()):
+                titel_alt = issue.get("title")
+                freigabe.eintragen("selbstbild_rueckfrage", f"{repo}#{nr}",
+                                   titel_alt if isinstance(titel_alt, str) and titel_alt else f"Rückfrage #{nr}",
+                                   b.links.get(nr))
     if not senden:
         b.notizen.append("trocken: nichts geschrieben, nichts committet")
     return b

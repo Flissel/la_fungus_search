@@ -491,18 +491,19 @@ def test_yaml_kaputt_nach_uebernehmen_datei_zurueck_wartet(gold: Any, git_repo: 
 # ---------- Freigabe-Eingang (Task 9) ----------
 
 class FakeFreigabe:
-    def __init__(self) -> None:
+    def __init__(self, *, aus: bool = False) -> None:
         self.eintraege: list[tuple[str, str, str, str | None]] = []
         self.geschlossen: list[tuple[str, str]] = []
+        self.aus = aus  # Eingang nicht erreichbar: der echte Client gibt dann None zurueck
 
     def eintragen(self, art: str, quelle_ref: str, titel: str, link: str | None = None,
-                  details: dict[str, Any] | None = None) -> str:
+                  details: dict[str, Any] | None = None) -> str | None:
         self.eintraege.append((art, quelle_ref, titel, link))
-        return "fg-aaaaaaaaaa"
+        return None if self.aus else "fg-aaaaaaaaaa"
 
-    def schliessen(self, quelle_ref: str, status: str = "erledigt") -> int:
+    def schliessen(self, quelle_ref: str, status: str = "erledigt") -> int | None:
         self.geschlossen.append((quelle_ref, status))
-        return 1
+        return None if self.aus else 1
 
 
 def test_neue_rueckfrage_wird_gemeldet(gold: Any, tmp_path: Path) -> None:
@@ -542,3 +543,49 @@ def test_trocken_meldet_nichts(gold: Any, tmp_path: Path) -> None:
     n1 = _rf(fake, _sym(1), ("antwort:weg",))
     _lauf(fake, g, tmp_path, senden=False, freigabe=fg)
     assert fg.eintraege == [] and fg.geschlossen == [] and n1
+
+
+def test_eintrag_wird_nach_ausfall_nachgeholt(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    fake = FakeGh()
+    aus, an = FakeFreigabe(aus=True), FakeFreigabe()
+    stand: dict[str, Any] = {}
+    b1 = _lauf(fake, g, tmp_path, stand=stand, freigabe=aus)
+    nr = b1.neu[0]
+    assert len(aus.eintraege) == 1  # beim Anlegen versucht, ohne Erfolg
+    b2 = _lauf(fake, g, tmp_path, stand=stand, freigabe=an)
+    assert b2.neu == [] and [e[1] for e in an.eintraege] == [f"{REPO}#{nr}"]
+    assert an.eintraege[0][0] == "selbstbild_rueckfrage" and an.eintraege[0][3] == b2.links[nr]
+    assert an.eintraege[0][2] == "[selbstbild] Rückfrage: f0 (vibemind/pkg/a.py)"
+
+
+def test_beantwortete_offene_rueckfrage_wird_nicht_neu_eingetragen(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar"), (_sym(1), "unklar")])
+    fake, fg = FakeGh(), FakeFreigabe()
+    _rf(fake, _sym(0), ("antwort:weg", "antwort:bleibt"))  # doppelt beantwortet: wartet, kein Eintrag
+    n1 = _rf(fake, _sym(1))
+    _lauf(fake, g, tmp_path, freigabe=fg)
+    assert [e[1] for e in fg.eintraege] == [f"{REPO}#{n1}"]
+
+
+def test_waehrend_ausfall_geschlossene_rueckfrage_wird_nachgeholt(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    fake = FakeGh()
+    n = _rf(fake, _sym(0), state="closed")  # von Hand zu, als der Eingang nicht erreichbar war
+    aus, an = FakeFreigabe(aus=True), FakeFreigabe()
+    stand: dict[str, Any] = {}
+    _lauf(fake, g, tmp_path, stand=stand, freigabe=aus)
+    assert aus.geschlossen == [(f"{REPO}#{n}", "erledigt")] and "abgehakt" not in stand
+    _lauf(fake, g, tmp_path, stand=stand, freigabe=an)
+    assert an.geschlossen == [(f"{REPO}#{n}", "erledigt")] and stand["abgehakt"] == [n]
+    _lauf(fake, g, tmp_path, stand=stand, freigabe=an)
+    assert len(an.geschlossen) == 1  # gemerkt, nicht jeden Tag neu
+
+
+def test_trocken_gleicht_den_eingang_nicht_ab(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar"), (_sym(1), "unklar")])
+    fake, fg = FakeGh(), FakeFreigabe()
+    _rf(fake, _sym(0))
+    _rf(fake, _sym(1), state="closed")
+    _lauf(fake, g, tmp_path, senden=False, freigabe=fg)
+    assert fg.eintraege == [] and fg.geschlossen == []

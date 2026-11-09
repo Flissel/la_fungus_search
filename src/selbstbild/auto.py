@@ -55,8 +55,7 @@ from .funde.bericht import SENDE_SPERRE, _aussen_name, atomar_schreiben, bericht
 from .funde.github import GitHub, GitHubFehler
 from .funde.rueckfrage import _MARKE, ANTWORTEN, RueckfrageBericht, rueckfragen_abgleichen
 from .funde.sammeln import _posix
-from .funde.sync import IssueStand, Ziel, _body, _labels, stand_pfad, ziele_aus_regeln
-from .regeln import REGELDATEI, regeln_laden
+from .funde.sync import IssueStand, Ziel, _body, _labels, rueckfrage_ziel, stand_pfad
 from .sperre import SperreBelegt, sperre
 
 MIN_FREI_GB = 3.0
@@ -480,9 +479,7 @@ class _Lauf:
         return int(self.w.kind(argv, Path(self.w.ordner) / f"auto-{schritt}.log", rest))
 
     def _rueckfrage_ziel(self, aussen: str) -> Ziel | None:
-        datei = self.wurzel / REGELDATEI
-        regeln = regeln_laden(datei.read_text(encoding="utf-8") if datei.is_file() else None)
-        return next((z for z in ziele_aus_regeln(regeln) if z.zustaendig(aussen)), None)
+        return rueckfrage_ziel(self.wurzel, aussen)
 
     def _antworten_lesen(self, ziel: Ziel | None) -> tuple[GitHub | None, list[dict[str, Any]] | None,
                                                            dict[str, dict[str, Any]] | None]:
