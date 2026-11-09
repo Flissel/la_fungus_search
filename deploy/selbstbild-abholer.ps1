@@ -12,10 +12,13 @@
 
   UMGEBUNG: Die taegliche Aufgabe setzt keine Umgebungsvariablen. Der Abholer liest deshalb wie sie die
   USER-Umgebung des angemeldeten Benutzers. Der Betreiber setzt dort selbst (Werte stehen NICHT in diesem Skript):
-      FREIGABE_URL                Basis der Sales-UI
-      FREIGABE_SCHLUESSEL_DATEI   Pfad der Schluesseldatei (nur fuer den Benutzer lesbar)
-  zum Beispiel mit [Environment]::SetEnvironmentVariable('FREIGABE_URL', '<wert>', 'User'). Fehlt eine der beiden
-  Variablen oder die Datei, loggt der Abholer "aus" und endet mit Exit 0.
+      SELBSTBILD_FREIGABE_URL                Basis der Sales-UI
+      SELBSTBILD_FREIGABE_SCHLUESSEL_DATEI   Pfad der Schluesseldatei (nur fuer den Benutzer lesbar)
+  zum Beispiel mit [Environment]::SetEnvironmentVariable('SELBSTBILD_FREIGABE_URL', '<wert>', 'User').
+  Diese praefixierten Namen auf User-Ebene setzen, NICHT FREIGABE_URL / FREIGABE_SCHLUESSEL_DATEI: der Learning-Claw
+  am selben PC (gleicher Benutzer) nutzt die unpraefixierten Namen, und die Prozess-Umgebung schlaegt seine .env,
+  er wuerde sonst den Selbstbild-Schluessel verwenden. Der Abholer faellt je Name auf die unpraefixierte Variable
+  zurueck, wenn die praefixierte fehlt oder leer ist. Fehlt eine der beiden Variablen oder die Datei, loggt der Abholer "aus" und endet mit Exit 0.
 
   Dieses Skript ist ein Deploy-Schritt: es braucht das ausdrueckliche OK des Betreibers und wird nicht automatisch
   ausgefuehrt. Es ist idempotent (-Force ersetzt eine vorhandene Aufgabe).

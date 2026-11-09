@@ -30,11 +30,17 @@ LOG = logging.getLogger("selbstbild.freigabe_abholer")
 ART = "selbstbild_label"
 
 
+def _env_wert(e: Mapping[str, str], name: str) -> str:
+    """`SELBSTBILD_<name>` zuerst (der Learning-Claw am selben PC nutzt die unpraefixierten Namen), sonst `<name>`."""
+    return e.get(f"SELBSTBILD_{name}", "").strip() or e.get(name, "").strip()
+
+
 def freigabe_aus_umgebung(env: Mapping[str, str] | None = None) -> FreigabeEingang | None:
-    """Client aus `FREIGABE_URL` und `FREIGABE_SCHLUESSEL_DATEI`; `None`, wenn eins fehlt oder die Datei nicht da ist."""
+    """Client aus `SELBSTBILD_FREIGABE_URL` und `SELBSTBILD_FREIGABE_SCHLUESSEL_DATEI` (je Name Rueckfall auf
+    `FREIGABE_URL` / `FREIGABE_SCHLUESSEL_DATEI`); `None`, wenn eins fehlt oder die Datei nicht da ist."""
     e = os.environ if env is None else env
-    url = e.get("FREIGABE_URL", "").strip()
-    datei = e.get("FREIGABE_SCHLUESSEL_DATEI", "").strip()
+    url = _env_wert(e, "FREIGABE_URL")
+    datei = _env_wert(e, "FREIGABE_SCHLUESSEL_DATEI")
     if not url or not datei:
         return None
     try:
@@ -102,8 +108,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     freigabe = freigabe_aus_umgebung()
     if freigabe is None:
         # alle 2 Minuten, das Log wird nie rotiert: nur sichtbar, wenn die Umgebung halb gesetzt ist
-        halb = bool(os.environ.get("FREIGABE_URL", "").strip()) != bool(
-            os.environ.get("FREIGABE_SCHLUESSEL_DATEI", "").strip())
+        halb = bool(_env_wert(os.environ, "FREIGABE_URL")) != bool(
+            _env_wert(os.environ, "FREIGABE_SCHLUESSEL_DATEI"))
         LOG.log(logging.INFO if halb else logging.DEBUG,
                 "Abholer aus: FREIGABE_URL oder FREIGABE_SCHLUESSEL_DATEI fehlt oder Datei nicht lesbar")
         return 0

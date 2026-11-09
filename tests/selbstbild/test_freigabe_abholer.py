@@ -134,6 +134,33 @@ def test_umgebung_braucht_url_und_vorhandene_datei(tmp_path: Path) -> None:
         {"FREIGABE_URL": "http://x", "FREIGABE_SCHLUESSEL_DATEI": str(schluessel)}) is not None
 
 
+def test_umgebung_praefixierte_namen_gewinnen(tmp_path: Path) -> None:
+    eigener, fremder = tmp_path / "eigen", tmp_path / "fremd"
+    eigener.write_text("k", encoding="utf-8")
+    fremder.write_text("k", encoding="utf-8")
+    f = freigabe_abholer.freigabe_aus_umgebung({
+        "SELBSTBILD_FREIGABE_URL": "http://eigen", "SELBSTBILD_FREIGABE_SCHLUESSEL_DATEI": str(eigener),
+        "FREIGABE_URL": "http://fremd", "FREIGABE_SCHLUESSEL_DATEI": str(fremder)})
+    assert f is not None
+    assert f.url == "http://eigen" and f.schluessel_datei == eigener
+
+
+def test_umgebung_unpraefixierte_namen_allein_gelten_weiter(tmp_path: Path) -> None:
+    k = tmp_path / "k"
+    k.write_text("k", encoding="utf-8")
+    f = freigabe_abholer.freigabe_aus_umgebung({"FREIGABE_URL": "http://x", "FREIGABE_SCHLUESSEL_DATEI": str(k)})
+    assert f is not None and f.url == "http://x"
+
+
+def test_umgebung_wird_je_name_aufgeloest(tmp_path: Path) -> None:
+    k = tmp_path / "k"
+    k.write_text("k", encoding="utf-8")
+    f = freigabe_abholer.freigabe_aus_umgebung({
+        "SELBSTBILD_FREIGABE_URL": "http://eigen", "SELBSTBILD_FREIGABE_SCHLUESSEL_DATEI": "  ",
+        "FREIGABE_URL": "http://fremd", "FREIGABE_SCHLUESSEL_DATEI": str(k)})
+    assert f is not None and f.url == "http://eigen" and f.schluessel_datei == k
+
+
 def test_github_fehler_meldet_die_schluesselfreie_art() -> None:
     fg = FakeFreigabe([_a()])
     gh = FakeGitHub(GitHubFehler("http_404"))
