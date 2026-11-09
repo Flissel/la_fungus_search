@@ -314,11 +314,12 @@ class FakeFreigabe:
         self.eintraege: list[tuple[Any, ...]] = []
         self.geschlossen: list[tuple[str, str]] = []
         self._offene = offene
+        self.kennung: str | None = "fg-abcdefghij"  # None: Eingang nicht erreichbar
 
     def eintragen(self, art: str, quelle_ref: str, titel: str, link: str | None = None,
                   details: dict[str, Any] | None = None) -> str | None:
         self.eintraege.append((art, quelle_ref, titel, link, details))
-        return "fg-abcdefghij"
+        return self.kennung
 
     def schliessen(self, quelle_ref: str, status: str = "erledigt") -> int | None:
         self.geschlossen.append((quelle_ref, status))
@@ -397,6 +398,73 @@ def test_abgleich_ueberspringt_fehler(welt: Welt) -> None:
     welt.lesen.pr_lesen = pr_lesen  # type: ignore[method-assign]
     pr_eintraege_abgleichen(welt.w)
     assert welt.freigabe.geschlossen == [(f"{OS_REPO}#8", "erledigt")]
+
+
+def test_meldung_scheitert_abgleich_holt_nach(welt: Welt) -> None:
+    """Final-Review I1: Eingang beim Fix nicht erreichbar, der Abgleich meldet den PR später."""
+    welt.freigabe = FakeFreigabe([])
+    welt.freigabe.kennung = None
+    welt.helfer.schritte = [fix("b.txt", "fix: Schedule korrigiert", tests="pytest: 3 passed")]
+    assert welt.runde(kom(1, "bitte fixen")) == "ok"
+    fund = welt.stand.funde[str(N)]
+    assert (fund.zustand, fund.pr, fund.freigabe_gemeldet) == ("pr", 501, False)
+    welt.daten["pr_lesen"] = {(ISSUE_REPO, 501): {"state": "open", "merged": False, "title": PRAEFIX + "PR-Titel",
+                                                  "body": f"{PRAEFIX}Fixes #{N}\n\n- fix\n\nTests: pytest: 3 passed"}}
+    pr_eintraege_abgleichen(welt.w, welt.stand)  # noch immer nicht erreichbar: bleibt offen
+    assert len(welt.freigabe.eintraege) == 2 and fund.freigabe_gemeldet is False
+    welt.freigabe.kennung = "fg-abcdefghij"
+    pr_eintraege_abgleichen(welt.w, welt.stand)
+    assert welt.freigabe.eintraege[-1] == ("debugger_pr", f"{ISSUE_REPO}#501", PRAEFIX + "PR-Titel",
+                                           f"https://github.com/{ISSUE_REPO}/pull/501", {"tests": "pytest: 3 passed"})
+    assert fund.freigabe_gemeldet is True
+    pr_eintraege_abgleichen(welt.w, welt.stand)  # danach nie wieder aus dem Leerlauf
+    assert len(welt.freigabe.eintraege) == 3
+
+
+def test_geglueckte_meldung_wird_nicht_wiederholt(welt: Welt) -> None:
+    welt.freigabe = FakeFreigabe([])
+    welt.helfer.schritte = [fix("b.txt", "fix: Schedule korrigiert")]
+    assert welt.runde(kom(1, "bitte fixen")) == "ok"
+    assert welt.stand.funde[str(N)].freigabe_gemeldet is True
+    gelesen = len(welt.lesen.namen("pr_lesen"))
+    pr_eintraege_abgleichen(welt.w, welt.stand)
+    pr_eintraege_abgleichen(welt.w, welt.stand)
+    assert len(welt.freigabe.eintraege) == 1
+    assert len(welt.lesen.namen("pr_lesen")) == gelesen  # kein Leerlauf-Lesen je Durchgang
+
+
+def test_nachmeldung_nur_bei_offenem_pr(welt: Welt) -> None:
+    welt.freigabe = FakeFreigabe([])
+    welt.stand.funde["7"] = FundStand(repo=OS_REPO, branch="debugger/7-x", pr=70, zustand="pr")
+    welt.stand.funde["8"] = FundStand(repo=OS_REPO, branch="debugger/8-x", pr=80, zustand="pr")
+    welt.daten["pr_lesen"] = {(OS_REPO, 70): {"state": "closed", "merged": True},
+                              (OS_REPO, 80): {"state": "open", "merged": False}}  # ohne Titel und Text
+    pr_eintraege_abgleichen(welt.w, welt.stand)
+    assert welt.freigabe.eintraege == [("debugger_pr", f"{OS_REPO}#80", f"{PRAEFIX}{OS_REPO}#80",
+                                        f"https://github.com/{OS_REPO}/pull/80", {})]
+    assert (welt.stand.funde["7"].freigabe_gemeldet, welt.stand.funde["8"].freigabe_gemeldet) == (False, True)
+
+
+def test_marke_faellt_ausserhalb_von_pr(welt: Welt) -> None:
+    """Verlässt der Fund `pr`, wird ein neuer PR mit der nächsten Runde wieder gemeldet."""
+    welt.stand.funde["7"] = FundStand(repo=OS_REPO, branch="b7", zustand="offen", freigabe_gemeldet=True)
+    welt.stand.funde["8"] = FundStand(repo=OS_REPO, branch="b8", pr=80, zustand="erledigt", freigabe_gemeldet=True)
+    welt.stand.funde["9"] = FundStand(repo=OS_REPO, branch="b9", pr=90, zustand="pr", freigabe_gemeldet=True)
+    pr_eintraege_abgleichen(welt.w, welt.stand)  # auch ohne Eingang
+    assert [welt.stand.funde[k].freigabe_gemeldet for k in "789"] == [False, False, True]
+    assert welt.lesen.namen("pr_lesen") == []
+
+
+def test_alter_stand_ohne_marke_laedt(tmp_path: Path) -> None:
+    from selbstbild.debugger.stand import stand_laden, stand_speichern
+    pfad = tmp_path / "stand.json"
+    pfad.write_text(json.dumps({"start": "x", "funde": {"7": {"repo": OS_REPO, "branch": "b", "pr": 154,
+                                                             "zustand": "pr"}}}), encoding="utf-8")
+    stand = stand_laden(pfad)
+    assert stand.funde["7"].freigabe_gemeldet is False
+    stand.funde["7"].freigabe_gemeldet = True
+    stand_speichern(pfad, stand)
+    assert stand_laden(pfad).funde["7"].freigabe_gemeldet is True
 
 
 def test_abgleich_ohne_freigabe_oder_ohne_antwort(welt: Welt) -> None:

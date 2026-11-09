@@ -320,16 +320,6 @@ class _Lauf:
             self.wt_aufraeumen(fund, wt)  # R43
         return self.fertig(fund)
 
-    def freigabe_melden(self, repo: str, nummer: int, pr_titel: str, tests: str | None) -> None:
-        """Meldet den PR dem Freigabe-Eingang (idempotent beim Server); ein Fehler stört die Runde nie."""
-        if self.w.freigabe is None:
-            return
-        try:
-            self.w.freigabe.eintragen("debugger_pr", f"{repo}#{nummer}", pr_titel,
-                                      f"https://github.com/{repo}/pull/{nummer}", {"tests": tests} if tests else {})
-        except Exception as e:
-            LOG.warning("Freigabe-Eingang: PR nicht gemeldet (%s)", type(e).__name__)
-
     def fix(self, grund: str, fund: FundStand, wt: Path, titel: str, tests: str | None = None) -> str:
         """Push und PR; ohne neue Commits (und mit PR oder ohne Commits vor der Basis) nur Antwort."""
         basis = self.konfig.basis
@@ -373,19 +363,68 @@ class _Lauf:
         if fund.pr is None:
             fund.pr = pr_finden_oder_anlegen(self.w, fund.repo, fund.branch, self.konfig.basis, pr_titel, koerper)
         fund.zustand = "pr"
-        self.freigabe_melden(fund.repo, fund.pr, pr_titel, tests)
+        # Merkt den Erfolg; scheitert die Meldung, holt der Abgleich sie nach (auch nach einem früheren Erfolg)
+        fund.freigabe_gemeldet = freigabe_melden(self.w, fund.repo, fund.pr, pr_titel, tests)
         zusatz = f"PR: {fund.repo}#{fund.pr}" if neuer_pr else f"Neuer Stand im PR {fund.repo}#{fund.pr}."
         self.antworten(fund, f"{PRAEFIX}{grund}\n\n{zusatz}")
         return self.fertig(fund)
 
 
 _PR_REF = re.compile(r"([\w.-]+/[\w.-]+)#(\d+)")
+_TESTZEILE = re.compile(r"^Tests: (.+)$", re.MULTILINE)
 
 
-def pr_eintraege_abgleichen(w: Werkzeuge) -> None:
-    """Schließt offene `debugger_pr`-Einträge, deren PR gemergt oder zu ist. Fehlertolerant: wirft nie."""
+def freigabe_melden(w: Werkzeuge, repo: str, nummer: int, pr_titel: str, tests: str | None) -> bool:
+    """Meldet den PR dem Freigabe-Eingang (idempotent beim Server); `True` nur bei Erfolg. Wirft nie."""
+    if w.freigabe is None:
+        return False
+    try:
+        kennung = w.freigabe.eintragen("debugger_pr", f"{repo}#{nummer}", pr_titel,
+                                       f"https://github.com/{repo}/pull/{nummer}", {"tests": tests} if tests else {})
+    except Exception as e:
+        LOG.warning("Freigabe-Eingang: PR nicht gemeldet (%s)", type(e).__name__)
+        return False
+    return isinstance(kennung, str)
+
+
+def _pr_nachmelden(w: Werkzeuge, stand: DebuggerStand) -> None:
+    """Meldet Funde auf `pr` mit offenem PR nach, deren Meldung noch nicht geglückt ist.
+
+    Titel und Testzeile kommen aus dem PR selbst (der Fund speichert sie nicht). Nach einem Erfolg
+    meldet der Abgleich den Fund nie wieder; erst der nächste Push meldet ihn erneut.
+    """
+    for schluessel, fund in stand.funde.items():
+        if fund.zustand != "pr" or fund.pr is None or fund.freigabe_gemeldet:
+            continue
+        try:
+            pr = w.gh_lesen.pr_lesen(fund.repo, fund.pr)
+            if pr.get("state") != "open" or pr.get("merged") is True:
+                continue
+            titel = pr.get("title")
+            titel = _kappen(titel) if isinstance(titel, str) and titel.strip() else f"{PRAEFIX}{fund.repo}#{fund.pr}"
+            koerper = pr.get("body")
+            m = _TESTZEILE.search(koerper) if isinstance(koerper, str) else None
+            fund.freigabe_gemeldet = freigabe_melden(w, fund.repo, fund.pr, titel, m.group(1).strip() if m else None)
+        except Exception as e:  # ein Fund darf die übrigen nicht aufhalten
+            LOG.warning("Freigabe-Nachmeldung: Fund #%s übersprungen (%s)", schluessel, type(e).__name__)
+
+
+def pr_eintraege_abgleichen(w: Werkzeuge, stand: DebuggerStand | None = None) -> None:
+    """Schließt offene `debugger_pr`-Einträge, deren PR gemergt oder zu ist, und meldet mit `stand`
+    nicht geglückte PR-Meldungen nach. Ein Fund außerhalb von `pr` verliert seine Meldemarke, damit ein
+    neuer PR mit der nächsten Runde wieder gemeldet wird. Fehlertolerant: wirft nie.
+    """
+    if stand is not None:
+        for fund in stand.funde.values():
+            if fund.zustand != "pr":
+                fund.freigabe_gemeldet = False
     if w.freigabe is None:
         return
+    if stand is not None:
+        try:
+            _pr_nachmelden(w, stand)
+        except Exception as e:
+            LOG.warning("Freigabe-Nachmeldung abgebrochen (%s)", type(e).__name__)
     try:
         offene = w.freigabe.offene()
         for eintrag in offene or []:

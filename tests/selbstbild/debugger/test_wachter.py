@@ -479,7 +479,7 @@ def test_durchgang_gleicht_pr_eintraege_ab(welt: Welt) -> None:
 
 
 def test_abgleich_fehler_bricht_durchgang_nicht(welt: Welt, monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(w: Werkzeuge) -> None:
+    def boom(w: Werkzeuge, stand: object = None) -> None:
         raise RuntimeError("x")
 
     monkeypatch.setattr(wachter, "pr_eintraege_abgleichen", boom)

@@ -23,6 +23,7 @@ class FundStand:
     runde: int = 1  # R37: zählt neue Anläufe nach `erledigt`; fehlt in alten Ständen
     naechster_versuch: str | None = None  # R42: ISO-Zeit; bis dahin überspringt der Durchgang den Fund
     limit_folge: int = 0  # R49: `wartet:limit` in Folge; beim 3. Mal ein gezählter Versuch
+    freigabe_gemeldet: bool = False  # PR im Freigabe-Eingang gemeldet; außerhalb von `pr` immer False
 
 
 @dataclass

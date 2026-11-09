@@ -387,6 +387,63 @@ def test_freigabe_geht_nur_ohne_trocken_an_die_rueckfragen(u: Umg, monkeypatch: 
     assert [r["freigabe"] for r in u.rueckfragen] == [None if trocken else w.freigabe]
 
 
+class _Eingang:
+    def __init__(self) -> None:
+        self.eintraege: list[tuple[str, str, str, str | None]] = []
+        self.geschlossen: list[tuple[str, str]] = []
+
+    def eintragen(self, art: str, quelle_ref: str, titel: str, link: str | None = None,
+                  details: Any = None) -> str | None:
+        self.eintraege.append((art, quelle_ref, titel, link))
+        return "fg-aaaaaaaaaa"
+
+    def schliessen(self, quelle_ref: str, status: str = "erledigt") -> int | None:
+        self.geschlossen.append((quelle_ref, status))
+        return 1
+
+
+@pytest.mark.parametrize("trocken", [False, True])
+def test_unveraenderter_tag_gleicht_den_eingang_ab(u: Umg, trocken: bool) -> None:
+    """Final-Review M1: auch ohne Aenderung wird nachgemeldet und abgehakt, mit dem schon gelesenen Bestand."""
+    rf = [{"name": "selbstbild"}, {"name": "selbstbild:rueckfrage"}]
+    u.gh.bestand = [
+        {"number": 5, "state": "open", "labels": rf, "title": "Rückfrage f", "body": "x\n" + marke(SYMBOL),
+         "html_url": f"https://github.com/{ZIEL}/issues/5"},
+        {"number": 6, "state": "closed", "labels": rf, "body": "x\n" + marke(SYMBOL + "2")},
+        {"number": 7, "state": "open", "labels": [{"name": "selbstbild"}], "body": "ohne Marke"},
+    ]
+    assert u.lauf() == 0  # erster Lauf ohne Eingang
+    w = u.werkzeuge()
+    w.freigabe = fg = _Eingang()  # type: ignore[assignment]
+    lesen = u.gh.lesen
+    for _ in range(2):
+        u.kinder.clear()
+        assert auto.lauf(u.wurzel, trocken=trocken, werkzeuge=w) == 0
+        assert u.kinder == []  # unveraendert: kein Kindprozess
+    assert u.gh.lesen == lesen + 2  # je Lauf nur die eine Liste, die das Tor ohnehin liest
+    if trocken:
+        assert fg.eintraege == [] and fg.geschlossen == []
+        return
+    assert u.stand()["ergebnis"] == "unveraendert"
+    assert fg.eintraege == [("selbstbild_rueckfrage", f"{ZIEL}#5", "Rückfrage f", f"https://github.com/{ZIEL}/issues/5")]
+    assert fg.geschlossen == [(f"{ZIEL}#6", "erledigt")]  # zweiter Lauf wiederholt nichts
+    teil = u.stand()["rueckfrage"]
+    assert (teil["eingang_gemeldet"], teil["abgehakt"]) == ([5], [6])
+
+
+def test_unveraenderter_tag_gesperrtes_ziel_ohne_eingang(u: Umg) -> None:
+    u.gh.bestand = [{"number": 5, "state": "open", "labels": [{"name": "selbstbild:rueckfrage"}],
+                     "body": marke(SYMBOL)}]
+    assert u.lauf() == 0
+    s = u.stand()
+    s["sperren"] = {ZIEL: "label_fehlt"}
+    (u.ordner / auto.STAND_DATEI).write_text(json.dumps(s), encoding="utf-8")
+    w = u.werkzeuge()
+    w.freigabe = fg = _Eingang()  # type: ignore[assignment]
+    assert auto.lauf(u.wurzel, werkzeuge=w) == 0
+    assert u.stand()["ergebnis"] == "unveraendert" and fg.eintraege == []
+
+
 def test_montag_erinnerung_ohne_aenderung(u: Umg) -> None:
     alt = (MONTAG - timedelta(days=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
     frisch = (MONTAG - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")

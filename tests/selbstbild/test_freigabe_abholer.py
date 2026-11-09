@@ -49,6 +49,14 @@ def _a(label: str = "antwort:bleibt", repo: str = REPO, nummer: object = 7, art:
     return {"id": id_, "art": art, "nutzlast": {"repo": repo, "nummer": nummer, "label": label}}
 
 
+@pytest.mark.parametrize("angelegt_am", ["2020-01-01T00:00:00+00:00", "kaputt", None])
+def test_abholer_uebergeht_angelegt_am(angelegt_am: object) -> None:
+    """Das Feld `angelegt_am` (Final-Review M3, nur für die Werkstatt) ändert hier nichts, auch nicht alt."""
+    fg, gh = FakeFreigabe([{**_a(), "angelegt_am": angelegt_am}]), FakeGitHub()
+    assert abholen(fg, gh, REPO) == 1  # type: ignore[arg-type]
+    assert fg.ergebnisse == [("a1", True, None)]
+
+
 def test_abholer_setzt_label_und_entfernt_altes() -> None:
     fg, gh = FakeFreigabe([_a("antwort:bleibt")]), FakeGitHub()
     assert abholen(fg, gh, REPO) == 1  # type: ignore[arg-type]

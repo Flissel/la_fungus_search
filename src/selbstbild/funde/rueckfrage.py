@@ -284,6 +284,49 @@ def _link(gh: GitHub | None, repo: str, nummer: int) -> str:
     return f"https://{gh.host if gh is not None else 'github.com'}/{repo}/issues/{nummer}"
 
 
+# ---------- Freigabe-Eingang ----------
+
+def _eingang_abhaken(freigabe: FreigabeEingang, repo: str, stand: dict[str, Any], nr: int, versucht: set[int]) -> None:
+    """Eintrag schliessen, je Lauf hoechstens ein Versuch; nur ein Erfolg (nicht `None`) kommt nach `abgehakt`."""
+    abgehakt = _zahlen(stand.get("abgehakt"))  # Rueckfragen, deren Eintrag im Freigabe-Eingang sicher zu ist
+    if nr in abgehakt or nr in versucht:
+        return
+    versucht.add(nr)
+    if freigabe.schliessen(f"{repo}#{nr}", "erledigt") is not None:
+        stand["abgehakt"] = sorted(abgehakt | {nr})
+
+
+def _eingang_melden(freigabe: FreigabeEingang, repo: str, stand: dict[str, Any], nr: int, titel: str,
+                    link: str | None) -> None:
+    """Eintrag melden; nur ein Erfolg kommt nach `eingang_gemeldet`, sonst holt der naechste Lauf nach. Was der Eingang
+    sicher kennt, wird nie wieder gemeldet: ein in Sales verworfener Eintrag bleibt verworfen."""
+    gemeldet = _zahlen(stand.get("eingang_gemeldet"))
+    if nr in gemeldet:
+        return
+    if freigabe.eintragen("selbstbild_rueckfrage", f"{repo}#{nr}", titel, link) is not None:
+        stand["eingang_gemeldet"] = sorted(gemeldet | {nr})
+
+
+def eingang_abgleichen(bestand: list[dict[str, Any]], repo: str, stand: dict[str, Any], freigabe: FreigabeEingang, *,
+                       ausser: frozenset[int] | set[int] = frozenset(), links: dict[int, str] | None = None,
+                       versucht: set[int] | None = None) -> None:
+    """Gleicht den Freigabe-Eingang mit dem Bestand ab (Schritt 6, auch an unveraenderten Tagen aus `auto`): offene
+    Rueckfragen ohne Antwort-Label nachmelden, solange keine Meldung geglueckt ist, geschlossene abhaken. Nur Issues
+    mit Rueckfrage-Marke; `ausser`: in diesem Lauf schon behandelte Nummern. Liest und schreibt nichts bei GitHub."""
+    versucht = set() if versucht is None else versucht
+    for issue in sorted(bestand, key=lambda i: _nummer(i) or 0):
+        nr = _nummer(issue)
+        if nr is None or not _MARKE.search(_body(issue)):
+            continue
+        if issue.get("state") != "open":
+            _eingang_abhaken(freigabe, repo, stand, nr, versucht)
+        elif nr not in ausser and not (_labels(issue) & ANTWORTEN.keys()):
+            titel, url = issue.get("title"), issue.get("html_url")
+            link = (links or {}).get(nr) or (url if isinstance(url, str) and url else _link(None, repo, nr))
+            _eingang_melden(freigabe, repo, stand, nr, titel if isinstance(titel, str) and titel else f"Rückfrage #{nr}",
+                            link)
+
+
 def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None, repo: str, *, senden: bool,
                            noch_tot: frozenset[str], commit: str, stand: dict[str, Any],
                            oeffentlich: bool = False, freigabe: FreigabeEingang | None = None) -> RueckfrageBericht:
@@ -296,8 +339,9 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
     `commit`: SHA des vermessenen Stands (nur fuer den Erledigt-Kommentar, 7 Zeichen).
     `freigabe`: Freigabe-Eingang von sales-claw; neue Rueckfragen werden gemeldet, beantwortete und erledigte
     abgehakt (nur mit `senden`; der Client wirft nie).
-    `stand`: veraenderliches Teil-Dict (`auto-stand.json["rueckfrage"]`); hier gepflegt: `kommentiert` und
-    `gemeldet` (je eine sortierte Liste von Issue-Nummern). Mit `senden=False` bleibt es unveraendert.
+    `stand`: veraenderliches Teil-Dict (`auto-stand.json["rueckfrage"]`); hier gepflegt: `kommentiert`, `gemeldet`,
+    `abgehakt` und `eingang_gemeldet` (je eine sortierte Liste von Issue-Nummern). Mit `senden=False` bleibt es
+    unveraendert.
     Mit `senden=False` wird nichts geschrieben und nichts committet; der Bericht zeigt, was geschehen wuerde.
     """
     if senden and gh is None:
@@ -314,18 +358,11 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
         if senden:
             stand[schluessel] = sorted(menge)
 
-    abgehakt = _zahlen(stand.get("abgehakt"))  # Rueckfragen, deren Eintrag im Freigabe-Eingang sicher zu ist
-
-    versucht: set[int] = set()
+    versucht: set[int] = set()  # je Lauf hoechstens ein Abhak-Versuch je Nummer
 
     def abhaken(nr: int) -> None:
-        """Eintrag schliessen; nur ein Erfolg (nicht `None`) merkt sich die Nummer, sonst versucht es der naechste Lauf."""
-        if not senden or freigabe is None or nr in abgehakt or nr in versucht:
-            return
-        versucht.add(nr)  # je Lauf hoechstens ein Versuch
-        if freigabe.schliessen(f"{repo}#{nr}", "erledigt") is not None:
-            abgehakt.add(nr)
-            merken("abgehakt", abgehakt)
+        if senden and freigabe is not None:
+            _eingang_abhaken(freigabe, repo, stand, nr, versucht)
 
     def schreiben(methode: str, *args: Any) -> bool:
         """Ein Schreibaufruf (nur mit `senden`); False nach einem Fehler, der dann in `b.fehler` steht."""
@@ -514,19 +551,12 @@ def rueckfragen_abgleichen(wurzel: Path, goldsatz_pfad: Path, gh: GitHub | None,
         b.neu.append(nr)
         b.links[nr] = _link(gh, repo, nr)
         if freigabe is not None:
-            freigabe.eintragen("selbstbild_rueckfrage", f"{repo}#{nr}", titel, b.links[nr])
-    # 6. Freigabe-Eingang abgleichen (idempotent, damit ein Ausfall des Eingangs spaeter nachgeholt wird): offene
-    #    Rueckfragen ohne Antwort-Label eintragen (der Server entdoppelt), geschlossene abhaken. Nur der Bestand von oben.
+            _eingang_melden(freigabe, repo, stand, nr, titel, b.links[nr])
+    # 6. Freigabe-Eingang abgleichen (damit ein Ausfall des Eingangs spaeter nachgeholt wird). Nur der Bestand von oben.
     if senden and freigabe is not None:
-        im_lauf = {*b.uebernommen, *b.erledigt, *b.geschlossen_ohne_antwort}
-        for nr, issue, _ in eigene:
-            if issue.get("state") != "open":
-                abhaken(nr)
-            elif nr not in im_lauf and not (_labels(issue) & ANTWORTEN.keys()):
-                titel_alt = issue.get("title")
-                freigabe.eintragen("selbstbild_rueckfrage", f"{repo}#{nr}",
-                                   titel_alt if isinstance(titel_alt, str) and titel_alt else f"Rückfrage #{nr}",
-                                   b.links.get(nr))
+        eingang_abgleichen([issue for _, issue, _ in eigene], repo, stand, freigabe,
+                           ausser={*b.uebernommen, *b.erledigt, *b.geschlossen_ohne_antwort}, links=b.links,
+                           versucht=versucht)
     if not senden:
         b.notizen.append("trocken: nichts geschrieben, nichts committet")
     return b

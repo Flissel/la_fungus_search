@@ -582,6 +582,41 @@ def test_waehrend_ausfall_geschlossene_rueckfrage_wird_nachgeholt(gold: Any, tmp
     assert len(an.geschlossen) == 1  # gemerkt, nicht jeden Tag neu
 
 
+def test_verworfener_eintrag_kommt_nicht_wieder(gold: Any, tmp_path: Path) -> None:
+    """Final-Review I2: einmal geglückt gemeldet, in Sales verworfen (Issue offen, ohne Antwort): kein neuer Eintrag."""
+    g = gold([(_sym(0), "unklar")])
+    fake, fg = FakeGh(), FakeFreigabe()
+    stand: dict[str, Any] = {}
+    nr = _lauf(fake, g, tmp_path, stand=stand, freigabe=fg).neu[0]
+    assert len(fg.eintraege) == 1 and stand["eingang_gemeldet"] == [nr]
+    for _ in range(2):
+        assert _lauf(fake, g, tmp_path, stand=stand, freigabe=fg).neu == []
+    assert len(fg.eintraege) == 1 and fake.issues[nr]["state"] == "open"
+
+
+def test_alte_offene_rueckfrage_wird_einmal_nachgemeldet(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    fake, fg = FakeGh(), FakeFreigabe()
+    n = _rf(fake, _sym(0))  # vor dem Eingang angelegt
+    stand: dict[str, Any] = {}
+    _lauf(fake, g, tmp_path, stand=stand, freigabe=fg)
+    _lauf(fake, g, tmp_path, stand=stand, freigabe=fg)
+    assert [e[1] for e in fg.eintraege] == [f"{REPO}#{n}"] and stand["eingang_gemeldet"] == [n]
+
+
+def test_fehlgeschlagene_meldung_wird_weiter_versucht(gold: Any, tmp_path: Path) -> None:
+    g = gold([(_sym(0), "unklar")])
+    fake = FakeGh()
+    aus, an = FakeFreigabe(aus=True), FakeFreigabe()
+    stand: dict[str, Any] = {}
+    nr = _lauf(fake, g, tmp_path, stand=stand, freigabe=aus).neu[0]
+    _lauf(fake, g, tmp_path, stand=stand, freigabe=aus)
+    assert len(aus.eintraege) == 2 and "eingang_gemeldet" not in stand  # je Lauf ein Versuch
+    _lauf(fake, g, tmp_path, stand=stand, freigabe=an)
+    _lauf(fake, g, tmp_path, stand=stand, freigabe=an)
+    assert [e[1] for e in an.eintraege] == [f"{REPO}#{nr}"] and stand["eingang_gemeldet"] == [nr]
+
+
 def test_trocken_gleicht_den_eingang_nicht_ab(gold: Any, tmp_path: Path) -> None:
     g = gold([(_sym(0), "unklar"), (_sym(1), "unklar")])
     fake, fg = FakeGh(), FakeFreigabe()

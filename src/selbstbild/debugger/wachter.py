@@ -239,8 +239,8 @@ class _Durchgang:
         except Exception as e:
             LOG.error("Nachlauf abgebrochen (%s)", type(e).__name__)
             fehler = fehler or e
-        try:  # Freigabe-Eingang: gemergte/geschlossene PRs abhaken; nie ein Grund, den Durchgang zu brechen
-            pr_eintraege_abgleichen(w)
+        try:  # Freigabe-Eingang: PRs abhaken, Meldungen nachholen; nie ein Grund, den Durchgang zu brechen
+            pr_eintraege_abgleichen(w, stand)
         except Exception as e:
             LOG.warning("Freigabe-Abgleich fehlgeschlagen (%s)", type(e).__name__)
         if fehler is not None:

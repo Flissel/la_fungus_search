@@ -53,7 +53,7 @@ from .freigabe_abholer import freigabe_aus_umgebung
 from .freigabe_eingang import FreigabeEingang
 from .funde.bericht import SENDE_SPERRE, _aussen_name, atomar_schreiben, bericht_ordner_standard, goldsatz_standard
 from .funde.github import GitHub, GitHubFehler
-from .funde.rueckfrage import _MARKE, ANTWORTEN, RueckfrageBericht, rueckfragen_abgleichen
+from .funde.rueckfrage import _MARKE, ANTWORTEN, RueckfrageBericht, eingang_abgleichen, rueckfragen_abgleichen
 from .funde.sammeln import _posix
 from .funde.sync import IssueStand, Ziel, _body, _labels, rueckfrage_ziel, stand_pfad
 from .sperre import SperreBelegt, sperre
@@ -419,6 +419,7 @@ class _Lauf:
                 and sig == self.stand["antworten"] and _hash_datei(gold) == self.stand["goldsatz_hash"]):
             self.stand.update(letzter_fehler=None, fehler_seit=None)
             self.ergebnis = "unveraendert"
+            self._eingang_abgleichen(ziel, bestand)
             if montag:
                 self._erinnern(bestand)
             self.abschliessen()
@@ -544,6 +545,18 @@ class _Lauf:
                 self._ziel_sperren(repo)
             raise _Abbruch("rueckfragen", rb.fehler)
         return _signatur_nach_lauf(sig, rb)
+
+    def _eingang_abgleichen(self, ziel: Ziel | None, bestand: list[dict[str, Any]] | None) -> None:
+        """Unveraenderter Tag: den Freigabe-Eingang trotzdem abgleichen (Nachmelden, Abhaken), mit dem schon
+        gelesenen Bestand, ohne weiteren GitHub-Aufruf. Nie bei `--trocken`, nie fuer ein gesperrtes Ziel."""
+        if self.trocken or self.w.freigabe is None or ziel is None or bestand is None:
+            return
+        try:
+            if self.stand["sperren"].get(ziel.repo) or self._sync_sperre(ziel.repo):
+                return
+            eingang_abgleichen(bestand, ziel.repo, self.stand["rueckfrage"], self.w.freigabe)
+        except Exception as e:  # noqa: BLE001 -- der Eingang darf den Lauf nie brechen
+            self.kontext.append(f"Freigabe-Eingang nicht abgeglichen ({type(e).__name__})")
 
     def _ziel_sperren(self, repo: str) -> None:
         """Wie `sync`: GitHub hat das Label verworfen, das Issue ist im Bestand unsichtbar. Beide Wege sperren."""
