@@ -258,7 +258,8 @@ tot:
   - kein_doku_verweis
   - unerreichbar
   symbol: symbol:vibemind/vibemind-os/coding-engine:src/tools/microservice_orchestrator.py#MicroserviceOrchestrator.assign_requirements_to_services
-  urteil: unklar
+  urteil: ja
+  bleibt: true
 - gruende:
   - alt_90
   - kein_doku_verweis
