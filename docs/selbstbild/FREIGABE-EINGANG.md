@@ -45,7 +45,7 @@ Issue Flissel/Vibemind_V1#320 (ohne Rückfrage-Marke, geschlossen).
 | 4 | PR schließen → `erledigt`, in Rowboat abgehakt | #157 geschlossen 08:19:52 → `erledigt` von `debugger-claw` 08:20:06; Bote: Zeile `checked: true` (Durchgang 08:20:32), aufgeräumt 08:21:32 | ✅ |
 | 5 | Bote mehrfach → eine Zeile | über 80 Bote-Durchgänge seit 07:47: jede der 7 Kennungen genau einmal in `todo:get` | ✅ |
 | 6 | Von Hand geschriebene Zeilen → kein `angenommen` | Zeile mit `#fg-aaaaaaaaaa` und Zeile mit echter offener `#fg-o5y745qoto` per `todo:addItem` 08:35:25; nach 4 Durchgängen weiter `vorgeschlagen`, „0 Staende“; Zeilen danach entfernt | ✅ |
-| 7 | je Art ein echter Durchlauf | Debugger-PR: siehe 1/2/4. Selbstbild: Auftrag `antwort:bleibt` für #320 08:33:18, PC-Abholer setzt Label 08:34:36, Auftrag `erfolg`, Eintrag `ausgefuehrt` von `selbstbild` (*) | ✅ Debugger, ✅ Selbstbild; Entwurf und Kursfreigabe offen (Klick des Betreibers) |
+| 7 | je Art ein echter Durchlauf | Debugger-PR: siehe 1/2/4. Selbstbild: Auftrag `antwort:bleibt` für #320 08:33:18, PC-Abholer setzt Label 08:34:36, Auftrag `erfolg`, Eintrag `ausgefuehrt` von `selbstbild` (*). Entwurf: Testmail an den eigenen Kontakt (`fg-c7kzoecscp`), in Sales freigegeben 11:06:32, gesendet 11:06:43, Eintrag `ausgefuehrt` von `entwurf-spiegel` 11:07:30. Kursfreigabe (`fg-gbeil7bnz5`): Sales-Knopf „Freigabe-Seite schicken“ → Auftrag 10:57:33, abgeholt 10:58:27, `erfolg` 10:58:52 (Freigabe Nr. 7 mit `neu_ausliefern`), Telegram-Link → freigegeben 11:06:02, Eintrag `erledigt` von `werkstatt` 11:06:24. Danach zog der Bote beide Vorschläge aus Rowboat zurück und räumte sie auf | ✅ Debugger, ✅ Selbstbild, ✅ Entwurf, ✅ Kursfreigabe |
 | 8 | Stufe 2 gesperrt | live: `stufe2_lesen()` alle `False`, 4 Kästchen `disabled`, keins `checked`; POST → 409 durch `test_freigabe_eingang_ui` (sales_test) | ✅ |
 
 (*) Den Auftrag hat `fe.auftrag_anlegen` im sales-ui-Container angelegt (Akteur `abnahme-claude`), denselben Aufruf
@@ -57,3 +57,8 @@ Gefunden beim Ausrollen:
 - `deploy/update.sh` lief zweimal in den Rückbau, weil die Smoke-Liste `sales-freigabe-bote` nicht kannte
   (behoben in sales-claw 4830dc7).
 - TLS am PC (siehe oben): behoben in la_fungus 54bc239 und Learning b8cc069.
+- Kursfreigabe ohne Inhaltsänderung: Der Sales-Knopf bereitete die Freigabe ohne `neu_ausliefern` vor. Die
+  Seite zeigte deshalb einen ausgegrauten Knopf, trotzdem meldete der Auftrag `erfolg`. Behoben in Learning 3a86283:
+  `neu_ausliefern` steht jetzt in den Details des Eintrags und geht in den Auftrag mit. Ein Ergebnis mit
+  `blockiert` oder `nichts_zu_veroeffentlichen` gilt nicht mehr als Erfolg.
+- Ein Entwurf steht beim Versand kurz auf `failed`. Das ist die Claim-Marke von `kanal_dispatch`, kein Fehler.
